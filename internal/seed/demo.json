@@ -1,0 +1,380 @@
+{
+  "servers": [
+    {
+      "name": "web-1",
+      "role": "Production app host (Docker/Nomad)",
+      "provider": "any cloud",
+      "arch": "x86_64",
+      "public_address": "192.0.2.10",
+      "tailscale_ip": "",
+      "environment": "production",
+      "critical": true,
+      "tags": [
+        "shop",
+        "app",
+        "prod"
+      ],
+      "notes": "Runs the Shop API and web app behind a reverse proxy.\n\n- Deploy: push `main` \u2192 CI \u2192 container registry \u2192 this host.\n- Be careful: this host serves real customers."
+    },
+    {
+      "name": "db-1",
+      "role": "Postgres primary + nightly backups",
+      "provider": "any cloud",
+      "arch": "x86_64",
+      "public_address": "192.0.2.20",
+      "tailscale_ip": "",
+      "environment": "production",
+      "critical": true,
+      "tags": [
+        "shop",
+        "db",
+        "postgres",
+        "backups"
+      ],
+      "notes": "Postgres 17. Backups at 03:00 UTC to object storage; restore tested monthly."
+    },
+    {
+      "name": "ci-1",
+      "role": "CI runner + staging",
+      "provider": "home lab",
+      "arch": "arm64",
+      "public_address": "198.51.100.5",
+      "tailscale_ip": "",
+      "environment": "staging",
+      "critical": false,
+      "tags": [
+        "ci",
+        "staging"
+      ],
+      "notes": "Self-hosted CI runner and the staging copy of the Shop."
+    }
+  ],
+  "projects": [
+    {
+      "key": "SHOP",
+      "name": "Shop",
+      "category": "work",
+      "status": "live",
+      "priority": 1,
+      "color": "#2563eb",
+      "summary": "Example online shop: Go API, React web app and a mobile app, live in production.",
+      "description": "A fictional product used as Forge's demo data.\n\n- **Stack:** Go API + Postgres, React SPA, Expo mobile app.\n- **State:** live; the next milestone is the checkout redesign.\n- Replace or delete this project once your own are in.",
+      "infra_notes": "- **Change control:** production changes need an approval (this is the kind of note Claude sessions get as context).\n- **Deploy:** push `main` \u2192 CI builds an image \u2192 deploy to `web-1`.\n- **Data:** Postgres on `db-1`, nightly backups.",
+      "target_date": null,
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://example.com"
+        }
+      ],
+      "repos": [
+        {
+          "name": "shop_api",
+          "path": "/home/demo/dev/shop/shop_api",
+          "remote_url": "git@github.com:example/shop_api.git",
+          "default_branch": "main",
+          "kind": "api",
+          "deploy": "push main \u2192 CI \u2192 web-1",
+          "notes": "Go + Postgres"
+        },
+        {
+          "name": "shop_ui",
+          "path": "/home/demo/dev/shop/shop_ui",
+          "remote_url": "git@github.com:example/shop_ui.git",
+          "default_branch": "main",
+          "kind": "ui",
+          "deploy": "push main \u2192 CI \u2192 web-1",
+          "notes": "React + Vite"
+        },
+        {
+          "name": "shop_mobile",
+          "path": "/home/demo/dev/shop/shop_mobile",
+          "remote_url": "git@github.com:example/shop_mobile.git",
+          "default_branch": "main",
+          "kind": "mobile",
+          "deploy": "store releases from the build machine",
+          "notes": "Expo"
+        },
+        {
+          "name": "shop_infra",
+          "path": "/home/demo/dev/shop/shop_infra",
+          "remote_url": "git@github.com:example/shop_infra.git",
+          "default_branch": "main",
+          "kind": "infra",
+          "deploy": "applied by hand",
+          "notes": "Terraform + host configs"
+        }
+      ],
+      "servers": [
+        {
+          "name": "web-1",
+          "role": "app"
+        },
+        {
+          "name": "db-1",
+          "role": "database"
+        },
+        {
+          "name": "ci-1",
+          "role": "CI + staging"
+        }
+      ],
+      "endpoints": [
+        {
+          "name": "Shop website",
+          "url": "https://example.com/",
+          "kind": "web",
+          "expect_status": 200
+        }
+      ],
+      "tasks": [
+        {
+          "title": "Redesign the checkout flow",
+          "description": "Fewer steps, address autocomplete, clearer errors.",
+          "status": "in_progress",
+          "priority": "high",
+          "type": "feature",
+          "labels": [
+            "checkout"
+          ],
+          "due_date": null,
+          "focus": true,
+          "repo": "shop_ui"
+        },
+        {
+          "title": "Add rate limiting to the login endpoint",
+          "description": "",
+          "status": "todo",
+          "priority": "urgent",
+          "type": "bug",
+          "labels": [
+            "security"
+          ],
+          "due_date": null,
+          "focus": true,
+          "repo": "shop_api"
+        },
+        {
+          "title": "Rotate the payment provider API key",
+          "description": "",
+          "status": "todo",
+          "priority": "high",
+          "type": "ops",
+          "labels": [
+            "security",
+            "secrets"
+          ],
+          "due_date": null,
+          "focus": false,
+          "repo": null
+        },
+        {
+          "title": "Publish mobile app 2.1 to both stores",
+          "description": "Waiting on the store review.",
+          "status": "blocked",
+          "priority": "high",
+          "type": "ops",
+          "labels": [
+            "mobile",
+            "release"
+          ],
+          "due_date": null,
+          "focus": false,
+          "repo": "shop_mobile"
+        },
+        {
+          "title": "Write the restore-from-backup runbook",
+          "description": "",
+          "status": "todo",
+          "priority": "medium",
+          "type": "chore",
+          "labels": [
+            "backups"
+          ],
+          "due_date": null,
+          "focus": false,
+          "repo": null
+        },
+        {
+          "title": "Upgrade Postgres to the next major version",
+          "description": "",
+          "status": "backlog",
+          "priority": "low",
+          "type": "ops",
+          "labels": [
+            "db"
+          ],
+          "due_date": null,
+          "focus": false,
+          "repo": null
+        },
+        {
+          "title": "Move image uploads to object storage",
+          "description": "",
+          "status": "backlog",
+          "priority": "medium",
+          "type": "feature",
+          "labels": [],
+          "due_date": null,
+          "focus": false,
+          "repo": "shop_api"
+        },
+        {
+          "title": "Set up uptime alerts for the API",
+          "description": "",
+          "status": "done",
+          "priority": "medium",
+          "type": "ops",
+          "labels": [
+            "monitoring"
+          ],
+          "due_date": null,
+          "focus": false,
+          "repo": null
+        }
+      ]
+    },
+    {
+      "key": "GAME",
+      "name": "Game",
+      "category": "personal",
+      "status": "building",
+      "priority": 3,
+      "color": "#dc2626",
+      "summary": "Example side project: a small mobile game in development.",
+      "description": "Demo data: a personal project that is being built.",
+      "infra_notes": "No deploy yet; builds happen on a laptop.",
+      "target_date": null,
+      "links": [],
+      "repos": [
+        {
+          "name": "game_app",
+          "path": "/home/demo/dev/game/game_app",
+          "remote_url": "git@github.com:example/game_app.git",
+          "default_branch": "main",
+          "kind": "mobile",
+          "deploy": "not deployed",
+          "notes": "Flutter"
+        },
+        {
+          "name": "game_api",
+          "path": "/home/demo/dev/game/game_api",
+          "remote_url": "",
+          "default_branch": "main",
+          "kind": "api",
+          "deploy": "not deployed",
+          "notes": "Leaderboards, later"
+        }
+      ],
+      "servers": [
+        {
+          "name": "ci-1",
+          "role": "builds"
+        }
+      ],
+      "endpoints": [],
+      "tasks": [
+        {
+          "title": "Prototype the core game loop",
+          "description": "",
+          "status": "in_progress",
+          "priority": "high",
+          "type": "feature",
+          "labels": [],
+          "due_date": null,
+          "focus": false,
+          "repo": "game_app"
+        },
+        {
+          "title": "Pick an art style and make five sprites",
+          "description": "",
+          "status": "todo",
+          "priority": "medium",
+          "type": "research",
+          "labels": [
+            "art"
+          ],
+          "due_date": null,
+          "focus": false,
+          "repo": null
+        },
+        {
+          "title": "Design the leaderboard API",
+          "description": "",
+          "status": "backlog",
+          "priority": "low",
+          "type": "feature",
+          "labels": [],
+          "due_date": null,
+          "focus": false,
+          "repo": "game_api"
+        },
+        {
+          "title": "Set up CI builds for Android",
+          "description": "",
+          "status": "todo",
+          "priority": "medium",
+          "type": "chore",
+          "labels": [
+            "ci"
+          ],
+          "due_date": null,
+          "focus": false,
+          "repo": null
+        }
+      ]
+    },
+    {
+      "key": "BLOG",
+      "name": "Blog",
+      "category": "personal",
+      "status": "radar",
+      "priority": 5,
+      "color": "#db2777",
+      "summary": "Example idea on the radar: a writing site that is not started yet.",
+      "description": "Demo data: an idea parked until there is time.",
+      "infra_notes": "",
+      "target_date": null,
+      "links": [],
+      "repos": [
+        {
+          "name": "blog",
+          "path": "/home/demo/dev/blog",
+          "remote_url": "",
+          "default_branch": "main",
+          "kind": "site",
+          "deploy": "static hosting, later",
+          "notes": ""
+        }
+      ],
+      "servers": [],
+      "endpoints": [],
+      "tasks": [
+        {
+          "title": "Choose a static site generator",
+          "description": "",
+          "status": "backlog",
+          "priority": "low",
+          "type": "research",
+          "labels": [],
+          "due_date": null,
+          "focus": false,
+          "repo": null
+        },
+        {
+          "title": "Draft the first three posts",
+          "description": "",
+          "status": "backlog",
+          "priority": "low",
+          "type": "chore",
+          "labels": [
+            "writing"
+          ],
+          "due_date": null,
+          "focus": false,
+          "repo": null
+        }
+      ]
+    }
+  ]
+}

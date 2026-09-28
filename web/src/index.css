@@ -1,0 +1,303 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens. Everything the components use is a role (surface, ink,
+ * border, status), never a raw hex, so light and dark are two value sets for
+ * the same names. data-theme is always resolved to "light" or "dark" on <html>
+ * (public/theme-init.js before paint, src/lib/theme.tsx afterwards), which is
+ * why there is no prefers-color-scheme block here: "system" is resolved in JS.
+ *
+ * Chart ink, status and series values follow the dataviz reference palette.
+ */
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f7f7f5;
+  --surface: #fcfcfb;
+  --surface-2: #f1f0ec;
+  --surface-3: #e8e7e2;
+  --line: rgba(11, 11, 11, 0.09);
+  --line-strong: rgba(11, 11, 11, 0.16);
+  --fg: #0b0b0b;
+  --fg-2: #52514e;
+  --fg-3: #898781;
+  --accent: #2a78d6;
+  --accent-soft: #cde2fb;
+  --accent-fg: #ffffff;
+  --good: #0ca30c;
+  --good-ink: #006300;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+  --critical-ink: #b42828;
+  --series-1: #2a78d6;
+  --track: #cde2fb;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --overlay: rgba(20, 20, 18, 0.35);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e0e10;
+  --surface: #151517;
+  --surface-2: #1c1c1f;
+  --surface-3: #252528;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --fg: #ededeb;
+  --fg-2: #c3c2b7;
+  --fg-3: #898781;
+  --accent: #3987e5;
+  --accent-soft: #184f95;
+  --accent-fg: #ffffff;
+  --good: #0ca30c;
+  --good-ink: #2fbf2f;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+  --critical-ink: #ef6b6b;
+  --series-1: #3987e5;
+  --track: #0d366b;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --overlay: rgba(0, 0, 0, 0.6);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-fg-3: var(--fg-3);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-fg: var(--accent-fg);
+  --color-good: var(--good);
+  --color-good-ink: var(--good-ink);
+  --color-warning: var(--warning);
+  --color-serious: var(--serious);
+  --color-critical: var(--critical);
+  --color-critical-ink: var(--critical-ink);
+  --color-series-1: var(--series-1);
+  --color-track: var(--track);
+  --color-grid: var(--grid);
+  --color-axis: var(--axis);
+  --color-overlay: var(--overlay);
+  --shadow-pop: var(--shadow);
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+}
+
+@layer base {
+  html,
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    font-size: 14px;
+    line-height: 1.45;
+    overflow-x: hidden;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+  /* Scrollbars that recede into the chrome instead of shouting. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--surface-3) transparent;
+  }
+}
+
+@layer components {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  /* Markdown: prose that sits calmly inside cards and drawers. */
+  .md {
+    overflow-wrap: anywhere;
+    color: var(--fg);
+  }
+  .md > * + * {
+    margin-top: 0.6em;
+  }
+  .md h1,
+  .md h2,
+  .md h3,
+  .md h4 {
+    font-weight: 600;
+    line-height: 1.3;
+    margin-top: 1em;
+  }
+  .md h1 {
+    font-size: 1.25em;
+  }
+  .md h2 {
+    font-size: 1.12em;
+  }
+  .md h3,
+  .md h4 {
+    font-size: 1em;
+  }
+  .md a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .md ul {
+    list-style: disc;
+    padding-left: 1.3em;
+  }
+  .md ol {
+    list-style: decimal;
+    padding-left: 1.3em;
+  }
+  .md ul.contains-task-list {
+    list-style: none;
+    padding-left: 0.1em;
+  }
+  .md li + li {
+    margin-top: 0.2em;
+  }
+  .md li > input[type="checkbox"] {
+    margin-right: 0.4em;
+    vertical-align: -1px;
+  }
+  .md code {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.05em 0.3em;
+  }
+  .md pre {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.7em 0.9em;
+    overflow-x: auto;
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+  .md pre code {
+    background: none;
+    border: 0;
+    padding: 0;
+    font-size: inherit;
+  }
+  .md blockquote {
+    border-left: 3px solid var(--line-strong);
+    padding-left: 0.8em;
+    color: var(--fg-2);
+  }
+  .md table {
+    border-collapse: collapse;
+    display: block;
+    overflow-x: auto;
+    font-size: 0.95em;
+  }
+  .md th,
+  .md td {
+    border: 1px solid var(--line);
+    padding: 0.3em 0.6em;
+    text-align: left;
+  }
+  .md th {
+    background: var(--surface-2);
+    font-weight: 600;
+  }
+  .md hr {
+    border: 0;
+    border-top: 1px solid var(--line);
+  }
+}
+
+@keyframes forge-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+@keyframes forge-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes forge-slide {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes forge-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.animate-pulse-soft {
+  animation: forge-pulse 1.6s ease-in-out infinite;
+}
+.animate-in {
+  animation: forge-in 140ms ease-out;
+}
+.animate-slide {
+  animation: forge-slide 160ms ease-out;
+}
+.animate-up {
+  animation: forge-up 180ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse-soft,
+  .animate-in,
+  .animate-slide,
+  .animate-up {
+    animation: none;
+  }
+}

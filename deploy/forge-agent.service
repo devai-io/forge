@@ -1,0 +1,29 @@
+# systemd *user* unit for the Forge agent — runs as you, with your claude
+# login, git config and SSH agent: an agent run can do what you could do in a
+# terminal, nothing more.
+#
+#   install -Dm755 bin/forge ~/.local/bin/forge
+#   install -Dm644 deploy/forge-agent.service ~/.config/systemd/user/forge-agent.service
+#   install -Dm600 deploy/runner.example.json ~/.config/forge/runner.json   # then edit it
+#   systemctl --user daemon-reload && systemctl --user enable --now forge-agent
+#   journalctl --user -u forge-agent -f
+#
+# To keep it running while you are logged out (a server, an always-on
+# desktop): loginctl enable-linger $USER
+
+[Unit]
+Description=Forge agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/forge agent -config %h/.config/forge/runner.json
+Restart=always
+RestartSec=10
+# A user unit does not see your shell's PATH; claude usually lives in ~/.local/bin.
+Environment=PATH=%h/.local/bin:%h/go/bin:/usr/local/bin:/usr/bin:/bin
+TimeoutStopSec=30
+KillMode=mixed
+
+[Install]
+WantedBy=default.target

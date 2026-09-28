@@ -1,0 +1,17 @@
+# Build output
+/bin/
+/web/dist/
+/web/node_modules/
+/web/*.tsbuildinfo
+/internal/webui/dist/*
+!/internal/webui/dist/.keep
+coverage.out
+
+# Local configuration and data — never commit these
+.env
+.env.*
+!.env.example
+/data/
+*.key
+runner.json
+!/deploy/runner.example.json

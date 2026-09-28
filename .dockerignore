@@ -1,0 +1,10 @@
+.git
+.github
+bin
+data
+.env
+.env.*
+web/node_modules
+web/dist
+internal/webui/dist/*
+!internal/webui/dist/.keep

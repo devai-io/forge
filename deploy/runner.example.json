@@ -1,0 +1,23 @@
+{
+  "api_url": "https://forge.example.com",
+  "token": "PASTE-THE-TOKEN-SHOWN-WHEN-YOU-ADD-THE-MACHINE",
+
+  "allowed_roots": ["~/dev"],
+  "permission_modes": ["plan", "acceptEdits"],
+  "claude_path": "claude",
+
+  "terminal": false,
+  "code": { "enabled": false, "listen": "10.0.0.5:7422" },
+  "path_map": {},
+
+  "commands": {
+    "git-status": { "run": "git status -sb", "description": "Branch, ahead/behind and changed files" },
+    "git-pull": { "run": "git pull --ff-only", "description": "Fast-forward from origin (never merges)" },
+    "test": { "run": "make test", "description": "Run the repo's tests" }
+  },
+
+  "max_concurrent": 2,
+  "max_run_minutes": 120,
+  "scan_interval": "5m",
+  "ci_interval": "15m"
+}
