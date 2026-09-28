@@ -96,16 +96,16 @@ type GitHead struct {
 }
 
 type GitStatus struct {
-	Branch       string    `json:"branch"`
-	Dirty        int       `json:"dirty"`
-	Untracked    int       `json:"untracked"`
-	Ahead        int       `json:"ahead"`
-	Behind       int       `json:"behind"`
-	Head         *GitHead  `json:"head"`
-	Commits7d    int       `json:"commits_7d"`
-	LastCommitAt *string   `json:"last_commit_at"`
-	ScannedAt    string    `json:"scanned_at"`
-	RunnerName   string    `json:"runner_name"`
+	Branch       string      `json:"branch"`
+	Dirty        int         `json:"dirty"`
+	Untracked    int         `json:"untracked"`
+	Ahead        int         `json:"ahead"`
+	Behind       int         `json:"behind"`
+	Head         *GitHead    `json:"head"`
+	Commits7d    int         `json:"commits_7d"`
+	LastCommitAt *string     `json:"last_commit_at"`
+	ScannedAt    string      `json:"scanned_at"`
+	RunnerName   string      `json:"runner_name"`
 	Error        string      `json:"error"`
 	CI           *CIStatus   `json:"ci"`
 	Sync         *SyncStatus `json:"sync"`
