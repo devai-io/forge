@@ -29,6 +29,9 @@ One binary, one SQLite file, one folder. MIT licensed.
   VictoriaMetrics, Grafana alerts and Nomad jobs, turned into a daily action list.
 - **Vault** — keys, keystores and service accounts, encrypted with a key kept
   outside the database; revealing needs your password again; everything audited.
+- **Assistant (optional)** — a chat backed by any OpenAI-compatible model
+  (DeepSeek by default) that reads and updates your projects and tasks and
+  delegates real work to Claude Code on your machines, then reports back.
 - **Token saving (optional)** — with a TypeSafe key, Jev picks cheaper models for
   light agent runs, trims the context Claude sessions start with, and compacts long
   Claude Code sessions on every machine.

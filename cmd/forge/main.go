@@ -51,6 +51,9 @@ Server (workspace: FORGE_HOME, default ~/.config/forge):
   forge backup                           snapshot the database into backups/ now
   forge jev status | on | off            token saving with Jev (TypeSafe)
   forge jev set-key < key.txt            store the TypeSafe API key in the vault
+  forge assistant status | on | off      the Assistant (LLM chat that delegates to Claude Code)
+  forge assistant set-key < key.txt      store its provider API key in the vault
+  forge assistant model <id> [base-url]  pick the model (and provider URL)
   forge import < data.json               add projects, servers, vault items
   forge migrate                          apply database migrations
 
@@ -229,6 +232,8 @@ func runServer(args []string) error {
 		return err
 	case "jev":
 		return jevCommand(ctx, cfg, st, args[1:])
+	case "assistant":
+		return assistantCommand(ctx, cfg, st, args[1:])
 	case "add-machine", "create-runner":
 		if len(args) < 2 || len(args) > 3 {
 			return errors.New("usage: forge add-machine <name> [master|ios|worker]")
@@ -272,6 +277,9 @@ func serve(ctx context.Context, cfg config.Config, database *db.DB, st *store.St
 		fmt.Fprintf(os.Stderr, "\n  Forge is ready. Create your account at:\n\n    %s\n\n  (forge setup-token prints this again)\n\n", link)
 	}
 
+	if err := st.ResetBusyChats(ctx); err != nil {
+		return fmt.Errorf("chats: %w", err)
+	}
 	mailer := mail.New(cfg.SMTP)
 	if !mailer.Enabled() {
 		slog.Warn("SMTP not configured: e-mails are off (use `forge reset-password` if locked out)")
@@ -427,5 +435,60 @@ func jevCommand(ctx context.Context, cfg config.Config, st *store.Store, args []
 	}
 	fmt.Printf("jev: enabled=%t key=%t routing=%t context=%t compaction=%t\n",
 		set.Enabled, keyed, set.Routing, set.Context, set.Compaction)
+	return nil
+}
+
+// assistantCommand is Settings → Assistant, for a server without a browser.
+func assistantCommand(ctx context.Context, cfg config.Config, st *store.Store, args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: forge assistant status | on | off | set-key (key on stdin) | model <id> [base-url]")
+	}
+	set, err := st.AssistantSettings(ctx)
+	if err != nil {
+		return err
+	}
+	box, err := vault.Load(cfg.Home)
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "on", "off":
+		set.Enabled = args[0] == "on"
+	case "model":
+		if len(args) < 2 || len(args) > 3 {
+			return errors.New("usage: forge assistant model <id> [base-url]")
+		}
+		set.Model = args[1]
+		if len(args) == 3 {
+			set.BaseURL = strings.TrimRight(args[2], "/")
+		}
+	case "set-key":
+		raw, err := io.ReadAll(io.LimitReader(os.Stdin, 4096))
+		if err != nil {
+			return err
+		}
+		key := strings.TrimSpace(string(raw))
+		if len(key) < 16 || strings.ContainsAny(key, " \t\n") {
+			return errors.New("expected one API key on stdin")
+		}
+		if err := st.SaveIntegrationSecret(ctx, box, "LLM API key (Assistant)", "integration:assistant", key, "cli"); err != nil {
+			return err
+		}
+		fmt.Println("key stored in the vault (tag integration:assistant)")
+	case "status":
+	default:
+		return fmt.Errorf("unknown assistant command %q", args[0])
+	}
+	if args[0] != "status" && args[0] != "set-key" {
+		if err := st.SetAssistantSettings(ctx, set); err != nil {
+			return err
+		}
+	}
+	keyed := false
+	if box.Available() {
+		k, _ := st.IntegrationSecret(ctx, box, "integration:assistant")
+		keyed = k != ""
+	}
+	fmt.Printf("assistant: enabled=%t key=%t model=%s base_url=%s\n", set.Enabled, keyed, set.Model, set.BaseURL)
 	return nil
 }

@@ -27,6 +27,10 @@ export const SECURITY_KINDS: Record<SecurityKind, KindMeta> = {
   runner_created: { label: "Machine added", tone: "neutral", group: "machines" },
   runner_pair_code: { label: "Pairing code issued", tone: "neutral", group: "machines" },
   runner_paired: { label: "Machine paired", tone: "accent", group: "machines" },
+  jev_settings: { label: "Token saving settings changed", tone: "neutral", group: "account" },
+  jev_key: { label: "Jev API key replaced", tone: "warning", group: "sensitive" },
+  assistant_settings: { label: "Assistant settings changed", tone: "neutral", group: "account" },
+  assistant_key: { label: "Assistant API key replaced", tone: "warning", group: "sensitive" },
   runner_rotated: { label: "Machine token rotated", tone: "neutral", group: "machines" },
 };
 

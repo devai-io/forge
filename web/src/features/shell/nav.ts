@@ -1,8 +1,10 @@
-import { BookOpen, Bot, ClipboardCheck, Code, FolderKanban, Gauge, LayoutDashboard, ListTodo, Lock, Server, SquareTerminal } from "lucide-react";
+import { BookOpen, Bot, ClipboardCheck, Code, FolderKanban, Gauge, LayoutDashboard, ListTodo, Lock, Server, Sparkles, SquareTerminal } from "lucide-react";
 
-// `mobile`: gets its own slot in the phone tab bar; the rest live under "More".
+// `mobile`: gets its own slot in the phone tab bar — five at most, beside "More"
+// (AppShell's grid-cols-6); the rest live under "More".
 export const NAV = [
   { to: "/", label: "Dashboard", short: "Home", icon: LayoutDashboard, end: true, mobile: true },
+  { to: "/assistant", label: "Assistant", short: "Chat", icon: Sparkles, end: false, mobile: true, keywords: "chat ai deepseek delegate llm ask" },
   { to: "/terminal", label: "Terminal", short: "Terminal", icon: SquareTerminal, end: false, mobile: true, keywords: "tmux shell claude sessions attach" },
   { to: "/editor", label: "Editor", short: "Editor", icon: Code, end: false, mobile: false, keywords: "vs code vscode ide edit" },
   { to: "/checkup", label: "Check-up", short: "Check-up", icon: ClipboardCheck, end: false, mobile: false, keywords: "daily health checkup actions" },

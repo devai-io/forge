@@ -206,7 +206,22 @@ changes, ahead/behind and CI; runs and terminals open there.
 
 Check: the project page shows git state for each repo within 5 minutes.
 
-### 2d. Optional: token saving with Jev
+### 2d. Optional: the Assistant
+
+A chat in Forge that answers from your projects, tasks and machines and
+delegates work to Claude Code (it queues runs exactly like the New run dialog,
+in `plan` or `acceptEdits` mode — never `bypassPermissions`; commands that need
+confirmation are left to you). It needs an OpenAI-compatible API key —
+[DeepSeek](https://platform.deepseek.com) by default. **Settings → Assistant**,
+or on the server:
+
+```bash
+forge assistant set-key < key.txt            # stored sealed in the vault
+forge assistant model deepseek-flash          # optional: model [base-url]
+forge assistant on
+```
+
+### 2e. Optional: token saving with Jev
 
 With a [TypeSafe](https://jevtypesafeai.com) API key, Forge uses Jev (a small
 decision model) instead of Claude for routine judgements: **Settings → Token

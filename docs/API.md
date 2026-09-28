@@ -804,3 +804,84 @@ type ProjectFile = { name: string; size: number /* bytes */; modified_at: string
 Names: no slashes, no leading dot, no control characters, at most 200 bytes
 (`422 validation` otherwise); over 100 MB → `413 too_large`. `{name}` is URL-encoded in the path. Uploads
 and deletes need `X-Forge-Client: web` like every other write.
+
+## Assistant
+
+A chat with an LLM "main agent" (any OpenAI-compatible API; DeepSeek by
+default) that can read and update Forge and delegate work to Claude Code by
+queuing runs. The agent loop runs on the server; the web app posts messages
+and polls. Off until enabled; the key is the `value` secret of the newest vault
+item tagged `integration:assistant`.
+
+```ts
+type AssistantSettings = {
+  enabled: boolean;
+  base_url: string;   // OpenAI-compatible API base, default "https://api.deepseek.com"
+  model: string;      // default "deepseek-flash"
+};
+type AssistantStatus = {
+  settings: AssistantSettings;
+  key_configured: boolean;       // the key itself is never returned
+  models: string[];              // models the provider lists for this key ([] if unknown/unreachable)
+};
+type ChatUsage = { input_tokens: number; output_tokens: number; cached_tokens: number };
+type Chat = {
+  id: number;
+  title: string;
+  busy: boolean;          // the agent is working on this chat right now
+  last_error: string;     // "" or why the last turn failed
+  usage: ChatUsage;       // totals for the chat
+  created_at: string;
+  updated_at: string;
+};
+type ChatToolCall = { id: string; name: string; arguments: Record<string, unknown> };
+type ChatMessage = {
+  seq: number;                              // increasing per chat, starts at 1
+  role: "user" | "assistant" | "tool";
+  content: string;                          // markdown for user/assistant; for tool: short human summary line
+  tool_calls: ChatToolCall[];               // assistant messages that call tools ([] otherwise)
+  tool_call_id: string;                     // tool messages: which call this answers ("" otherwise)
+  tool_name: string;                        // tool messages: the tool's name ("" otherwise)
+  result: unknown;                          // tool messages: the structured result (object), else null
+  is_error: boolean;                        // tool messages: the tool failed
+  created_at: string;
+};
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | /api/assistant | – | `AssistantStatus` |
+| PATCH | /api/assistant | `Partial<AssistantSettings>` | `AssistantStatus` |
+| PUT | /api/assistant/key | `{api_key}` | `AssistantStatus` (elevation; creates/updates the vault item) |
+| GET | /api/chats | – | `{chats: Chat[]}`, newest first |
+| POST | /api/chats | `{content}` | `201 {chat, messages}` — the chat with its first user message; the agent starts (`busy: true`) |
+| GET | /api/chats/{id}?after=N | – | `{chat, messages}` — only messages with `seq > N` (no `after` → all) |
+| POST | /api/chats/{id}/messages | `{content}` | `{chat, messages}` (the new user message); `409 busy` while the agent is still on this chat |
+| POST | /api/chats/{id}/stop | – | `{chat}` — cancels the running turn |
+| PATCH | /api/chats/{id} | `{title}` | `{chat}` |
+| DELETE | /api/chats/{id} | – | `204` |
+
+- `503 assistant_off` when the assistant is not enabled or has no key.
+- The web app polls `GET /api/chats/{id}?after=<last seq it holds>` every 1.5 s
+  while `chat.busy` and stops when it is false — so every message of a turn
+  must be stored before `busy` flips to false. Messages are not expected to
+  change once written; if the same `seq` arrives twice, the later copy wins.
+- An assistant message's `tool_calls` are answered by `tool` messages whose
+  `tool_call_id` matches a call's `id`; the app shows a call as running until
+  its answer arrives.
+- Tools (`tool_name`), with the arguments and result fields the web app reads:
+  - `delegate_to_claude` `{project, repo, prompt, machine?, permission_mode?,
+    model?, worktree?, task_ref?}` → `{run_id, machine, project, repo,
+    permission_mode, model, model_note}`. Queued like `POST /api/runs` with the
+    same machine rules; `bypassPermissions` is never used.
+  - `run_command` `{project, repo, command, machine?}` → `{run_id, machine,
+    command, …}`. Commands that need confirming are refused (left to the user).
+  - `get_run` `{run_id}` → `{run: {id, status, kind, runner_name, repo_name,
+    result_excerpt, error, cost_usd, …}}`.
+  - `wait_for_runs` `{run_ids, max_seconds}` → `{runs: [{id, status, …}], timed_out}`.
+  - `create_task`, `update_task` → `{task: Task}`.
+  - `list_projects`, `get_project`, `list_tasks`, `get_task`,
+    `comment_on_task`, `list_machines`, `get_overview`, `list_runs` — shown
+    generically (arguments and result as JSON).
+- A failed tool call is a `tool` message with `is_error: true` and the reason
+  in `content`.

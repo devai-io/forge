@@ -37,5 +37,9 @@ vulnerability) on this repository. Do not open a public issue.
 - Machines join with a one-time pairing code (valid 15 minutes, stored
   hashed, rate-limited); the first account is created with a one-time setup
   token printed by the server. Neither is ever shown again.
+- The Assistant (off unless configured) sends your chat, and what its tools
+  read (projects, tasks, run results), to the LLM provider you configure. It
+  queues runs with the same rules as the web app and cannot use
+  `bypassPermissions` or confirm-only commands.
 - Project files are always served as downloads (`application/octet-stream`,
   sandboxed), never rendered in the app's origin.

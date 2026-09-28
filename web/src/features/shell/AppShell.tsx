@@ -303,7 +303,7 @@ function MobileNav() {
       ) : null}
       <nav
         aria-label="Main"
-        className="safe-bottom fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-line bg-surface/95 backdrop-blur md:hidden"
+        className="safe-bottom fixed inset-x-0 bottom-0 z-40 grid grid-cols-6 border-t border-line bg-surface/95 backdrop-blur md:hidden"
       >
         {NAV.filter((n) => n.mobile).map(({ to, short, icon: Icon, end }) => (
           <NavLink key={to} to={to} end={end} className={({ isActive }) => tab(isActive && !moreOpen)}>

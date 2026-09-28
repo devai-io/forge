@@ -32,6 +32,8 @@ export const SOURCES: Source[] = [
     what: "`git fetch --prune` in every registered repo, then `git merge --ff-only` from the branch's upstream — only when nothing can be lost: no uncommitted tracked changes, no unpushed local commits, no merge or rebase in progress, no agent run working there. Otherwise it only fetches (so \"behind\" is current) and says why it did not pull. Pulled commits land in the activity feed; a failing fetch shows up in the check-up." },
   { name: "Jev decisions (token saving)", tier: "on-demand", who: "the Forge server, with the TypeSafe key from the vault", when: "Only when Settings → Token saving is on: as an agent run is queued, and as a Claude session starts (cached 30 minutes)",
     what: "Short typed questions to TypeSafe's Jev model instead of Claude: whether a run queued without a model is light or ordinary enough for Haiku or Sonnet (only above 70% confidence; otherwise the machine's default), and which open tasks matter for the repo a session opened in (with more than 8 open). Any error or unsure answer changes nothing. With compaction on, every machine's Claude Code also gets the pinned fast-jev-compaction plugin and the key." },
+  { name: "Assistant", tier: "on-demand", who: "the Forge server, with your LLM provider key from the vault", when: "Only when Settings → Assistant is on: each time you send a chat message, until that turn is done or you stop it",
+    what: "Runs an agent loop against your OpenAI-compatible provider (DeepSeek by default) with Forge tools: it reads projects, tasks, machines, runs and the overview, creates, updates and comments on tasks, and delegates to Claude Code by queuing runs on your machines exactly like the New run dialog — the same machine rules and permission modes, never bypassPermissions. Commands that must be confirmed are refused and left to you. The conversation and token counts are kept per chat." },
   { name: "CI status", tier: "automated", who: "the agent on the master, using that machine's own `gh` login", when: "With the repo scan, at most every 15 minutes per repo", factKey: "ci_status",
     what: "The latest GitHub Actions run on each repo's default branch (workflow, conclusion, link). Forge never holds a GitHub token." },
   { name: "Runner heartbeat", tier: "automated", who: "the agent on every machine", when: "Every 10 seconds", factKey: "runner_heartbeat",
@@ -94,6 +96,7 @@ export const STORED: { name: string; origin: string; note: string }[] = [
 
 export const SECURITY: { title: string; body: string }[] = [
   { title: "Jev key", body: "The TypeSafe key is sealed in the vault (tag integration:jev) and only read by the server — and, while compaction is on, handed to your paired machines for their Claude Code. Jev receives run prompts (routing), task titles (context trimming) and, through the plugin, Claude Code transcripts (compaction)." },
+  { title: "Assistant", body: "The provider key is sealed in the vault (tag integration:assistant) and only read by the server. The provider receives your chat, the project and task data its tools return, and run results. What it can make machines do is what you could queue yourself — never bypassPermissions, never a command that needs confirming." },
   { title: "Who can get in", body: "One account. Password (bcrypt) plus, when enabled, a 6-digit authenticator code that can be used once. Wrong passwords are limited to 8 per address and 30 overall per 15 minutes; a sign-in from a device Forge has not seen e-mails you." },
   { title: "Sessions", body: "An HttpOnly, Secure cookie whose value is only stored hashed. It slides for 30 days of use and ends 90 days after sign-in regardless. Every session is listed under Settings with its address and browser, and can be revoked; changing the password revokes the others." },
   { title: "Step-up for the dangerous things", body: "Revealing or downloading a credential, deleting one, attaching a terminal, sending keys, creating a session, opening VS Code, and enrolling two-factor all need the password (and code) again within the last 10 minutes on that session." },
@@ -106,7 +109,7 @@ export const SECURITY: { title: string; body: string }[] = [
 ];
 
 export const NOT_AUTOMATED: string[] = [
-  "Nothing on a server is changed by Forge itself: no deploys, restarts, rotations or SSH. It observes, and it runs what you queue through an agent on your own machines.",
+  "Nothing on a server is changed by Forge itself: no deploys, restarts, rotations or SSH. It observes, and it runs what you queue (yourself, or through the assistant when you ask it to) through an agent on your own machines.",
   "Server records, project notes and vault expiry dates do not update themselves — the check-up warns from what you entered.",
   "Tasks are never completed automatically, including the ones created from a check-up item.",
   "Machines sleep; anything that needs one (e.g. iOS builds on a Mac) waits until it wakes. The daily check-up ignores sleeping non-master machines on purpose.",

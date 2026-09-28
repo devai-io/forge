@@ -55,3 +55,22 @@ func (s *Store) JevSettings(ctx context.Context) (JevSettings, error) {
 func (s *Store) SetJevSettings(ctx context.Context, v JevSettings) error {
 	return s.putSetting(ctx, "jev", v)
 }
+
+// AssistantSettings configure the Assistant's LLM provider (any
+// OpenAI-compatible chat-completions API). The key is the vault item tagged
+// integration:assistant.
+type AssistantSettings struct {
+	Enabled bool   `json:"enabled"`
+	BaseURL string `json:"base_url"`
+	Model   string `json:"model"`
+}
+
+func (s *Store) AssistantSettings(ctx context.Context) (AssistantSettings, error) {
+	v := AssistantSettings{BaseURL: "https://api.deepseek.com", Model: "deepseek-flash"}
+	_, err := s.getSetting(ctx, "assistant", &v)
+	return v, err
+}
+
+func (s *Store) SetAssistantSettings(ctx context.Context, v AssistantSettings) error {
+	return s.putSetting(ctx, "assistant", v)
+}

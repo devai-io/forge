@@ -1,0 +1,241 @@
+// Assistant display helpers: pairing tool calls with their results, and the
+// one-line summaries the conversation shows for them. (The cache merging the
+// hooks need lives in lib/chats, so this stays out of the main bundle.)
+//
+// Tool arguments and results are whatever the server's agent loop produced,
+// typed `unknown` in the contract — every read here is defensive, so an
+// unexpected shape degrades to a plainer line instead of breaking the page.
+
+import { ApiError } from "@/api/client";
+import type { ChatMessage, ChatToolCall, ChatUsage, RunStatus } from "@/api/types";
+
+/** Where the Settings panel lives, for links from the page's "off" state. */
+export const ASSISTANT_SETTINGS_PATH = "/settings#settings-assistant";
+
+export const EXAMPLE_PROMPTS = [
+  "What needs my attention across my projects today?",
+  "Review the open SHOP bugs and fix the easiest one on desk",
+  "Run the tests for GAME on laptop and tell me what fails",
+  "Create a GAME task for a pause menu, then have Claude Code plan it",
+];
+
+/** The API says the assistant is off (not enabled, or no key stored). */
+export const isAssistantOff = (err: unknown) => err instanceof ApiError && err.code === "assistant_off";
+
+// ── Display model ──────────────────────────────────────────────────────────
+
+export type ChatItem =
+  | { kind: "user"; key: string; message: ChatMessage }
+  | { kind: "assistant"; key: string; message: ChatMessage }
+  // `result` is null while the tool is still running.
+  | { kind: "tool"; key: string; call: ChatToolCall; result: ChatMessage | null };
+
+/**
+ * Messages → what the conversation renders. An assistant turn becomes its
+ * prose (when it has any) followed by one row per tool call, each paired with
+ * the tool message that answers it; tool messages are never shown on their own
+ * unless nothing called them.
+ */
+export function buildChatItems(messages: ChatMessage[]): ChatItem[] {
+  const results = new Map<string, ChatMessage>();
+  for (const m of messages) if (m.role === "tool" && m.tool_call_id) results.set(m.tool_call_id, m);
+  const called = new Set<string>();
+  const items: ChatItem[] = [];
+  for (const m of messages) {
+    if (m.role === "user") {
+      items.push({ kind: "user", key: `m${m.seq}`, message: m });
+    } else if (m.role === "assistant") {
+      if (m.content.trim()) items.push({ kind: "assistant", key: `m${m.seq}`, message: m });
+      for (const call of m.tool_calls ?? []) {
+        called.add(call.id);
+        items.push({ kind: "tool", key: `t${m.seq}-${call.id}`, call, result: results.get(call.id) ?? null });
+      }
+    } else if (!called.has(m.tool_call_id)) {
+      items.push({
+        kind: "tool",
+        key: `m${m.seq}`,
+        call: { id: m.tool_call_id, name: m.tool_name, arguments: {} },
+        result: m,
+      });
+    }
+  }
+  return items;
+}
+
+// ── Tool rows ──────────────────────────────────────────────────────────────
+
+export type ToolView = {
+  // delegate / command: a card with a live run badge; runs / task / generic: one line.
+  kind: "delegate" | "command" | "runs" | "task" | "generic";
+  text: string;
+  runId: number | null; // the run a delegate / command queued
+  task: { id: number; ref: string } | null; // create / update: the task to open
+  prompt: string;
+  permissionMode: string;
+  model: string;
+  modelNote: string;
+};
+
+type Obj = Record<string, unknown>;
+const obj = (v: unknown): Obj => (v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : {});
+const str = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "");
+const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+const RUN_STATUS: Record<RunStatus, string> = {
+  queued: "queued",
+  running: "still running",
+  succeeded: "succeeded",
+  failed: "failed",
+  cancelled: "cancelled",
+};
+const statusWord = (s: unknown) => RUN_STATUS[s as RunStatus] ?? (str(s) || "unknown");
+
+// Tools with nothing to link to: past tense for the row, the bare verb for
+// "Couldn't …" when the tool failed.
+const GENERIC: Record<string, (a: Obj) => [past: string, verb: string]> = {
+  list_projects: () => ["Looked at projects", "look at projects"],
+  get_project: (a) => {
+    const p = str(a.project ?? a.key);
+    return p ? [`Looked at project ${p}`, `look at project ${p}`] : ["Looked at a project", "look at a project"];
+  },
+  list_tasks: (a) => {
+    const p = str(a.project ?? a.project_key);
+    return p ? [`Listed tasks in ${p}`, `list tasks in ${p}`] : ["Listed tasks", "list tasks"];
+  },
+  get_task: (a) => {
+    const ref = taskRefArg(a);
+    return ref ? [`Looked at ${ref}`, `look at ${ref}`] : ["Looked at a task", "look at a task"];
+  },
+  comment_on_task: (a) => {
+    const ref = taskRefArg(a);
+    return ref ? [`Commented on ${ref}`, `comment on ${ref}`] : ["Commented on a task", "comment on a task"];
+  },
+  list_machines: () => ["Checked the machines", "check the machines"],
+  get_overview: () => ["Looked at the overview", "look at the overview"],
+  list_runs: () => ["Listed runs", "list runs"],
+};
+
+function taskRefArg(a: Obj): string {
+  const ref = str(a.ref ?? a.task_ref ?? a.task);
+  if (ref) return ref;
+  const id = num(a.id ?? a.task_id);
+  return id !== null ? `task #${id}` : "";
+}
+
+const humanName = (name: string) => name.replace(/_/g, " ").trim() || "a tool";
+
+const runList = (ids: unknown): string =>
+  (Array.isArray(ids) ? ids : [])
+    .map((id) => num(id))
+    .filter((id): id is number => id !== null)
+    .map((id) => `#${id}`)
+    .join(", ");
+
+/**
+ * The one line (and, for delegations and commands, the card facts) a tool call
+ * shows in the conversation. `result` is undefined while the call is still
+ * running; `isError` marks a failed call, whose message the row shows next to it.
+ */
+export function describeToolCall(name: string, args: Obj, result: unknown, isError = false): ToolView {
+  const pending = result === undefined;
+  const r = obj(result);
+  const view: ToolView = {
+    kind: "generic",
+    text: "",
+    runId: null,
+    task: null,
+    prompt: "",
+    permissionMode: "",
+    model: "",
+    modelNote: "",
+  };
+
+  switch (name) {
+    case "delegate_to_claude": {
+      const machine = str(r.machine) || str(args.machine);
+      const where = [str(r.project) || str(args.project), str(r.repo) || str(args.repo)].filter(Boolean).join("/");
+      const on = machine ? ` on ${machine}` : "";
+      const tail = where ? ` · ${where}` : "";
+      return {
+        ...view,
+        kind: "delegate",
+        text: isError
+          ? `Couldn't delegate to Claude Code${tail}`
+          : `${pending ? "Delegating" : "Delegated"} to Claude Code${on}${tail}`,
+        runId: num(r.run_id),
+        prompt: str(args.prompt),
+        permissionMode: str(r.permission_mode) || str(args.permission_mode),
+        model: str(r.model) || str(args.model),
+        modelNote: str(r.model_note),
+      };
+    }
+    case "run_command": {
+      const command = str(r.command) || str(args.command) || "a command";
+      const machine = str(r.machine) || str(args.machine);
+      const on = machine ? ` on ${machine}` : "";
+      return {
+        ...view,
+        kind: "command",
+        text: isError ? `Couldn't run ${command}${on}` : `${pending ? "Running" : "Ran"} ${command}${on}`,
+        runId: num(r.run_id),
+      };
+    }
+    case "get_run": {
+      const run = obj(r.run);
+      const id = num(run.id) ?? num(args.run_id);
+      const label = id !== null ? `run #${id}` : "a run";
+      if (isError) return { ...view, kind: "runs", text: `Couldn't check ${label}` };
+      if (pending) return { ...view, kind: "runs", text: `Checking ${label}…` };
+      return { ...view, kind: "runs", text: `Checked ${label} — ${statusWord(run.status)}` };
+    }
+    case "wait_for_runs": {
+      const ids = runList(args.run_ids);
+      const label = ids ? `${ids.includes(",") ? "runs" : "run"} ${ids}` : "runs";
+      if (isError) return { ...view, kind: "runs", text: `Couldn't check ${label}` };
+      if (pending) return { ...view, kind: "runs", text: `Waiting for ${label}…` };
+      const runs = (Array.isArray(r.runs) ? r.runs : []).map(obj);
+      const parts = runs.map((run) => `#${str(run.id)} — ${statusWord(run.status)}`);
+      const text = parts.length ? `Checked ${parts.length === 1 ? "run" : "runs"} ${parts.join(", ")}` : `Checked ${label}`;
+      return { ...view, kind: "runs", text: r.timed_out === true ? `${text} · stopped waiting` : text };
+    }
+    case "create_task":
+    case "update_task": {
+      const task = obj(r.task);
+      const id = num(task.id);
+      const ref = str(task.ref) || taskRefArg(args);
+      const title = str(task.title) || str(args.title);
+      const creating = name === "create_task";
+      if (isError) {
+        return { ...view, kind: "task", text: creating ? `Couldn't create task${title ? ` “${title}”` : ""}` : `Couldn't update ${ref || "a task"}` };
+      }
+      if (pending) {
+        return { ...view, kind: "task", text: creating ? `Creating task${title ? ` “${title}”` : ""}…` : `Updating ${ref || "a task"}…` };
+      }
+      const status = !creating ? str(args.status) : "";
+      return {
+        ...view,
+        kind: "task",
+        text: `${creating ? "Created" : "Updated"} ${ref || "a task"}${title ? ` · ${title}` : ""}${status ? ` → ${status.replace(/_/g, " ")}` : ""}`,
+        task: id !== null && ref ? { id, ref } : null,
+      };
+    }
+  }
+
+  const [past, verb] = GENERIC[name]?.(args) ?? [`Used ${humanName(name)}`, `use ${humanName(name)}`];
+  return { ...view, text: isError ? `Couldn't ${verb}` : past };
+}
+
+// ── Numbers ────────────────────────────────────────────────────────────────
+
+/** 950 / 12.3k / 1.1M */
+export function formatTokens(n: number): string {
+  if (!Number.isFinite(n) || n < 1000) return String(Math.max(0, Math.round(n || 0)));
+  if (n < 999_950) return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+  return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+}
+
+/** "12.3k in / 1.1k out tokens" */
+export function usageLabel(usage: ChatUsage | null | undefined): string {
+  if (!usage) return "";
+  return `${formatTokens(usage.input_tokens)} in / ${formatTokens(usage.output_tokens)} out tokens`;
+}

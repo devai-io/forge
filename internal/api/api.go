@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/devai-io/forge/internal/assistant"
 	"github.com/devai-io/forge/internal/checkup"
 	"github.com/devai-io/forge/internal/config"
 	"github.com/devai-io/forge/internal/jev"
@@ -55,6 +56,9 @@ type Server struct {
 	jev        *jev.Client
 	jevCacheMu sync.Mutex
 	jevCache   map[string]relevanceEntry
+
+	assistant *assistant.Assistant
+	models    modelsCache
 }
 
 // Deps are the optional collaborators; a zero value turns the feature off
@@ -82,6 +86,7 @@ func New(cfg config.Config, st *store.Store, m *mail.Mailer, mon *monitor.Monito
 		jevCache:  map[string]relevanceEntry{},
 	}
 	s.jev = jev.New(s.jevKey)
+	s.assistant = assistant.New(st, assistant.Hooks{Key: s.assistantKey, Route: s.jevRoute, Queued: s.wakeups.notify})
 	return s
 }
 
@@ -116,6 +121,17 @@ func (s *Server) Handler() http.Handler {
 	h("PATCH /api/jev", s.authed(s.updateJev))
 	h("PUT /api/jev/key", s.authed(s.elevated(s.setJevKey)))
 	h("POST /api/jev/test", s.authed(s.testJev))
+
+	h("GET /api/assistant", s.authed(s.getAssistant))
+	h("PATCH /api/assistant", s.authed(s.updateAssistant))
+	h("PUT /api/assistant/key", s.authed(s.elevated(s.setAssistantKey)))
+	h("GET /api/chats", s.authed(s.listChats))
+	h("POST /api/chats", s.authed(s.createChat))
+	h("GET /api/chats/{id}", s.authed(s.getChat))
+	h("POST /api/chats/{id}/messages", s.authed(s.sendChatMessage))
+	h("POST /api/chats/{id}/stop", s.authed(s.stopChat))
+	h("PATCH /api/chats/{id}", s.authed(s.renameChat))
+	h("DELETE /api/chats/{id}", s.authed(s.deleteChat))
 	h("DELETE /api/auth/sessions/{id}", s.authed(s.deleteSession))
 
 	h("POST /api/auth/elevate", s.authed(s.elevate))

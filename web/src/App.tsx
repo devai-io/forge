@@ -25,6 +25,7 @@ const EditorPage = lazy(() => import("@/features/editor/EditorPage").then((m) =>
 const MonitoringPage = lazy(() => import("@/features/monitoring/MonitoringPage").then((m) => ({ default: m.MonitoringPage })));
 const SettingsPage = lazy(() => import("@/features/settings/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const VaultPage = lazy(() => import("@/features/vault/VaultPage").then((m) => ({ default: m.VaultPage })));
+const AssistantPage = lazy(() => import("@/features/assistant/AssistantPage").then((m) => ({ default: m.AssistantPage })));
 const DocsPage = lazy(() => import("@/features/docs/DocsPage").then((m) => ({ default: m.DocsPage })));
 
 const page = (el: React.ReactNode) => <Suspense fallback={<FullPageSpinner />}>{el}</Suspense>;
@@ -49,6 +50,8 @@ export function App() {
           }
         >
           <Route index element={<DashboardPage />} />
+          <Route path="assistant" element={page(<AssistantPage />)} />
+          <Route path="assistant/:chatId" element={page(<AssistantPage />)} />
           <Route path="terminal" element={<TerminalPage />} />
           <Route path="terminal/:runnerId/:session" element={page(<TerminalView />)} />
           <Route path="editor" element={page(<EditorPage />)} />

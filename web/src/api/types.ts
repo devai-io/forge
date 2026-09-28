@@ -670,7 +670,11 @@ export type SecurityKind =
   | "runner_created"
   | "runner_pair_code"
   | "runner_paired"
-  | "runner_rotated";
+  | "runner_rotated"
+  | "jev_settings"
+  | "jev_key"
+  | "assistant_settings"
+  | "assistant_key";
 
 export type SecurityEvent = {
   id: number;
@@ -749,3 +753,46 @@ export type JevStatus = {
     last_model: string;
   };
 };
+
+// ── Assistant (a chat that runs Forge and delegates to Claude Code) ────────
+
+export type AssistantSettings = {
+  enabled: boolean;
+  base_url: string; // OpenAI-compatible API base, default "https://api.deepseek.com"
+  model: string; // default "deepseek-flash"
+};
+
+export type AssistantStatus = {
+  settings: AssistantSettings;
+  key_configured: boolean; // the key itself is never returned
+  models: string[]; // what the provider lists for this key ([] if unknown/unreachable)
+};
+
+export type ChatUsage = { input_tokens: number; output_tokens: number; cached_tokens: number };
+
+export type Chat = {
+  id: number;
+  title: string;
+  busy: boolean; // the agent is working on this chat right now
+  last_error: string; // "" or why the last turn failed
+  usage: ChatUsage; // totals for the chat
+  created_at: string;
+  updated_at: string;
+};
+
+export type ChatToolCall = { id: string; name: string; arguments: Record<string, unknown> };
+
+export type ChatMessage = {
+  seq: number; // increasing per chat, starts at 1
+  role: "user" | "assistant" | "tool";
+  content: string; // markdown for user/assistant; for tool: a short human summary line
+  tool_calls: ChatToolCall[]; // assistant messages that call tools ([] otherwise)
+  tool_call_id: string; // tool messages: which call this answers ("" otherwise)
+  tool_name: string; // tool messages: the tool's name ("" otherwise)
+  result: unknown; // tool messages: the structured result (object), else null
+  is_error: boolean; // tool messages: the tool failed
+  created_at: string;
+};
+
+/** GET /api/chats/{id}, POST /api/chats and POST /api/chats/{id}/messages. */
+export type ChatThread = { chat: Chat; messages: ChatMessage[] };

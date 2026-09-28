@@ -13,8 +13,13 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { api, ApiError, isElevationError } from "./client";
+import { lastSeq, mergeMessages, upsertChat } from "@/lib/chats";
 import type {
   Activity,
+  AssistantSettings,
+  AssistantStatus,
+  Chat,
+  ChatThread,
   Checkup,
   CheckupSummary,
   MeResponse,
@@ -92,6 +97,9 @@ export const keys = {
   security: (kind: string, limit: number) => ["security", kind, limit] as const,
   system: ["system"] as const,
   terminalCapture: (runnerId: number, name: string) => ["terminal-capture", runnerId, name] as const,
+  assistant: ["assistant"] as const,
+  chats: ["chats"] as const,
+  chat: (id: number) => ["chat", id] as const,
 };
 
 export type VaultFilters = { project?: string; q?: string; kind?: string };
@@ -674,10 +682,13 @@ export function useRuns(filters: RunFilters, refetchInterval: number | false = 8
   });
 }
 
-export function useRun(id: number) {
+/** `live`: poll every 3 s while the run is queued or running (the run page polls its events instead). */
+export function useRun(id: number, { live = false }: { live?: boolean } = {}) {
   return useQuery({
     queryKey: keys.run(id),
     queryFn: () => api.get<Run>(`/runs/${id}`),
+    enabled: id > 0,
+    refetchInterval: live ? (query) => (isActiveRun(query.state.data) ? 3_000 : false) : undefined,
   });
 }
 
@@ -1063,5 +1074,139 @@ export function useSetJevKey() {
 export function useTestJev() {
   return useMutation({
     mutationFn: () => api.post<{ ok: boolean; ms?: number; error?: string }>("/jev/test"),
+  });
+}
+
+// ── Assistant ─────────────────────────────────────────────────────────────
+//
+// The agent loop runs on the server. The page posts a message, then polls the
+// chat for new messages (`after` the last seq it holds) while `chat.busy`,
+// the same incremental pattern as a run's transcript.
+
+export function useAssistant() {
+  return useQuery({ queryKey: keys.assistant, queryFn: () => api.get<AssistantStatus>("/assistant") });
+}
+
+export function useUpdateAssistant() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: Partial<AssistantSettings>) => api.patch<AssistantStatus>("/assistant", patch),
+    onSuccess: (s) => qc.setQueryData(keys.assistant, s),
+  });
+}
+
+/** Stores the provider key in the vault (needs a recent password confirmation). */
+export function useSetAssistantKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (apiKey: string) => api.put<AssistantStatus>("/assistant/key", { api_key: apiKey }),
+    onSuccess: (s) => {
+      qc.setQueryData(keys.assistant, s);
+      void qc.invalidateQueries({ queryKey: ["vault"] });
+    },
+  });
+}
+
+/** Put a chat's latest state wherever it is cached: the list and its thread. */
+function storeChat(qc: QueryClient, chat: Chat) {
+  qc.setQueryData<Chat[]>(keys.chats, (old) => (old ? upsertChat(old, chat) : old));
+  qc.setQueryData<ChatThread>(keys.chat(chat.id), (old) => (old ? { ...old, chat } : old));
+}
+
+function storeThread(qc: QueryClient, thread: ChatThread) {
+  qc.setQueryData<ChatThread>(keys.chat(thread.chat.id), (old) => ({
+    chat: thread.chat,
+    messages: mergeMessages(old?.messages ?? [], thread.messages),
+  }));
+  qc.setQueryData<Chat[]>(keys.chats, (old) => (old ? upsertChat(old, thread.chat) : old));
+}
+
+export function useChats() {
+  return useQuery({
+    queryKey: keys.chats,
+    queryFn: ({ signal }) => api.get<{ chats: Chat[] }>("/chats", undefined, signal).then((r) => r.chats),
+    // A busy chat may get its title from the agent; otherwise nothing changes by itself.
+    refetchInterval: (query) => (query.state.data?.some((c) => c.busy) ? 5_000 : false),
+  });
+}
+
+export function useChat(id: number | null) {
+  const qc = useQueryClient();
+  return useQuery({
+    queryKey: keys.chat(id ?? 0),
+    queryFn: async ({ signal }) => {
+      const prev = qc.getQueryData<ChatThread>(keys.chat(id!));
+      const after = lastSeq(prev?.messages);
+      const res = await api.get<ChatThread>(`/chats/${id}`, { after: after || undefined }, signal);
+      qc.setQueryData<Chat[]>(keys.chats, (old) => (old ? upsertChat(old, res.chat) : old));
+      return { chat: res.chat, messages: mergeMessages(prev?.messages ?? [], res.messages) };
+    },
+    enabled: id !== null && id > 0,
+    refetchInterval: (query) => (query.state.data?.chat.busy ? 1500 : false),
+    structuralSharing: false,
+  });
+}
+
+// 503 assistant_off: switched off (or its key removed) since the page loaded.
+function onAssistantError(qc: QueryClient, err: unknown) {
+  if (err instanceof ApiError && err.code === "assistant_off") void qc.invalidateQueries({ queryKey: keys.assistant });
+}
+
+/** Creates the chat with its first message; the agent starts on it right away. */
+export function useCreateChat() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (content: string) => api.post<ChatThread>("/chats", { content }),
+    onSuccess: (thread) => {
+      storeThread(qc, thread);
+      void qc.invalidateQueries({ queryKey: keys.chats });
+    },
+    onError: (err) => onAssistantError(qc, err),
+  });
+}
+
+/** 409 `busy` while the agent is still on the previous turn. */
+export function useSendMessage(chatId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (content: string) => api.post<ChatThread>(`/chats/${chatId}/messages`, { content }),
+    onSuccess: (thread) => storeThread(qc, thread),
+    onError: (err) => {
+      onAssistantError(qc, err);
+      // Busy after all: pick the running turn back up.
+      if (err instanceof ApiError && err.code === "busy") void qc.invalidateQueries({ queryKey: keys.chat(chatId) });
+    },
+  });
+}
+
+export function useStopChat(chatId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<{ chat: Chat }>(`/chats/${chatId}/stop`).then((r) => r.chat),
+    onSuccess: (chat) => {
+      storeChat(qc, chat);
+      // Whatever the turn wrote before it stopped.
+      void qc.invalidateQueries({ queryKey: keys.chat(chatId) });
+    },
+  });
+}
+
+export function useRenameChat(chatId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (title: string) => api.patch<{ chat: Chat }>(`/chats/${chatId}`, { title }).then((r) => r.chat),
+    onSuccess: (chat) => storeChat(qc, chat),
+  });
+}
+
+export function useDeleteChat() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.del(`/chats/${id}`),
+    onSuccess: (_d, id) => {
+      qc.setQueryData<Chat[]>(keys.chats, (old) => old?.filter((c) => c.id !== id));
+      qc.removeQueries({ queryKey: keys.chat(id) });
+      void qc.invalidateQueries({ queryKey: keys.chats });
+    },
   });
 }
