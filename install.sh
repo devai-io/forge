@@ -60,7 +60,9 @@ else
   die "needs curl or wget"
 fi
 
-if [ "$VERSION" = "latest" ]; then
+if [ -n "${FORGE_DOWNLOAD_BASE:-}" ]; then
+  BASE="$FORGE_DOWNLOAD_BASE"   # a mirror holding the release assets
+elif [ "$VERSION" = "latest" ]; then
   BASE="https://github.com/$REPO/releases/latest/download"
 else
   BASE="https://github.com/$REPO/releases/download/$VERSION"
@@ -83,10 +85,15 @@ else
 fi
 [ "$WANT" = "$GOT" ] || die "checksum mismatch for $ARCHIVE"
 
-tar -xzf "$TMP/$ARCHIVE" -C "$TMP"
-mkdir -p "$DIR"
-install -m 755 "$TMP/forge" "$DIR/forge" 2>/dev/null || { cp "$TMP/forge" "$DIR/forge" && chmod 755 "$DIR/forge"; }
-say "Installed $("$DIR/forge" version) to $DIR/forge"
+mkdir -p "$TMP/x" "$DIR"
+tar -xzf "$TMP/$ARCHIVE" -C "$TMP/x"
+BIN="$TMP/x/forge_${OS}_${ARCH}/forge"
+[ -f "$BIN" ] || BIN="$TMP/x/forge"
+[ -f "$BIN" ] || die "no forge binary in $ARCHIVE"
+cp "$BIN" "$DIR/forge.new"
+chmod 755 "$DIR/forge.new"
+mv -f "$DIR/forge.new" "$DIR/forge"   # atomic: a running agent keeps its old binary
+say "Installed forge $("$DIR/forge" version) to $DIR/forge"
 
 case ":$PATH:" in
   *":$DIR:"*) ;;
