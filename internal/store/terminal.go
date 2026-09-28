@@ -217,9 +217,13 @@ type PathContext struct {
 	Markdown   string  `json:"markdown"`
 }
 
+// TaskTrimmer picks, from a project's open tasks (most important first), the
+// ones worth telling a session opened in repo about. nil keeps them all.
+type TaskTrimmer func(ctx context.Context, repo *Repo, tasks []Task) ([]Task, string)
+
 // ContextForPath renders what a Claude session opened in `cwd` should know
 // about its Forge project, compactly: it is injected at every session start.
-func (s *Store) ContextForPath(ctx context.Context, cwd string) (*PathContext, error) {
+func (s *Store) ContextForPath(ctx context.Context, cwd string, trim TaskTrimmer) (*PathContext, error) {
 	idx, err := s.loadPathIndex(ctx)
 	if err != nil {
 		return nil, err
@@ -315,7 +319,15 @@ func (s *Store) ContextForPath(ctx context.Context, cwd string) (*PathContext, e
 			}
 			return prio[tasks[i].Priority] < prio[tasks[j].Priority]
 		})
-		w("\n## Open tasks (%d)\n", len(tasks))
+		total, note := len(tasks), ""
+		if trim != nil && repo != nil {
+			tasks, note = trim(ctx, &repo.Repo, tasks)
+		}
+		if len(tasks) < total {
+			w("\n## Open tasks (%d of %d — %s; forge_tasks lists all)\n", len(tasks), total, note)
+		} else {
+			w("\n## Open tasks (%d)\n", total)
+		}
 		for i, t := range tasks {
 			if i == 20 {
 				w("- …and %d more (forge_tasks)\n", len(tasks)-20)

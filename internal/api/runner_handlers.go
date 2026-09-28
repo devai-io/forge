@@ -37,7 +37,7 @@ func (s *Server) runnerHeartbeat(w http.ResponseWriter, r *http.Request, rn *sto
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"runner_id": rn.ID, "role": rn.Role, "scan": scan,
-		"cancel": cancel, "repos": repos})
+		"cancel": cancel, "repos": repos, "jev_rev": s.runnerJevConfig(r.Context())["rev"]})
 }
 
 // runnerClaim long-polls for up to claimWait (25 s). It wakes early when a run is queued

@@ -733,6 +733,40 @@ all, per 15 minutes):
   used or expired code; `429 rate_limited`. The returned `token` replaces the
   machine's previous one.
 
+## Jev (token saving)
+
+TypeSafe's Jev answers typed questions (yes/no probabilities, pick-one) for a
+fraction of Claude's tokens. Off until enabled; the key is the `value` secret of
+the newest vault item tagged `integration:jev`. Every use fails open.
+
+```ts
+type JevSettings = { enabled: boolean; routing: boolean; context: boolean; compaction: boolean };
+type JevStatus = {
+  settings: JevSettings;
+  key_configured: boolean;                   // the key itself is never returned
+  stats: { calls: number; errors: number; input_tokens: number; last_at: string | null;
+           last_error: string; last_model: string };  // since the server started
+};
+type Run = { /* … */ model_note: string };   // "Jev: light task (91% sure) → haiku", else ""
+```
+
+- `GET /api/jev` → `JevStatus`. `PATCH /api/jev` `Partial<JevSettings>` → `JevStatus`.
+- `PUT /api/jev/key` `{api_key}` → `JevStatus` (elevation; creates/updates the vault item).
+- `POST /api/jev/test` → `{ok, ms?, error?}` — one tiny call.
+- **Routing**: `POST /api/runs` for `kind: "agent"` with no `model` (and not a resume)
+  asks Jev light / medium / heavy; ≥ 70 % confident light → `haiku`, medium →
+  `sonnet`; otherwise the model stays `""` (the machine's default).
+- **Context**: `GET /api/runner/context` lists, when a project has more than 8 open
+  tasks, the always-kept ones (focus, in progress, blocked, urgent, the repo's own)
+  plus up to 12 in total that Jev scores ≥ 0.4 relevant to the repo; the heading
+  says so. Scores are cached 30 minutes per task set.
+- **Machines**: the heartbeat answer carries `jev_rev`; when it changes the agent
+  reads `GET /api/runner/jev` → `{compaction, api_key?, plugin_repo, plugin_commit,
+  rev}` and, with compaction on, installs the plugin at exactly `plugin_commit` and
+  sets `TYPESAFE_API_KEY` + `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` in
+  `~/.claude/settings.json` (marked `FORGE_MANAGES_JEV`); off undoes only that.
+  `"claude_jev": false` in `agent.json` opts a machine out.
+
 ## Accent
 
 ```ts

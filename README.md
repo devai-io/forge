@@ -29,6 +29,9 @@ One binary, one SQLite file, one folder. MIT licensed.
   VictoriaMetrics, Grafana alerts and Nomad jobs, turned into a daily action list.
 - **Vault** — keys, keystores and service accounts, encrypted with a key kept
   outside the database; revealing needs your password again; everything audited.
+- **Token saving (optional)** — with a TypeSafe key, Jev picks cheaper models for
+  light agent runs, trims the context Claude sessions start with, and compacts long
+  Claude Code sessions on every machine.
 - **Security** — password + optional TOTP, step-up confirmation for sensitive
   actions, security log, new-device sign-in e-mails.
 

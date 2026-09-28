@@ -123,7 +123,7 @@ function RunView({ run, events, loadingEvents }: { run: Run; events: RunEvent[] 
         <dl className="grid grid-cols-2 gap-2 rounded-lg border border-line bg-surface p-3 text-[12px] sm:grid-cols-4 lg:grid-cols-6">
           {[
             ["Mode", run.kind === "agent" ? run.permission_mode || "—" : "command"],
-            ["Model", run.model || "default"],
+            ["Model", run.model_note ? `${run.model} — ${run.model_note}` : run.model || "default"],
             ["Worktree", run.worktree ? "yes" : "no"],
             ["Cost", formatCost(run.cost_usd)],
             ["Turns", run.num_turns ?? "—"],

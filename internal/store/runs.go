@@ -237,7 +237,7 @@ SELECT r.id, coalesce(r.runner_id, 0), coalesce(rn.name, r.runner_name), r.proje
        r.repo_id, rp.name, r.task_id, CASE WHEN t.id IS NULL THEN NULL ELSE tp.key || '-' || t.number END,
        r.kind, r.prompt, r.command, r.permission_mode, r.model, r.worktree, r.resume_run_id, r.status,
        r.cancel_requested, r.session_id, r.result, r.error, r.exit_code, r.cost_usd, r.num_turns, r.duration_ms,
-       r.created_at, r.started_at, r.finished_at, rp.path, r.resume_session
+       r.created_at, r.started_at, r.finished_at, rp.path, r.resume_session, r.model_note
 FROM runs r
 JOIN projects p ON p.id = r.project_id
 JOIN repos rp ON rp.id = r.repo_id
@@ -251,7 +251,7 @@ func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 		&r.RepoID, &r.RepoName, &r.TaskID, &r.TaskRef, &r.Kind, &r.Prompt, &r.Command, &r.PermissionMode,
 		&r.Model, &r.Worktree, &r.ResumeRunID, &r.Status, &r.CancelRequested, &r.SessionID, &r.Result, &r.Error,
 		&r.ExitCode, &r.CostUSD, &r.NumTurns, &r.DurationMS, &r.CreatedAt, &r.StartedAt, &r.FinishedAt,
-		&r.RepoPath, &r.ResumeSession); err != nil {
+		&r.RepoPath, &r.ResumeSession, &r.ModelNote); err != nil {
 		return nil, mapErr(err)
 	}
 	return &r, nil
@@ -331,6 +331,9 @@ type RunInput struct {
 	TaskID         *int64 `json:"task_id"`
 	ResumeRunID    *int64 `json:"resume_run_id"`
 	Confirmed      bool   `json:"confirmed"`
+	// ModelNote says why Model was chosen, when Forge chose it (set by the
+	// server, never by the client).
+	ModelNote string `json:"-"`
 }
 
 // CreateRun validates a run against what its runner says it can do, then
@@ -432,10 +435,10 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 	err = s.tx(ctx, func(tx pgxTx) error {
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO runs (runner_id, runner_name, project_id, repo_id, task_id, kind, prompt, command,
-			                  permission_mode, model, worktree, resume_run_id, resume_session)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
+			                  permission_mode, model, worktree, resume_run_id, resume_session, model_note)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
 			runner.ID, runner.Name, repo.ProjectID, repo.ID, in.TaskID, in.Kind, in.Prompt, in.Command,
-			in.PermissionMode, in.Model, in.Worktree, in.ResumeRunID, resumeSession).Scan(&id); err != nil {
+			in.PermissionMode, in.Model, in.Worktree, in.ResumeRunID, resumeSession, in.ModelNote).Scan(&id); err != nil {
 			return mapErr(err)
 		}
 		what := in.Command

@@ -519,7 +519,7 @@ func (s *Server) terminalCreate(w http.ResponseWriter, r *http.Request, u *store
 
 func (s *Server) runnerContext(w http.ResponseWriter, r *http.Request, rn *store.Runner) {
 	cwd := r.URL.Query().Get("cwd")
-	ctxInfo, err := s.store.ContextForPath(r.Context(), cwd)
+	ctxInfo, err := s.store.ContextForPath(r.Context(), cwd, s.jevTaskTrimmer(r.Context()))
 	if err != nil {
 		writeErr(w, r, err)
 		return

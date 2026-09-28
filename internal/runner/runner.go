@@ -31,8 +31,13 @@ type Runner struct {
 	lastSync time.Time
 	syncs    map[int64]*syncResult // the latest sync per repo, reported with every scan
 
-	scanOK bool
-	role   string
+	scanOK  bool
+	role    string
+	jevRev  string // the Jev settings revision last applied to Claude Code
+	jevBusy bool
+	// jevRetryAt holds off another attempt after a failed one (no claude,
+	// no network) so a broken setup is not retried every heartbeat.
+	jevRetryAt time.Time
 }
 
 func New(cfg *Config) *Runner {
@@ -142,7 +147,9 @@ func (r *Runner) heartbeat(ctx context.Context) error {
 		Repos  []repoRef `json:"repos"`
 		Role   string    `json:"role"`
 		Scan   *bool     `json:"scan"`
+		JevRev string    `json:"jev_rev"`
 	}
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	body := map[string]any{
@@ -174,7 +181,19 @@ func (r *Runner) heartbeat(ctx context.Context) error {
 			stop()
 		}
 	}
+	startJev := resp.JevRev != "" && resp.JevRev != r.jevRev && !r.jevBusy && time.Now().After(r.jevRetryAt)
+	if startJev {
+		r.jevBusy = true
+	}
 	r.mu.Unlock()
+	if startJev { // may install a plugin: off the heartbeat's clock
+		go func() {
+			r.syncJev(parent, resp.JevRev)
+			r.mu.Lock()
+			r.jevBusy = false
+			r.mu.Unlock()
+		}()
+	}
 	if first {
 		select {
 		case r.rescan <- struct{}{}:

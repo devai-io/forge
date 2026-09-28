@@ -206,6 +206,22 @@ changes, ahead/behind and CI; runs and terminals open there.
 
 Check: the project page shows git state for each repo within 5 minutes.
 
+### 2d. Optional: token saving with Jev
+
+With a [TypeSafe](https://jevtypesafeai.com) API key, Forge uses Jev (a small
+decision model) instead of Claude for routine judgements: **Settings → Token
+saving**, paste the key, switch on. Or on the server:
+
+```bash
+forge jev set-key < key.txt     # stored sealed in the vault
+forge jev on
+forge jev status
+```
+
+With "compaction" on, each machine's agent installs the pinned
+`fast-jev-compaction` Claude Code plugin within a heartbeat or two. Opt a
+machine out with `"claude_jev": false` in its `agent.json`.
+
 ---
 
 ## 3. Configuration reference (server)

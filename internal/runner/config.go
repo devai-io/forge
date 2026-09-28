@@ -51,6 +51,9 @@ type Config struct {
 	MaxConcurrent int    `json:"max_concurrent"`
 	MaxRunMinutes int    `json:"max_run_minutes"`
 	ScanInterval  string `json:"scan_interval"`
+	// ClaudeJev: false keeps Forge from wiring Jev compaction into this
+	// machine's Claude Code even when the server has it on. Default true.
+	ClaudeJev *bool `json:"claude_jev"`
 	// PullInterval is how often the scanning machine fetches every repo and
 	// fast-forwards the clean ones (sync.go). Default 30m; "0" turns it off.
 	PullInterval string `json:"pull_interval"`
@@ -233,6 +236,8 @@ func (c *Config) normalize() error {
 	}
 	return nil
 }
+
+func (c *Config) claudeJev() bool { return c.ClaudeJev == nil || *c.ClaudeJev }
 
 func (c *Config) CommandNames() []string {
 	names := make([]string, 0, len(c.Commands))

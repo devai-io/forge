@@ -298,6 +298,7 @@ export type Run = {
   command: string;
   permission_mode: string;
   model: string;
+  model_note: string; // why Forge chose the model ("Jev: …"), else ""
   worktree: boolean;
   resume_run_id: number | null;
   status: RunStatus;
@@ -725,4 +726,26 @@ export type SystemFacts = {
   };
   checkup: { last_at: string | null; last_trigger: string | null; next_at: string; emailed_last: boolean };
   seeded_at: string | null;
+};
+
+// ── Jev (token saving) ────────────────────────────────────────────────────
+
+export type JevSettings = {
+  enabled: boolean;
+  routing: boolean; // pick haiku/sonnet for agent runs queued without a model
+  context: boolean; // session context lists only tasks relevant to the repo
+  compaction: boolean; // machines wire Jev compaction into Claude Code
+};
+
+export type JevStatus = {
+  settings: JevSettings;
+  key_configured: boolean;
+  stats: {
+    calls: number;
+    errors: number;
+    input_tokens: number;
+    last_at: string | null;
+    last_error: string;
+    last_model: string;
+  };
 };

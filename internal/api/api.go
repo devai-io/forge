@@ -17,6 +17,7 @@ import (
 
 	"github.com/devai-io/forge/internal/checkup"
 	"github.com/devai-io/forge/internal/config"
+	"github.com/devai-io/forge/internal/jev"
 	"github.com/devai-io/forge/internal/mail"
 	"github.com/devai-io/forge/internal/monitor"
 	"github.com/devai-io/forge/internal/monitoring"
@@ -50,6 +51,10 @@ type Server struct {
 
 	// claimWait is how long a runner's claim long-poll is held open.
 	claimWait time.Duration
+
+	jev        *jev.Client
+	jevCacheMu sync.Mutex
+	jevCache   map[string]relevanceEntry
 }
 
 // Deps are the optional collaborators; a zero value turns the feature off
@@ -61,7 +66,7 @@ type Deps struct {
 }
 
 func New(cfg config.Config, st *store.Store, m *mail.Mailer, mon *monitor.Monitor, d Deps) *Server {
-	return &Server{
+	s := &Server{
 		cfg: cfg, store: st, mailer: m, monitor: mon, box: d.Box, mon: d.Mon, checkups: d.Checkups,
 		// Eight wrong passwords per address and thirty overall per quarter
 		// hour. The global cap is what actually protects a single-account
@@ -74,7 +79,10 @@ func New(cfg config.Config, st *store.Store, m *mail.Mailer, mon *monitor.Monito
 		terminals: newTerminalHub(),
 		codes:     newCodeSessions(),
 		claimWait: 25 * time.Second,
+		jevCache:  map[string]relevanceEntry{},
 	}
+	s.jev = jev.New(s.jevKey)
+	return s
 }
 
 func (s *Server) Handler() http.Handler {
@@ -104,6 +112,10 @@ func (s *Server) Handler() http.Handler {
 	h("POST /api/auth/sessions/revoke-others", s.authed(s.revokeOtherSessions))
 	h("GET /api/auth/security", s.authed(s.securityLog))
 	h("GET /api/system", s.authed(s.systemFacts))
+	h("GET /api/jev", s.authed(s.getJev))
+	h("PATCH /api/jev", s.authed(s.updateJev))
+	h("PUT /api/jev/key", s.authed(s.elevated(s.setJevKey)))
+	h("POST /api/jev/test", s.authed(s.testJev))
 	h("DELETE /api/auth/sessions/{id}", s.authed(s.deleteSession))
 
 	h("POST /api/auth/elevate", s.authed(s.elevate))
@@ -194,6 +206,7 @@ func (s *Server) Handler() http.Handler {
 	h("PATCH /api/runner/tasks/{task}", s.runnerAuth(s.runnerUpdateTask))
 	h("POST /api/runner/tasks/{task}/comments", s.runnerAuth(s.runnerComment))
 	h("GET /api/runner/checkup", s.runnerAuth(s.runnerCheckup))
+	h("GET /api/runner/jev", s.runnerAuth(s.runnerJev))
 
 	h("GET /api/terminal/hosts", s.authed(s.terminalHosts))
 	h("GET /api/terminal/{runner}/attach", s.authed(s.elevated(s.terminalAttach)))

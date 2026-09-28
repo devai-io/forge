@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -348,7 +349,7 @@ func (s *Store) UpdateVault(ctx context.Context, box *vault.Box, id int64, p Pat
 			sets = append(sets, "project_id = "+arg(pid))
 		case "secret":
 			if isNull(raw) {
-				sets = append(sets, "secret_sealed = NULL", "secret_keys = '{}'")
+				sets = append(sets, "secret_sealed = NULL", "secret_keys = '[]'")
 				continue
 			}
 			if !box.Available() {
@@ -536,4 +537,28 @@ func (s *Store) ExpiringVault(ctx context.Context, before string) ([]VaultItem, 
 		out = append(out, *v)
 	}
 	return out, rows.Err()
+}
+
+// SaveIntegrationSecret stores value as the `value` secret of the vault item
+// the server reads for tag (IntegrationSecret): the newest item with that tag
+// is updated, or one is created. Audited like any vault change.
+func (s *Store) SaveIntegrationSecret(ctx context.Context, box *vault.Box, name, tag, value, ip string) error {
+	if !box.Available() {
+		return vault.ErrUnavailable
+	}
+	var id int64
+	err := s.DB.QueryRow(ctx, `SELECT id FROM vault_items WHERE EXISTS (SELECT 1 FROM json_each(tags) WHERE value = $1)
+		ORDER BY updated_at DESC LIMIT 1`, tag).Scan(&id)
+	secret, _ := json.Marshal(map[string]string{"value": value})
+	switch {
+	case err == nil:
+		_, err = s.UpdateVault(ctx, box, id, Patch{"secret": secret}, ip)
+		return err
+	case errors.Is(mapErr(err), ErrNotFound):
+		_, err = s.CreateVault(ctx, box, VaultInput{Name: name, Kind: "api_key", Tags: []string{tag},
+			Secret: map[string]string{"value": value}, Notes: "Used by the Forge server (" + tag + ")."}, ip)
+		return err
+	default:
+		return err
+	}
 }

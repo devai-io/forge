@@ -28,6 +28,7 @@ import { useHashScroll } from "@/lib/docs";
 import { timezoneOptions } from "@/lib/setup";
 import { groupSecret } from "@/lib/vault";
 import { AccentPicker } from "./AccentPicker";
+import { TokenSavingPanel } from "./TokenSaving";
 import { RevokeOthersButton, SecurityLogPanel } from "./SecurityLog";
 
 export function SettingsPage() {
@@ -39,6 +40,7 @@ export function SettingsPage() {
       <PasswordPanel />
       <TwoFactorPanel />
       <CheckupPanel />
+      <TokenSavingPanel />
       <AppearancePanel />
       <section id="security" aria-labelledby="settings-security-h" className="scroll-mt-16 space-y-4 pt-2">
         <h2 id="settings-security-h" className="text-[15px] font-semibold tracking-tight">

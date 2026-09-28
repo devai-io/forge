@@ -49,6 +49,8 @@ Server (workspace: FORGE_HOME, default ~/.config/forge):
   forge reset-password <username>        set a new random password
   forge disable-2fa <username>           turn two-factor off
   forge backup                           snapshot the database into backups/ now
+  forge jev status | on | off            token saving with Jev (TypeSafe)
+  forge jev set-key < key.txt            store the TypeSafe API key in the vault
   forge import < data.json               add projects, servers, vault items
   forge migrate                          apply database migrations
 
@@ -225,6 +227,8 @@ func runServer(args []string) error {
 				rep.ServersAdded, rep.ProjectsAdded, rep.NotesAppended, len(rep.VaultAdded), rep.Skipped)
 		}
 		return err
+	case "jev":
+		return jevCommand(ctx, cfg, st, args[1:])
 	case "add-machine", "create-runner":
 		if len(args) < 2 || len(args) > 3 {
 			return errors.New("usage: forge add-machine <name> [master|ios|worker]")
@@ -377,5 +381,51 @@ func addMachine(ctx context.Context, cfg config.Config, st *store.Store, name, r
 	}
 	fmt.Printf("machine %s (%s): pairing code %s, valid until %s\n\non that machine:\n  forge agent pair %s %s\n",
 		rn.Name, rn.Role, code, until.Local().Format("15:04"), cfg.PublicURL, code)
+	return nil
+}
+
+// jevCommand is Settings → Token saving, for a server without a browser.
+func jevCommand(ctx context.Context, cfg config.Config, st *store.Store, args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: forge jev status | on | off | set-key (key on stdin)")
+	}
+	set, err := st.JevSettings(ctx)
+	if err != nil {
+		return err
+	}
+	box, err := vault.Load(cfg.Home)
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "on", "off":
+		set.Enabled = args[0] == "on"
+		if err := st.SetJevSettings(ctx, set); err != nil {
+			return err
+		}
+	case "set-key":
+		raw, err := io.ReadAll(io.LimitReader(os.Stdin, 4096))
+		if err != nil {
+			return err
+		}
+		key := strings.TrimSpace(string(raw))
+		if len(key) < 16 || strings.ContainsAny(key, " \t\n") {
+			return errors.New("expected one API key on stdin")
+		}
+		if err := st.SaveIntegrationSecret(ctx, box, "TypeSafe Jev API key", "integration:jev", key, "cli"); err != nil {
+			return err
+		}
+		fmt.Println("key stored in the vault (tag integration:jev)")
+	case "status":
+	default:
+		return fmt.Errorf("unknown jev command %q", args[0])
+	}
+	keyed := false
+	if box.Available() {
+		k, _ := st.IntegrationSecret(ctx, box, "integration:jev")
+		keyed = k != ""
+	}
+	fmt.Printf("jev: enabled=%t key=%t routing=%t context=%t compaction=%t\n",
+		set.Enabled, keyed, set.Routing, set.Context, set.Compaction)
 	return nil
 }

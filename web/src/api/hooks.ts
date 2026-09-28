@@ -58,6 +58,8 @@ import type {
   TaskFilters,
   TaskInput,
   User,
+  JevSettings,
+  JevStatus,
 } from "./types";
 
 export const keys = {
@@ -1029,5 +1031,37 @@ export function useSystemFacts(enabled = true) {
     queryFn: ({ signal }) => api.get<SystemFacts>("/system", undefined, signal),
     refetchInterval: 60_000,
     enabled,
+  });
+}
+
+// ── Jev (token saving) ────────────────────────────────────────────────────
+
+export function useJev() {
+  return useQuery({ queryKey: ["jev"], queryFn: () => api.get<JevStatus>("/jev") });
+}
+
+export function useUpdateJev() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: Partial<JevSettings>) => api.patch<JevStatus>("/jev", patch),
+    onSuccess: (s) => qc.setQueryData(["jev"], s),
+  });
+}
+
+/** Stores the TypeSafe key in the vault (needs a recent password confirmation). */
+export function useSetJevKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (apiKey: string) => api.put<JevStatus>("/jev/key", { api_key: apiKey }),
+    onSuccess: (s) => {
+      qc.setQueryData(["jev"], s);
+      void qc.invalidateQueries({ queryKey: ["vault"] });
+    },
+  });
+}
+
+export function useTestJev() {
+  return useMutation({
+    mutationFn: () => api.post<{ ok: boolean; ms?: number; error?: string }>("/jev/test"),
   });
 }

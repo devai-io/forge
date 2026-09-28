@@ -343,6 +343,8 @@ type Run struct {
 	// Only the runner needs these: where to run and which session to resume.
 	RepoPath      string `json:"repo_path,omitempty"`
 	ResumeSession string `json:"resume_session,omitempty"`
+	// ModelNote says why Model was chosen when Forge chose it ("Jev: …").
+	ModelNote string `json:"model_note"`
 }
 
 type RunEvent struct {

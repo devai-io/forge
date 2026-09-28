@@ -43,6 +43,7 @@ type harness struct {
 	store  *store.Store
 	client *http.Client
 	home   string
+	api    *Server
 }
 
 func setup(t *testing.T) *harness { return setupWith(t, true) }
@@ -84,7 +85,7 @@ func setupWith(t *testing.T, withUser bool) *harness {
 	srv.Start()
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
-	return &harness{t: t, srv: srv, store: st, client: &http.Client{Jar: jar}, home: home}
+	return &harness{t: t, srv: srv, store: st, client: &http.Client{Jar: jar}, home: home, api: api}
 }
 
 // do sends a browser-style request (CSRF header on writes) and decodes JSON.
@@ -658,7 +659,7 @@ func TestTerminalRelay(t *testing.T) {
 
 func TestContextForPath(t *testing.T) {
 	h := setup(t)
-	c, err := h.store.ContextForPath(context.Background(), "/home/demo/dev/shop/shop_ui/src/pages")
+	c, err := h.store.ContextForPath(context.Background(), "/home/demo/dev/shop/shop_ui/src/pages", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -666,7 +667,7 @@ func TestContextForPath(t *testing.T) {
 		!strings.Contains(c.Markdown, "## Open tasks") || !strings.Contains(c.Markdown, "forge_update_task") {
 		t.Fatalf("context = %+v\n%s", c, c.Markdown)
 	}
-	if _, err := h.store.ContextForPath(context.Background(), "/tmp/elsewhere"); err != store.ErrNotFound {
+	if _, err := h.store.ContextForPath(context.Background(), "/tmp/elsewhere", nil); err != store.ErrNotFound {
 		t.Fatalf("unknown path: %v", err)
 	}
 }
