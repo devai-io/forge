@@ -23,25 +23,50 @@ import (
 //   initialColorTheme.themeType                 the colour of the very first
 //                                               paint, before settings load
 //
+// and, with &forge_accent=rrggbb, workbench.colorCustomizations painting
+// VS Code's accent roles (focus rings, buttons, badges) in Forge's accent —
+// also only a default.
+//
 // Only the root document is touched; assets and WebSockets pass through.
 
-const themeParam = "forge_theme"
+const (
+	themeParam  = "forge_theme"
+	accentParam = "forge_accent"
+)
 
 var themeIDs = map[string]string{"dark": "Dark 2026", "light": "Light 2026"}
 
-// stripThemeParam removes forge_theme from the query so VS Code never sees it.
+// stripThemeParam removes forge_theme/forge_accent from the query so VS Code
+// never sees them, and returns the hint: "dark", or "dark:3b82f6" with an
+// accent.
 func stripThemeParam(r *http.Request) string {
 	q := r.URL.Query()
-	theme := q.Get(themeParam)
+	theme, accent := q.Get(themeParam), strings.ToLower(q.Get(accentParam))
 	if theme == "" {
 		return ""
 	}
 	q.Del(themeParam)
+	q.Del(accentParam)
 	r.URL.RawQuery = q.Encode()
 	if _, ok := themeIDs[theme]; !ok {
 		return ""
 	}
+	if isHex6(accent) {
+		return theme + ":" + accent
+	}
 	return theme
+}
+
+func isHex6(s string) bool {
+	if len(s) != 6 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // rewriteTheme edits the served HTML in place.
@@ -70,7 +95,8 @@ var (
 	attrStart = []byte(`data-settings="`)
 )
 
-func injectTheme(page []byte, theme string) ([]byte, error) {
+func injectTheme(page []byte, hint string) ([]byte, error) {
+	theme, accent, _ := strings.Cut(hint, ":")
 	at := bytes.Index(page, cfgMarker)
 	if at < 0 {
 		return nil, errors.New("no workbench configuration element")
@@ -95,6 +121,15 @@ func injectTheme(page []byte, theme string) ([]byte, error) {
 		defaults = map[string]any{}
 	}
 	defaults["workbench.colorTheme"] = themeIDs[theme]
+	if isHex6(accent) {
+		c := "#" + accent
+		defaults["workbench.colorCustomizations"] = map[string]string{
+			"focusBorder": c, "button.background": c, "activityBarBadge.background": c,
+			"activityBar.activeBorder": c, "progressBar.background": c, "textLink.foreground": c,
+			"tab.activeBorderTop": c, "panelTitle.activeBorder": c, "statusBarItem.remoteBackground": c,
+			"inputOption.activeBorder": c, "list.activeSelectionIconForeground": c,
+		}
+	}
 	cfg["configurationDefaults"] = defaults
 	cfg["initialColorTheme"] = map[string]any{"themeType": theme}
 

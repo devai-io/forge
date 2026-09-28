@@ -54,7 +54,7 @@ type VaultAudit struct {
 
 const vaultSelect = `
 SELECT v.id, v.name, v.kind, p.key, p.color, v.platform, v.host, v.identifier, v.fields, v.secret_keys,
-       v.file_sealed IS NOT NULL, v.file_name, v.file_size, v.location, to_char(v.expires_at, 'YYYY-MM-DD'),
+       v.file_sealed IS NOT NULL, v.file_name, v.file_size, v.location, v.expires_at,
        v.notes, v.tags, v.created_at, v.updated_at, v.last_revealed_at
 FROM vault_items v LEFT JOIN projects p ON p.id = v.project_id`
 
@@ -88,7 +88,7 @@ func (s *Store) ListVault(ctx context.Context, f VaultFilter) ([]VaultItem, erro
 	}
 	if q := strings.TrimSpace(f.Query); q != "" {
 		n := arg("%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q) + "%")
-		where = append(where, fmt.Sprintf("(v.name ILIKE %[1]s OR v.identifier ILIKE %[1]s OR v.location ILIKE %[1]s OR v.notes ILIKE %[1]s OR array_to_string(v.tags, ' ') ILIKE %[1]s)", n))
+		where = append(where, fmt.Sprintf("(v.name LIKE %[1]s ESCAPE '\\' OR v.identifier LIKE %[1]s ESCAPE '\\' OR v.location LIKE %[1]s ESCAPE '\\' OR v.notes LIKE %[1]s ESCAPE '\\' OR v.tags LIKE %[1]s ESCAPE '\\')", n))
 	}
 	q := vaultSelect
 	if len(where) > 0 {
@@ -504,7 +504,7 @@ func (s *Store) ListVaultAudit(ctx context.Context, limit int) ([]VaultAudit, er
 func (s *Store) IntegrationSecret(ctx context.Context, box *vault.Box, tag string) (string, error) {
 	var aad, sealed []byte
 	err := s.DB.QueryRow(ctx, `SELECT aad, secret_sealed FROM vault_items
-		WHERE $1 = ANY(tags) AND secret_sealed IS NOT NULL ORDER BY updated_at DESC LIMIT 1`, tag).Scan(&aad, &sealed)
+		WHERE EXISTS (SELECT 1 FROM json_each(tags) WHERE value = $1) AND secret_sealed IS NOT NULL ORDER BY updated_at DESC LIMIT 1`, tag).Scan(&aad, &sealed)
 	if err != nil {
 		return "", mapErr(err)
 	}
@@ -521,7 +521,7 @@ func (s *Store) IntegrationSecret(ctx context.Context, box *vault.Box, tag strin
 
 // ExpiringVault lists items whose expiry falls before `before` (YYYY-MM-DD).
 func (s *Store) ExpiringVault(ctx context.Context, before string) ([]VaultItem, error) {
-	rows, err := s.DB.Query(ctx, vaultSelect+` WHERE v.expires_at IS NOT NULL AND v.expires_at < $1::date
+	rows, err := s.DB.Query(ctx, vaultSelect+` WHERE v.expires_at IS NOT NULL AND v.expires_at < $1
 		ORDER BY v.expires_at`, before)
 	if err != nil {
 		return nil, err

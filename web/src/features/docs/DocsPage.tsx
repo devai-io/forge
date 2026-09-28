@@ -13,11 +13,13 @@ import { Badge } from "@/components/ui/Badge";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { formatInterval, groupByCategory, groupByTier, prettyDuration, severities, slug, TIER_ORDER, TIER_TONE, useHashScroll } from "@/lib/docs";
-import { CHECKS, NOT_AUTOMATED, SECURITY, SOURCES, STORED, TIERS, type Tier } from "./content";
+import { markDocsRead } from "@/lib/gettingStarted";
+import { CHECKS, NOT_AUTOMATED, SECURITY, SETUP, SOURCES, STORED, TIERS, WORKSPACE, type Tier } from "./content";
 
 const SECTIONS = [
   { id: "overview", title: "Overview" },
   { id: "now", title: "Right now" },
+  { id: "setup", title: "Setup and storage" },
   { id: "sources", title: "Where the numbers come from" },
   { id: "checkup", title: "The daily check-up" },
   { id: "stored", title: "What is only configuration" },
@@ -69,6 +71,7 @@ export function DocsPage() {
   const facts = useSystemFacts();
   useHashScroll(!facts.isPending);
   const active = useActiveSection();
+  useEffect(() => markDocsRead(), []);
 
   return (
     <div className="mx-auto max-w-[1200px] lg:grid lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-8">
@@ -119,6 +122,38 @@ export function DocsPage() {
         <section id="now" className="scroll-mt-20 space-y-3">
           <H2 id="now">Right now</H2>
           <FactsStrip facts={facts.data} loading={facts.isPending} error={!!facts.error} />
+        </section>
+
+        <section id="setup" className="scroll-mt-20 space-y-4">
+          <H2 id="setup">Setup and storage</H2>
+          <p className="max-w-2xl text-[13.5px] text-fg-2">
+            Forge keeps everything in one folder, its workspace. Storage is a single SQLite file in it — there is no
+            separate database server to run or back up.
+          </p>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {SETUP.map((s) => (
+              <article key={s.title} id={`setup-${slug(s.title)}`} className="scroll-mt-20 rounded-xl border border-line bg-surface p-4">
+                <h3 className="text-[14px] font-semibold">{s.title}</h3>
+                <Prose className="mt-1.5 block text-[12.5px] text-fg-2">{s.body}</Prose>
+              </article>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {WORKSPACE.map((w) => (
+              <article key={w.where} className="rounded-xl border border-line bg-surface p-4">
+                <h3 className="text-[14px] font-semibold">{w.where}</h3>
+                <Prose className="mt-0.5 block text-[12.5px] text-fg-3">{w.root}</Prose>
+                <dl className="mt-3 grid grid-cols-[minmax(0,auto)_1fr] gap-x-3 gap-y-1.5 text-[12.5px]">
+                  {w.entries.map((e) => (
+                    <div key={e.path} className="contents">
+                      <dt className="font-mono text-fg break-all">{e.path}</dt>
+                      <dd className="text-fg-2">{e.what}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </article>
+            ))}
+          </div>
         </section>
 
         <section id="sources" className="scroll-mt-20 space-y-4">

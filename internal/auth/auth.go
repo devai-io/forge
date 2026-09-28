@@ -89,3 +89,36 @@ func GeneratePassword() string {
 	}
 	return sb.String()
 }
+
+// pairAlphabet has no 0/O, 1/I/L or U: a pairing code is read off one screen
+// and typed on another machine.
+const pairAlphabet = "ABCDEFGHJKMNPQRSTVWXYZ23456789"
+
+// PairCode is a one-time machine pairing code, "XXXX-XXXX" (~39 bits; it
+// lives for minutes and the endpoint that takes it is rate-limited).
+func PairCode() string {
+	var sb strings.Builder
+	for i := 0; i < 8; i++ {
+		if i == 4 {
+			sb.WriteByte('-')
+		}
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(pairAlphabet))))
+		if err != nil {
+			panic(err)
+		}
+		sb.WriteByte(pairAlphabet[n.Int64()])
+	}
+	return sb.String()
+}
+
+// NormalizePairCode is what gets hashed: upper case, no separators, so
+// "abcd efgh" and "ABCD-EFGH" are the same code.
+func NormalizePairCode(code string) string {
+	var sb strings.Builder
+	for _, r := range strings.ToUpper(code) {
+		if r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			sb.WriteRune(r)
+		}
+	}
+	return sb.String()
+}

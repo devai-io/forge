@@ -280,7 +280,7 @@ function ServerDialog({ server, onClose }: { server?: Server; onClose: () => voi
             )}
           </Field>
         </div>
-        <Field label="Role">{(id) => <Input id={id} value={form.role} onChange={(e) => set("role", e.target.value)} placeholder="Nomad apps, Postgres primary…" />}</Field>
+        <Field label="Role">{(id) => <Input id={id} value={form.role} onChange={(e) => set("role", e.target.value)} placeholder="Nomad apps, database primary…" />}</Field>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Public address">
             {(id) => <Input id={id} value={form.public_address} onChange={(e) => set("public_address", e.target.value)} className="font-mono" />}

@@ -43,8 +43,9 @@ type Server struct {
 	terminals *terminalHub
 	codes     *codeSessions
 
-	logins  *limiter // failed logins / password checks
+	logins  *limiter // failed logins / password checks / setup tokens
 	resets  *limiter // reset e-mails requested
+	pairs   *limiter // wrong machine pairing codes
 	wakeups *notifier
 
 	// claimWait is how long a runner's claim long-poll is held open.
@@ -68,6 +69,7 @@ func New(cfg config.Config, st *store.Store, m *mail.Mailer, mon *monitor.Monito
 		// fat-fingered phone from locking out the laptop.
 		logins:    newLimiter(8, 30, 15*time.Minute),
 		resets:    newLimiter(5, 20, time.Hour),
+		pairs:     newLimiter(10, 60, 15*time.Minute),
 		wakeups:   newNotifier(),
 		terminals: newTerminalHub(),
 		codes:     newCodeSessions(),
@@ -83,6 +85,10 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	h("GET /api/status", s.status)
+
+	// First run: create the account (needs the setup token).
+	h("GET /api/setup", s.setupStatus)
+	h("POST /api/setup", s.web(s.setup))
 
 	// Public auth routes (still CSRF-guarded: login CSRF is a thing).
 	h("POST /api/auth/login", s.web(s.login))
@@ -131,6 +137,10 @@ func (s *Server) Handler() http.Handler {
 	h("PATCH /api/projects/{key}", s.authed(s.updateProject))
 	h("DELETE /api/projects/{key}", s.authed(s.deleteProject))
 	h("GET /api/projects/{key}/activity", s.authed(s.projectActivity))
+	h("GET /api/projects/{key}/files", s.authed(s.listFiles))
+	h("POST /api/projects/{key}/files", s.authed(s.uploadFile))
+	h("GET /api/projects/{key}/files/{name}", s.authed(s.downloadFile))
+	h("DELETE /api/projects/{key}/files/{name}", s.authed(s.deleteFile))
 	h("PUT /api/projects/{key}/servers", s.authed(s.setProjectServers))
 	h("POST /api/projects/{key}/repos", s.authed(s.createRepo))
 	h("POST /api/projects/{key}/endpoints", s.authed(s.createEndpoint))
@@ -160,6 +170,7 @@ func (s *Server) Handler() http.Handler {
 	h("GET /api/runners", s.authed(s.listRunners))
 	h("POST /api/runners", s.authed(s.createRunner))
 	h("POST /api/runners/{id}/rotate", s.authed(s.rotateRunner))
+	h("POST /api/runners/{id}/pair", s.authed(s.pairRunner))
 	h("PATCH /api/runners/{id}", s.authed(s.updateRunner))
 	h("DELETE /api/runners/{id}", s.authed(s.deleteRunner))
 	h("GET /api/runs", s.authed(s.listRuns))
@@ -168,6 +179,7 @@ func (s *Server) Handler() http.Handler {
 	h("GET /api/runs/{id}/events", s.authed(s.runEvents))
 	h("POST /api/runs/{id}/cancel", s.authed(s.cancelRun))
 
+	h("POST /api/runner/pair", s.runnerPair)
 	h("POST /api/runner/heartbeat", s.runnerAuth(s.runnerHeartbeat))
 	h("POST /api/runner/claim", s.runnerAuth(s.runnerClaim))
 	h("POST /api/runner/runs/{id}/events", s.runnerAuth(s.runnerEvents))

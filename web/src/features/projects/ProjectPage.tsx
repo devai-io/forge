@@ -1,5 +1,5 @@
 // One project: overview (what, where it runs, how healthy), its board, a
-// filterable list, its agent runs and its activity. The tab lives in the URL
+// filterable list, its agent runs, its files and its activity. The tab lives in the URL
 // (?tab=board) so a bookmark or a phone home-screen link lands on it.
 
 import clsx from "clsx";
@@ -50,9 +50,10 @@ import { EndpointDialog, RepoDialog, ServersLinkDialog } from "./dialogs";
 import { CIBadge } from "./CIBadge";
 import { ProgressMeter } from "./ProjectCard";
 import { ProjectDialog } from "./ProjectDialog";
+import { ProjectFiles } from "./ProjectFiles";
 
-type Tab = "overview" | "board" | "list" | "agents" | "activity";
-const TABS: Tab[] = ["overview", "board", "list", "agents", "activity"];
+type Tab = "overview" | "board" | "list" | "agents" | "files" | "activity";
+const TABS: Tab[] = ["overview", "board", "list", "agents", "files", "activity"];
 
 export function ProjectPage() {
   const { key = "" } = useParams();
@@ -99,6 +100,7 @@ export function ProjectPage() {
           { value: "board", label: "Board", count: s.total - s.done },
           { value: "list", label: "List", count: s.total },
           { value: "agents", label: "Agents", count: s.active_runs || undefined },
+          { value: "files", label: "Files" },
           { value: "activity", label: "Activity" },
         ]}
       />
@@ -106,6 +108,7 @@ export function ProjectPage() {
       {tab === "board" ? <BoardTab project={p} /> : null}
       {tab === "list" ? <ListTab project={p} /> : null}
       {tab === "agents" ? <AgentsTab project={p} /> : null}
+      {tab === "files" ? <ProjectFiles projectKey={p.key} /> : null}
       {tab === "activity" ? <ActivityTab project={p} /> : null}
     </div>
   );

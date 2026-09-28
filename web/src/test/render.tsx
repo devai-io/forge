@@ -18,6 +18,7 @@ export function makeUser(overrides: Partial<User> = {}): User {
     totp_enabled: false,
     checkup_time: "08:00",
     checkup_email: true,
+    accent: "",
     ...overrides,
   };
 }

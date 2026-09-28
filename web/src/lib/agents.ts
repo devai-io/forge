@@ -1,16 +1,17 @@
 // Agent-run helpers shared by the agents screens.
 
-import type { CommandDetail, Run, Runner, RunnerCapabilities, RunnerRole } from "@/api/types";
+import type { CommandDetail, Pairing, Run, Runner, RunnerCapabilities, RunnerRole } from "@/api/types";
 
-// Mirrors forge_api/deploy/runner.example.json: the keys a runner needs to
-// start (api_url, token, allowed_roots) plus safe defaults for the rest. What
-// the runner may do is decided in this file on the runner's own machine.
+// Mirrors deploy/runner.example.json, which is the machine's ~/.forge/agent.json:
+// the keys an agent needs to start (api_url, token, allowed_roots) plus safe
+// defaults for the rest. What the machine may do is decided in this file on
+// the machine itself. Pairing writes it; this is for a manual setup.
 export function runnerConfigSnippet(origin: string, token: string): string {
   return JSON.stringify(
     {
       api_url: origin,
       token,
-      allowed_roots: ["~/dev"],
+      allowed_roots: ["~/dev", "~/.forge/projects"],
       permission_modes: ["plan", "acceptEdits"],
       commands: {
         "git-status": "git status -sb",
@@ -121,4 +122,64 @@ export function commandOptions(
     }
   }
   return Array.from(out.values());
+}
+
+// ── Pairing ────────────────────────────────────────────────────────────────
+//
+// Adding a machine hands out a one-time code; `forge agent pair <origin>
+// <code>` on that machine swaps it for the token. Codes live 15 minutes.
+
+export const PAIRING_TTL_MS = 15 * 60_000;
+export const INSTALL_SCRIPT_URL = "https://github.com/devai-io/forge/releases/latest/download/install.sh";
+
+/** The commands to run on the machine, for both starting points. */
+export function pairCommands(origin: string, code: string) {
+  return {
+    /** No Forge there yet: installs the binary, pairs, installs the service, wires Claude Code. */
+    install: `curl -fsSL ${INSTALL_SCRIPT_URL} | sh -s -- --pair ${origin} ${code}`,
+    pair: `forge agent pair ${origin} ${code}`,
+    service: "forge agent install",
+    claude: "forge agent setup-claude",
+  };
+}
+
+/** A new machine is the master when there is none yet; otherwise a worker. */
+export function defaultNewRole(runners: Pick<Runner, "role">[]): RunnerRole {
+  return runners.some((r) => roleOf(r) === "master") ? "worker" : "master";
+}
+
+/** "12:34" until `expiresAt`; null once it has passed. */
+export function pairingCountdown(expiresAt: string, now: number): string | null {
+  const left = Math.ceil((Date.parse(expiresAt) - now) / 1000);
+  if (!(left > 0)) return null;
+  return `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+}
+
+export type PairingState = "waiting" | "paired" | "connected" | "expired";
+
+/**
+ * Where a code handed out in this dialog stands, from the polled runner row:
+ *   - the code is used once the runner's `pair_expires_at` is cleared;
+ *   - it is connected once the runner has been heard from since the code was
+ *     issued (server time: expires_at − 15 min, so browser clock skew is moot);
+ *   - unused past its expiry → expired.
+ */
+export function pairingState(
+  runner: Pick<Runner, "last_seen_at" | "pair_expires_at"> | undefined,
+  pairing: Pairing,
+  now: number,
+): PairingState {
+  const expires = Date.parse(pairing.expires_at);
+  const used = !!runner && runner.pair_expires_at === null;
+  if (used) {
+    const issued = expires - PAIRING_TTL_MS;
+    const seen = runner.last_seen_at ? Date.parse(runner.last_seen_at) : NaN;
+    return seen >= issued ? "connected" : "paired";
+  }
+  return now >= expires ? "expired" : "waiting";
+}
+
+/** A machine with an unused, unexpired code that has never connected. */
+export function awaitingPairing(r: Pick<Runner, "last_seen_at" | "pair_expires_at">, now: number): boolean {
+  return !r.last_seen_at && !!r.pair_expires_at && Date.parse(r.pair_expires_at) > now;
 }

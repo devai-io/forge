@@ -9,9 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/devai-io/forge/internal/db"
 )
 
 var (
@@ -32,28 +30,24 @@ func invalid(field, format string, args ...any) error {
 	return &ValidationError{Field: field, Message: fmt.Sprintf(format, args...)}
 }
 
-// pgxTx shortens callback signatures.
-type pgxTx = pgx.Tx
+// pgxTx shortens callback signatures (the name predates SQLite).
+type pgxTx = *db.Tx
 
 type Store struct {
-	DB *pgxpool.Pool
+	DB *db.DB
 	// PublicURL is the app's own address, for links written into text
 	// (Claude context). Set by the server; empty in tests.
 	PublicURL string
 }
 
-func New(db *pgxpool.Pool) *Store { return &Store{DB: db} }
+func New(d *db.DB) *Store { return &Store{DB: d} }
 
 // querier is what both the pool and a transaction offer, so helpers that log
 // activity can run inside either.
-type querier interface {
-	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}
+type querier = db.Querier
 
-func (s *Store) tx(ctx context.Context, fn func(pgx.Tx) error) error {
-	return pgx.BeginFunc(ctx, s.DB, fn)
+func (s *Store) tx(ctx context.Context, fn func(pgxTx) error) error {
+	return s.DB.InTx(ctx, fn)
 }
 
 // mapErr turns driver errors into the store's own vocabulary.
@@ -61,47 +55,51 @@ func mapErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, db.ErrNoRows) {
 		return ErrNotFound
 	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		switch pgErr.Code {
-		case "23505": // unique_violation
-			return fmt.Errorf("%w: %s", ErrConflict, uniqueWhat(pgErr))
-		case "23514": // check_violation
-			return &ValidationError{Field: checkField(pgErr), Message: "invalid value"}
-		case "23503": // foreign_key_violation
-			return &ValidationError{Field: pgErr.ConstraintName, Message: "refers to something that does not exist"}
+	if c, ok := db.AsConstraint(err); ok {
+		switch c.Kind {
+		case "unique":
+			return fmt.Errorf("%w: %s", ErrConflict, uniqueWhat(c.Name))
+		case "check":
+			return &ValidationError{Field: checkField(c.Name), Message: "invalid value"}
+		case "foreign_key":
+			return &ValidationError{Field: "reference", Message: "refers to something that does not exist"}
 		}
 	}
 	return err
 }
 
-func uniqueWhat(e *pgconn.PgError) string {
+func uniqueWhat(name string) string {
 	switch {
-	case strings.Contains(e.ConstraintName, "projects_key"):
+	case strings.Contains(name, "projects_key"):
 		return "a project with that key already exists"
-	case strings.Contains(e.ConstraintName, "repos_project_id_name"):
+	case strings.Contains(name, "repos_project_id_name"):
 		return "this project already has a repo with that name"
-	case strings.Contains(e.ConstraintName, "servers_name"):
+	case strings.Contains(name, "servers_name"):
 		return "a server with that name already exists"
-	case strings.Contains(e.ConstraintName, "runners_name"):
-		return "a runner with that name already exists"
-	case strings.Contains(e.ConstraintName, "users_email"):
+	case strings.Contains(name, "runners_name"):
+		return "a machine with that name already exists"
+	case strings.Contains(name, "runners_one_master"):
+		return "there is already a master machine"
+	case strings.Contains(name, "users_email"):
 		return "that e-mail address is taken"
-	case strings.Contains(e.ConstraintName, "users_username"):
+	case strings.Contains(name, "users_username"):
 		return "that username is taken"
 	}
 	return "already exists"
 }
 
-// checkField recovers the column from Postgres' default CHECK constraint
-// name, "<table>_<column>_check".
-func checkField(e *pgconn.PgError) string {
-	name := strings.TrimSuffix(e.ConstraintName, "_check")
-	if e.TableName != "" {
-		name = strings.TrimPrefix(name, e.TableName+"_")
+// checkField recovers the column from the schema's CHECK constraint names,
+// "<table>_<column>_check".
+func checkField(name string) string {
+	name = strings.TrimSuffix(name, "_check")
+	for _, table := range []string{"users", "projects", "repos", "servers", "endpoints", "tasks", "comments",
+		"runners", "runs", "run_events", "vault_items", "vault_audit", "checkups"} {
+		if rest, ok := strings.CutPrefix(name, table+"_"); ok {
+			return rest
+		}
 	}
 	return name
 }
@@ -242,6 +240,17 @@ func pColor(key string, raw json.RawMessage) (any, error) {
 	var v string
 	if err := json.Unmarshal(raw, &v); err != nil || !IsColor(v) {
 		return nil, invalid(key, "must be a #rrggbb colour")
+	}
+	return strings.ToLower(v), nil
+}
+
+// AccentPresets are the named accent colours the web app offers.
+var AccentPresets = []string{"indigo", "blue", "sky", "teal", "green", "lime", "amber", "orange", "red", "rose", "pink", "violet"}
+
+func pAccent(key string, raw json.RawMessage) (any, error) {
+	var v string
+	if err := json.Unmarshal(raw, &v); err != nil || !(v == "" || OneOf(v, AccentPresets) || IsColor(v)) {
+		return nil, invalid(key, "must be empty, a preset (%s) or a #rrggbb colour", strings.Join(AccentPresets, ", "))
 	}
 	return strings.ToLower(v), nil
 }

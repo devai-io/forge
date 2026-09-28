@@ -235,7 +235,7 @@ function CheckupView({ checkup: c, isLatest }: { checkup: Checkup; isLatest: boo
               aria-valuenow={c.actions_done}
               className="h-1.5 overflow-hidden rounded-full bg-track"
             >
-              <div className="h-full rounded-full bg-accent transition-[width] duration-500" style={{ width: `${pct * 100}%` }} />
+              <div className="h-full rounded-full bg-series-1 transition-[width] duration-500" style={{ width: `${pct * 100}%` }} />
             </div>
           </div>
         ) : null}
@@ -451,7 +451,7 @@ export function CheckupPanel({ summary }: { summary: CheckupSummary | null }) {
       {summary.actions_total ? (
         <span className="flex min-w-40 flex-1 items-center gap-2 text-[12px] text-fg-3">
           <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-track" aria-hidden>
-            <span className="block h-full rounded-full bg-accent" style={{ width: `${pct * 100}%` }} />
+            <span className="block h-full rounded-full bg-series-1" style={{ width: `${pct * 100}%` }} />
           </span>
           <span className="tabular">
             {summary.actions_done}/{summary.actions_total} done

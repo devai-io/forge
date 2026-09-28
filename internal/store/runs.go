@@ -11,14 +11,14 @@ import (
 // A runner is online if it has heartbeated within this window. The runner
 // heartbeats every 10 s (which is also how fast a cancel reaches it), so
 // 90 s tolerates several lost beats.
-const onlineWindow = "90 seconds"
+const onlineWindow = "90" // seconds
 
 // ── Runners ───────────────────────────────────────────────────────────────
 
 const runnerSelect = `
 SELECT rn.id, rn.name, rn.role, rn.hostname, rn.os, rn.version,
-       coalesce(rn.last_seen_at > now() - interval '` + onlineWindow + `', false),
-       rn.last_seen_at, rn.capabilities, rn.created_at,
+       coalesce(rn.last_seen_at > ts_add(now(), -` + onlineWindow + `), 0),
+       rn.last_seen_at, rn.capabilities, rn.created_at, rn.pair_expires_at,
        (SELECT count(*) FROM runs r WHERE r.runner_id = rn.id AND r.status = 'running')
 FROM runners rn`
 
@@ -26,7 +26,7 @@ func scanRunner(row interface{ Scan(...any) error }) (*Runner, error) {
 	var r Runner
 	var caps []byte
 	if err := row.Scan(&r.ID, &r.Name, &r.Role, &r.Hostname, &r.OS, &r.Version, &r.Online, &r.LastSeenAt, &caps,
-		&r.CreatedAt, &r.Running); err != nil {
+		&r.CreatedAt, &r.PairExpiresAt, &r.Running); err != nil {
 		return nil, mapErr(err)
 	}
 	_ = json.Unmarshal(caps, &r.Capabilities)
@@ -86,6 +86,31 @@ func (s *Store) RotateRunnerToken(ctx context.Context, id int64, tokenHash []byt
 		return ErrNotFound
 	}
 	return nil
+}
+
+// SetPairCode issues a pairing code for a runner (replacing any earlier
+// one); it stays usable for ttl. The runner's current token keeps working
+// until the code is claimed.
+func (s *Store) SetPairCode(ctx context.Context, id int64, codeHash []byte, ttl time.Duration) (time.Time, error) {
+	var until time.Time
+	err := s.DB.QueryRow(ctx, `UPDATE runners SET pair_code_hash = $2, pair_expires_at = ts_add(now(), $3)
+		WHERE id = $1 RETURNING pair_expires_at`, id, codeHash, ttl.Seconds()).Scan(&until)
+	return until, mapErr(err)
+}
+
+// ClaimPairCode swaps a live pairing code for a new token: the code is
+// burned, the token replaces the runner's old one. ErrNotFound for an
+// unknown or expired code.
+func (s *Store) ClaimPairCode(ctx context.Context, codeHash, tokenHash []byte, hostname, os string) (*Runner, error) {
+	var id int64
+	err := s.DB.QueryRow(ctx, `UPDATE runners SET token_hash = $2, pair_code_hash = NULL, pair_expires_at = NULL,
+		hostname = CASE WHEN $3 = '' THEN hostname ELSE $3 END, os = CASE WHEN $4 = '' THEN os ELSE $4 END
+		WHERE pair_code_hash = $1 AND pair_expires_at > now() RETURNING id`,
+		codeHash, tokenHash, truncate(hostname, 200), truncate(os, 100)).Scan(&id)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return s.RunnerByID(ctx, id)
 }
 
 // SetRunnerRole changes a runner's role; making one the master demotes the
@@ -177,8 +202,8 @@ func (s *Store) Heartbeat(ctx context.Context, runnerID int64, in HeartbeatInput
 	}
 	if _, err := s.DB.Exec(ctx, `UPDATE runs SET status = 'failed', finished_at = now(),
 		error = 'the runner restarted and lost this run'
-		WHERE runner_id = $1 AND status = 'running' AND started_at < now() - interval '1 minute'
-		  AND NOT (id = ANY($2))`, runnerID, running); err != nil {
+		WHERE runner_id = $1 AND status = 'running' AND started_at < ts_add(now(), -60)
+		  AND id NOT IN (SELECT value FROM json_each($2))`, runnerID, running); err != nil {
 		return nil, err
 	}
 	rows, err := s.DB.Query(ctx, `SELECT id FROM runs WHERE runner_id = $1 AND status = 'running' AND cancel_requested`, runnerID)
@@ -199,10 +224,9 @@ func (s *Store) Heartbeat(ctx context.Context, runnerID int64, in HeartbeatInput
 
 // FailOrphanedRuns ends runs whose runner has gone silent for ten minutes.
 func (s *Store) FailOrphanedRuns(ctx context.Context) error {
-	_, err := s.DB.Exec(ctx, `UPDATE runs r SET status = 'failed', finished_at = now(), error = 'runner went offline'
-		FROM runners rn
-		WHERE rn.id = r.runner_id AND r.status = 'running'
-		  AND (rn.last_seen_at IS NULL OR rn.last_seen_at < now() - interval '10 minutes')`)
+	_, err := s.DB.Exec(ctx, `UPDATE runs SET status = 'failed', finished_at = now(), error = 'runner went offline'
+		WHERE status = 'running' AND runner_id IN (
+			SELECT id FROM runners WHERE last_seen_at IS NULL OR last_seen_at < ts_add(now(), -600))`)
 	return err
 }
 
@@ -258,7 +282,7 @@ func (s *Store) ListRuns(ctx context.Context, f RunFilter) ([]Run, error) {
 		where = append(where, "r.task_id = "+arg(f.TaskID))
 	}
 	if len(f.Statuses) > 0 {
-		where = append(where, "r.status = ANY("+arg(f.Statuses)+")")
+		where = append(where, "r.status IN (SELECT value FROM json_each("+arg(f.Statuses)+"))")
 	}
 	if f.Finished {
 		where = append(where, "r.finished_at IS NOT NULL")
@@ -446,7 +470,7 @@ func (s *Store) ClaimRun(ctx context.Context, runnerID int64) (*Run, error) {
 	err := s.DB.QueryRow(ctx, `
 		UPDATE runs SET status = 'running', started_at = now()
 		WHERE id = (SELECT id FROM runs WHERE runner_id = $1 AND status = 'queued'
-		            ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED)
+		            ORDER BY id LIMIT 1)
 		RETURNING id`, runnerID).Scan(&id)
 	if err != nil {
 		return nil, mapErr(err)
@@ -541,16 +565,18 @@ func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishI
 		var projectID int64
 		var taskID *int64
 		var repoName string
-		var started *time.Time
+		var repoID int64
 		err := tx.QueryRow(ctx, `
-			UPDATE runs r SET status = $3, exit_code = $4, session_id = CASE WHEN $5 = '' THEN r.session_id ELSE $5 END,
+			UPDATE runs SET status = $3, exit_code = $4, session_id = CASE WHEN $5 = '' THEN session_id ELSE $5 END,
 			       result = $6, error = $7, cost_usd = $8, num_turns = $9, duration_ms = $10, finished_at = now()
-			FROM repos rp
-			WHERE r.id = $1 AND r.runner_id = $2 AND r.status = 'running' AND rp.id = r.repo_id
-			RETURNING r.project_id, r.task_id, rp.name, r.started_at`,
+			WHERE id = $1 AND runner_id = $2 AND status = 'running'
+			RETURNING project_id, task_id, repo_id`,
 			runID, runnerID, in.Status, in.ExitCode, truncate(in.SessionID, 200), truncate(in.Result, 200000),
-			truncate(in.Error, 5000), in.CostUSD, in.NumTurns, in.DurationMS).Scan(&projectID, &taskID, &repoName, &started)
+			truncate(in.Error, 5000), in.CostUSD, in.NumTurns, in.DurationMS).Scan(&projectID, &taskID, &repoID)
 		if err != nil {
+			return mapErr(err)
+		}
+		if err := tx.QueryRow(ctx, `SELECT name FROM repos WHERE id = $1`, repoID).Scan(&repoName); err != nil {
 			return mapErr(err)
 		}
 		summary := fmt.Sprintf("Run #%d on %s %s", runID, repoName, in.Status)

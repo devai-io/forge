@@ -13,5 +13,8 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: "./src/test/setup.ts",
+    // index.css?raw returns the real file (accent.test.ts checks its tokens);
+    // other CSS stays stubbed out.
+    css: { include: [/index\.css/] },
   },
 });

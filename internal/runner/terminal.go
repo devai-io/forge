@@ -175,7 +175,7 @@ func (r *Runner) dial(ctx context.Context, path string) (*websocket.Conn, error)
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	c, _, err := websocket.Dial(ctx, wsURL(r.cfg.APIURL, path), &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": {"Bearer " + r.cfg.Token}, "User-Agent": {"forge-runner/" + Version}},
+		HTTPHeader: http.Header{"Authorization": {"Bearer " + r.cfg.Token}, "User-Agent": {"forge-agent/" + Version}},
 	})
 	if err != nil {
 		return nil, err

@@ -59,3 +59,23 @@ func TestToken(t *testing.T) {
 		t.Error("tokens must be random")
 	}
 }
+
+func TestPairCode(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 200; i++ {
+		c := PairCode()
+		if len(c) != 9 || c[4] != '-' {
+			t.Fatalf("shape: %q", c)
+		}
+		if strings.ContainsAny(c, "01ILOU") {
+			t.Fatalf("ambiguous character in %q", c)
+		}
+		seen[c] = true
+	}
+	if len(seen) < 199 {
+		t.Fatalf("codes repeat: %d distinct of 200", len(seen))
+	}
+	if got := NormalizePairCode(" abcd-efgh\n"); got != "ABCDEFGH" {
+		t.Fatalf("normalize: %q", got)
+	}
+}

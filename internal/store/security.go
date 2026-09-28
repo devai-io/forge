@@ -83,14 +83,13 @@ func deviceKey(userAgent string) string {
 // already known (within the last 90 days).
 func (s *Store) SeenDevice(ctx context.Context, ip, userAgent string) (known bool, err error) {
 	key := deviceKey(userAgent)
-	err = s.DB.QueryRow(ctx, `
-		WITH existing AS (
-			SELECT 1 FROM known_devices WHERE ip = $1 AND user_agent = $2 AND last_seen > now() - interval '90 days'
-		), upsert AS (
-			INSERT INTO known_devices (ip, user_agent) VALUES ($1, $2)
-			ON CONFLICT (ip, user_agent) DO UPDATE SET last_seen = now()
-		)
-		SELECT exists(SELECT 1 FROM existing)`, truncate(ip, 64), key).Scan(&known)
+	ip = truncate(ip, 64)
+	if err = s.DB.QueryRow(ctx, `SELECT exists(SELECT 1 FROM known_devices
+		WHERE ip = $1 AND user_agent = $2 AND last_seen > ts_add(now(), -7776000))`, ip, key).Scan(&known); err != nil {
+		return false, err
+	}
+	_, err = s.DB.Exec(ctx, `INSERT INTO known_devices (ip, user_agent) VALUES ($1, $2)
+		ON CONFLICT (ip, user_agent) DO UPDATE SET last_seen = now()`, ip, key)
 	return known, err
 }
 
@@ -98,7 +97,7 @@ func (s *Store) SeenDevice(ctx context.Context, ip, userAgent string) (known boo
 func (s *Store) NewDeviceLogins(ctx context.Context, since time.Duration) (int, error) {
 	var n int
 	err := s.DB.QueryRow(ctx, `SELECT count(*) FROM security_events
-		WHERE kind = 'login_new_device' AND at > now() - $1::float8 * interval '1 second'`, since.Seconds()).Scan(&n)
+		WHERE kind = 'login_new_device' AND at > ts_add(now(), -$1)`, since.Seconds()).Scan(&n)
 	return n, err
 }
 
@@ -111,11 +110,11 @@ func (s *Store) RevokeOtherSessions(ctx context.Context, userID, keep int64) (in
 	return int(tag.RowsAffected()), nil
 }
 
-// InitialPasswordUnchanged is true when the password was never changed after
-// the account was created (the one printed at setup is still in use).
+// InitialPasswordUnchanged is true while the password in use is one Forge
+// generated and printed (create-user / reset-password on the command line).
 func (s *Store) InitialPasswordUnchanged(ctx context.Context, userID int64) (bool, error) {
 	var unchanged bool
-	err := s.DB.QueryRow(ctx, `SELECT password_changed_at < created_at + interval '1 minute' FROM users WHERE id = $1`,
+	err := s.DB.QueryRow(ctx, `SELECT password_generated FROM users WHERE id = $1`,
 		userID).Scan(&unchanged)
 	return unchanged, err
 }

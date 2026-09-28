@@ -12,7 +12,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -31,11 +31,9 @@ import (
 	"github.com/devai-io/forge/internal/vault"
 )
 
-// These tests drive the real router against a real Postgres, because the
-// interesting failures here are SQL ones (ambiguous columns, CHECKs, the
-// seed file). Without TEST_DATABASE_URL they skip rather than pass hollow.
-//
-// The database named by TEST_DATABASE_URL is WIPED.
+// These tests drive the real router against a real SQLite database (a fresh
+// file per test), because the interesting failures here are SQL ones
+// (ambiguous columns, CHECKs, the seed file).
 
 const testPassword = "correct horse battery staple"
 
@@ -44,23 +42,22 @@ type harness struct {
 	srv    *httptest.Server
 	store  *store.Store
 	client *http.Client
+	home   string
 }
 
-func setup(t *testing.T) *harness {
+func setup(t *testing.T) *harness { return setupWith(t, true) }
+
+// setupWith starts a server on a fresh database with the demo data, and
+// with the account "ada" unless withUser is false (a first run).
+func setupWith(t *testing.T, withUser bool) *harness {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set")
-	}
 	ctx := context.Background()
-	pool, err := db.Open(ctx, dsn)
+	home := t.TempDir()
+	pool, err := db.Open(ctx, filepath.Join(home, "forge.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(pool.Close)
-	if _, err := pool.Exec(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public;`); err != nil {
-		t.Fatal(err)
-	}
+	t.Cleanup(func() { pool.Close() })
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
@@ -68,12 +65,15 @@ func setup(t *testing.T) *harness {
 	if seeded, err := st.SeedIfEmpty(ctx, seed.Demo); err != nil || !seeded {
 		t.Fatalf("seed: %v %v", seeded, err)
 	}
-	hash, _ := auth.HashPassword(testPassword)
-	if _, err := st.CreateUser(ctx, "ada", "ada@example.com", "Ada", hash, "Europe/Lisbon"); err != nil {
-		t.Fatal(err)
+	if withUser {
+		hash, _ := auth.HashPassword(testPassword)
+		if _, err := st.CreateUser(ctx, "ada", "ada@example.com", "Ada", hash, "Europe/Lisbon", true); err != nil {
+			t.Fatal(err)
+		}
 	}
 	srv := httptest.NewUnstartedServer(nil)
-	cfg := config.Config{PublicURL: "http://" + srv.Listener.Addr().String(), Version: "test", MonitorInterval: time.Minute}
+	cfg := config.Config{Home: home, PublicURL: "http://" + srv.Listener.Addr().String(), Version: "test",
+		MonitorInterval: time.Minute}
 	box, _ := vault.New(bytes.Repeat([]byte{7}, 32))
 	fleet := monitoring.New(monitoring.Config{}, MonitoringSources{Store: st, Box: box})
 	mailer := mail.New(config.SMTP{})
@@ -84,7 +84,7 @@ func setup(t *testing.T) *harness {
 	srv.Start()
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
-	return &harness{t: t, srv: srv, store: st, client: &http.Client{Jar: jar}}
+	return &harness{t: t, srv: srv, store: st, client: &http.Client{Jar: jar}, home: home}
 }
 
 // do sends a browser-style request (CSRF header on writes) and decodes JSON.
@@ -128,6 +128,26 @@ func (h *harness) login() {
 	}
 }
 
+// newRunner adds a machine the way the Agents page does and pairs it the way
+// `forge agent pair` does, returning the HTTP status of the first step.
+func (h *harness) newRunner(name string, rn *store.Runner, token *string) int {
+	h.t.Helper()
+	var created struct {
+		Runner  store.Runner
+		Pairing struct{ Code string }
+	}
+	if code := h.do("POST", "/api/runners", map[string]string{"name": name}, &created); code != 201 {
+		return code
+	}
+	var paired struct{ Token string }
+	machine := &harness{t: h.t, srv: h.srv, client: &http.Client{}}
+	if code := machine.do("POST", "/api/runner/pair", map[string]string{"code": created.Pairing.Code}, &paired); code != 200 {
+		h.t.Fatalf("pair %s: HTTP %d", name, code)
+	}
+	*rn, *token = created.Runner, paired.Token
+	return 201
+}
+
 func expect(t *testing.T, what string, got, want int) {
 	t.Helper()
 	if got != want {
@@ -153,8 +173,11 @@ func TestAuthGuards(t *testing.T) {
 	expect(t, "write without CSRF header", h.do("POST", "/api/tasks", map[string]string{"project_key": "GAME", "title": "x"}, nil, csrfHeader, ""), 403)
 
 	// A runner token is not a browser credential.
-	var created struct{ Token string }
-	expect(t, "create runner", h.do("POST", "/api/runners", map[string]string{"name": "box"}, &created), 201)
+	var created struct {
+		Runner store.Runner
+		Token  string
+	}
+	expect(t, "create runner", h.newRunner("box", &created.Runner, &created.Token), 201)
 	anon := &harness{t: t, srv: h.srv, client: &http.Client{}}
 	expect(t, "runner token on a browser route", anon.do("GET", "/api/dashboard", nil, nil, "Authorization", "Bearer "+created.Token), 401)
 	expect(t, "session on a runner route", h.do("POST", "/api/runner/heartbeat", map[string]any{}, nil), 401)
@@ -267,7 +290,7 @@ func TestRunnerProtocol(t *testing.T) {
 		Runner store.Runner
 		Token  string
 	}
-	expect(t, "create runner", h.do("POST", "/api/runners", map[string]string{"name": "desktop"}, &created), 201)
+	expect(t, "create runner", h.newRunner("desktop", &created.Runner, &created.Token), 201)
 	runner := &harness{t: t, srv: h.srv, client: &http.Client{}}
 	bearer := []string{"Authorization", "Bearer " + created.Token}
 
@@ -498,7 +521,7 @@ func TestScopedAndConfirmedCommands(t *testing.T) {
 		Runner store.Runner
 		Token  string
 	}
-	expect(t, "runner", h.do("POST", "/api/runners", map[string]string{"name": "mac"}, &created), 201)
+	expect(t, "runner", h.newRunner("mac", &created.Runner, &created.Token), 201)
 	runner := &harness{t: t, srv: h.srv, client: &http.Client{}}
 	var hb struct{ Repos []store.RunnerRepo }
 	expect(t, "heartbeat", runner.do("POST", "/api/runner/heartbeat", map[string]any{
@@ -533,7 +556,7 @@ func TestTerminalRelay(t *testing.T) {
 		Runner store.Runner
 		Token  string
 	}
-	expect(t, "runner", h.do("POST", "/api/runners", map[string]string{"name": "desk"}, &created), 201)
+	expect(t, "runner", h.newRunner("desk", &created.Runner, &created.Token), 201)
 	bearer := []string{"Authorization", "Bearer " + created.Token}
 	runner := &harness{t: t, srv: h.srv, client: &http.Client{}}
 	expect(t, "heartbeat", runner.do("POST", "/api/runner/heartbeat", map[string]any{
@@ -656,8 +679,8 @@ func TestMasterRunnerAndCodeProxy(t *testing.T) {
 		Token  string
 	}
 	var master, laptop created
-	expect(t, "master", h.do("POST", "/api/runners", map[string]string{"name": "desk"}, &master), 201)
-	expect(t, "laptop", h.do("POST", "/api/runners", map[string]string{"name": "laptop"}, &laptop), 201)
+	expect(t, "master", h.newRunner("desk", &master.Runner, &master.Token), 201)
+	expect(t, "laptop", h.newRunner("laptop", &laptop.Runner, &laptop.Token), 201)
 	var rn store.Runner
 	expect(t, "make master", h.do("PATCH", fmt.Sprintf("/api/runners/%d", master.Runner.ID), map[string]string{"role": "master"}, &rn), 200)
 	if rn.Role != "master" {

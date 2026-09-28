@@ -12,9 +12,12 @@ vulnerability) on this repository. Do not open a public issue.
 
 - Serve it over HTTPS only (reverse proxy), set `PUBLIC_URL` to the https URL,
   and enable two-factor authentication right after the first sign-in.
-- Keep the database, metrics and Nomad on a private network; the server only
-  needs to be reachable by browsers and agents.
-- Back up `vault.key` (in `FORGE_DATA_DIR`) separately from database backups.
+- Keep metrics, Nomad and VS Code gateways on a private network; the server
+  only needs to be reachable by browsers and agents.
+- Back up `vault.key` (in the workspace, `FORGE_HOME`) separately from the
+  database backups in `backups/` — together they decrypt the vault.
+- Keep the workspace folder private (Forge creates it `0700`, its files
+  `0600`).
 - Leave `terminal`, `code` and permission modes beyond `plan`/`acceptEdits`
   off on machines that do not need them — they are opt-in per machine.
 - Review Settings → Security (the security log) now and then.
@@ -30,4 +33,9 @@ vulnerability) on this repository. Do not open a public issue.
 - Vault values and files: AES-256-GCM, key outside the database, each blob
   bound to its row.
 - Agents authenticate with a token (stored hashed) and can only do what their
-  local configuration allows.
+  local configuration (`~/.forge/agent.json`) allows.
+- Machines join with a one-time pairing code (valid 15 minutes, stored
+  hashed, rate-limited); the first account is created with a one-time setup
+  token printed by the server. Neither is ever shown again.
+- Project files are always served as downloads (`application/octet-stream`,
+  sandboxed), never rendered in the app's origin.

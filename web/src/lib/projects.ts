@@ -34,3 +34,22 @@ export function ciState(ci: Pick<CIStatus, "status" | "conclusion">): CIState {
       return "neutral"; // skipped, neutral, action_required, stale
   }
 }
+
+// ── Project files ──────────────────────────────────────────────────────────
+
+/** The API's upload limit (one file per request). */
+export const MAX_FILE_BYTES = 100 * 1024 * 1024;
+
+/**
+ * Why the API would refuse this file, or null when it is fine. Names keep
+ * their spelling on the server: no slashes and no leading dot.
+ */
+export function fileProblem(file: { name: string; size: number }): string | null {
+  if (!file.name || file.name.includes("/") || file.name.includes("\\")) return `"${file.name}" has a slash in its name.`;
+  if (file.name.startsWith(".")) return `"${file.name}" starts with a dot — rename it first.`;
+  // eslint-disable-next-line no-control-regex
+  if (new TextEncoder().encode(file.name).length > 200 || /[\x00-\x1f\x7f]/.test(file.name))
+    return `"${file.name}" has a name the server cannot store — rename it first.`;
+  if (file.size > MAX_FILE_BYTES) return `"${file.name}" is over 100 MB.`;
+  return null;
+}

@@ -319,7 +319,7 @@ func readLines(r io.Reader, fn func([]byte)) {
 		fn(cp)
 	}
 	if err := sc.Err(); err != nil {
-		fn([]byte("[forge-runner: output read error: " + err.Error() + "]"))
+		fn([]byte("[forge-agent: output read error: " + err.Error() + "]"))
 		_, _ = io.Copy(io.Discard, r)
 	}
 }
@@ -387,7 +387,7 @@ func truncateStrings(v any, max int) any {
 	switch x := v.(type) {
 	case string:
 		if len(x) > max {
-			return x[:max] + fmt.Sprintf("… [%d more bytes truncated by forge-runner]", len(x)-max)
+			return x[:max] + fmt.Sprintf("… [%d more bytes truncated by forge-agent]", len(x)-max)
 		}
 		return x
 	case []any:

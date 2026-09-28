@@ -158,6 +158,20 @@ export function formatCost(usd: number | null | undefined): string {
   return `$${usd.toFixed(2)}`;
 }
 
+/** "812 B", "4.2 KB", "13 MB", "1.1 GB" (1 KB = 1024 B). */
+export function formatBytes(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n) || n < 0) return "—";
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v < 10 ? v.toFixed(1).replace(/\.0$/, "") : Math.round(v)} ${units[i]}`;
+}
+
 /** 1,284 / 12.9K / 4.2M */
 export function compactNumber(n: number): string {
   if (Math.abs(n) < 10_000) return n.toLocaleString("en-US");

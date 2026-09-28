@@ -12,16 +12,6 @@ jobs:
   go:
     # GitHub-hosted runners only: this is a public repository.
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: forge
-          POSTGRES_PASSWORD: forge
-          POSTGRES_DB: forge_test
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd pg_isready --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -32,11 +22,12 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Test
-        env:
-          TEST_DATABASE_URL: postgres://forge:forge@127.0.0.1:5432/forge_test?sslmode=disable
-        run: go test ./... -count=1 -p 1
-      - name: Build
-        run: go build -o /dev/null ./cmd/forge
+        run: go test ./... -count=1
+      - name: Build (every release platform)
+        run: |
+          for p in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            CGO_ENABLED=0 GOOS=${p%/*} GOARCH=${p#*/} go build -o /dev/null ./cmd/forge
+          done
 
   web:
     runs-on: ubuntu-latest

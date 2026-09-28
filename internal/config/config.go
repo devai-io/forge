@@ -1,44 +1,58 @@
-// Package config reads the API's environment once, at boot, and fails fast on
+// Package config reads the server's settings once, at boot, and fails fast on
 // a bad value rather than letting it surface as a confusing error later.
+//
+// Everything the server keeps lives in one workspace folder, FORGE_HOME
+// (default ~/.forge; /data in the container image):
+//
+//	config.json   settings (this package; environment variables override it)
+//	forge.db      the SQLite database (+ -wal/-shm while running)
+//	vault.key     the vault master key — back it up on its own
+//	backups/      nightly database snapshots
+//	projects/KEY/ each project's files
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type Config struct {
-	ListenAddr  string
-	DatabaseURL string
-	// PublicURL is the origin the SPA is served from. It is the one allowed
-	// Origin for cookie-authenticated writes, the base of password-reset
-	// links, and decides whether the session cookie is Secure.
+	// Home is the workspace folder (FORGE_HOME).
+	Home string
+
+	ListenAddr string
+	// PublicURL is the origin the web app is served from. It is the one
+	// allowed Origin for cookie-authenticated writes, the base of links in
+	// e-mails, and decides whether the session cookie is Secure.
 	PublicURL string
 
 	SMTP SMTP
 
-	SeedOnEmpty     bool // FORGE_DEMO_DATA: load example projects into an empty database
+	SeedOnEmpty     bool // demo_data / FORGE_DEMO_DATA: load example projects into an empty database
 	MonitorInterval time.Duration
 	Version         string
 
-	// DataDir holds files the server creates for itself (the vault key when
-	// none is provided). Empty = none.
-	DataDir string
 	// DefaultTimezone is the timezone new accounts start in.
 	DefaultTimezone string
+
+	// BackupKeep is how many nightly database snapshots stay in backups/
+	// (0 turns backups off).
+	BackupKeep int
 
 	// Fleet observability (optional). Empty turns a source off.
 	VictoriaMetricsURL string
 	GrafanaURL         string
 	GrafanaPublicURL   string
 
-	// TrustedProxies may set X-Forwarded-For (Caddy's addresses on the host).
+	// TrustedProxies may set X-Forwarded-For (the reverse proxy's addresses).
 	TrustedProxies []net.IP
 }
 
@@ -50,61 +64,156 @@ type SMTP struct {
 	From     string
 }
 
-// Enabled reports whether reset e-mails can be sent at all.
+// Enabled reports whether e-mails can be sent at all.
 func (s SMTP) Enabled() bool { return s.Host != "" && s.From != "" }
 
+// File is config.json. Every field is optional; environment variables win.
+type File struct {
+	PublicURL       string   `json:"public_url,omitempty"`
+	ListenAddr      string   `json:"listen_addr,omitempty"`
+	Timezone        string   `json:"timezone,omitempty"`
+	DemoData        bool     `json:"demo_data,omitempty"`
+	MonitorInterval string   `json:"monitor_interval,omitempty"`
+	BackupKeep      *int     `json:"backup_keep,omitempty"`
+	TrustedProxies  []string `json:"trusted_proxies,omitempty"`
+	SMTP            struct {
+		Host         string `json:"host,omitempty"`
+		Port         int    `json:"port,omitempty"`
+		User         string `json:"user,omitempty"`
+		Password     string `json:"password,omitempty"`
+		PasswordFile string `json:"password_file,omitempty"`
+		From         string `json:"from,omitempty"`
+	} `json:"smtp"`
+	Monitoring struct {
+		VictoriaMetricsURL string `json:"victoriametrics_url,omitempty"`
+		GrafanaURL         string `json:"grafana_url,omitempty"`
+		GrafanaPublicURL   string `json:"grafana_public_url,omitempty"`
+	} `json:"monitoring"`
+}
+
+// DefaultHome is FORGE_HOME, else ~/.forge.
+func DefaultHome() string {
+	if h := os.Getenv("FORGE_HOME"); h != "" {
+		return h
+	}
+	if h := os.Getenv("FORGE_DATA_DIR"); h != "" { // the name before FORGE_HOME
+		return h
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ".forge"
+	}
+	return filepath.Join(home, ".forge")
+}
+
+func (c Config) ConfigPath() string  { return filepath.Join(c.Home, "config.json") }
+func (c Config) DBPath() string      { return filepath.Join(c.Home, "forge.db") }
+func (c Config) BackupDir() string   { return filepath.Join(c.Home, "backups") }
+func (c Config) ProjectsDir() string { return filepath.Join(c.Home, "projects") }
+
+// Load reads FORGE_HOME/config.json (writing a starter one when there is
+// none) and applies the environment on top.
 func Load() (Config, error) {
 	c := Config{
-		ListenAddr:      env("LISTEN_ADDR", ""),
-		PublicURL:       strings.TrimRight(env("PUBLIC_URL", "http://localhost:8080"), "/"),
-		SeedOnEmpty:     env("FORGE_DEMO_DATA", "false") == "true",
-		DataDir:         os.Getenv("FORGE_DATA_DIR"),
-		DefaultTimezone: env("FORGE_TIMEZONE", "UTC"),
+		Home:            DefaultHome(),
+		PublicURL:       "http://localhost:8080",
+		DefaultTimezone: "UTC",
 		MonitorInterval: 2 * time.Minute,
 		Version:         env("FORGE_VERSION", "dev"),
+		BackupKeep:      14,
+	}
+	abs, err := filepath.Abs(c.Home)
+	if err != nil {
+		return c, err
+	}
+	c.Home = abs
+	for _, dir := range []string{c.Home, c.BackupDir(), c.ProjectsDir()} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return c, fmt.Errorf("workspace %s: %w", dir, err)
+		}
+	}
 
-		VictoriaMetricsURL: strings.TrimRight(os.Getenv("VICTORIAMETRICS_URL"), "/"),
-		GrafanaURL:         strings.TrimRight(os.Getenv("GRAFANA_URL"), "/"),
-		GrafanaPublicURL:   strings.TrimRight(env("GRAFANA_PUBLIC_URL", os.Getenv("GRAFANA_URL")), "/"),
+	f, err := readFile(c.ConfigPath())
+	if err != nil {
+		return c, err
+	}
+	smtpPasswordFile := f.SMTP.PasswordFile
+	c.SMTP = SMTP{Host: f.SMTP.Host, Port: f.SMTP.Port, User: f.SMTP.User, Password: f.SMTP.Password, From: f.SMTP.From}
+	pick := func(dst *string, fileVal, envName string) {
+		if fileVal != "" {
+			*dst = fileVal
+		}
+		if v := os.Getenv(envName); v != "" {
+			*dst = v
+		}
+	}
+	pick(&c.PublicURL, f.PublicURL, "PUBLIC_URL")
+	pick(&c.ListenAddr, f.ListenAddr, "LISTEN_ADDR")
+	pick(&c.DefaultTimezone, f.Timezone, "FORGE_TIMEZONE")
+	pick(&c.VictoriaMetricsURL, f.Monitoring.VictoriaMetricsURL, "VICTORIAMETRICS_URL")
+	pick(&c.GrafanaURL, f.Monitoring.GrafanaURL, "GRAFANA_URL")
+	c.GrafanaPublicURL = c.GrafanaURL
+	pick(&c.GrafanaPublicURL, f.Monitoring.GrafanaPublicURL, "GRAFANA_PUBLIC_URL")
+	pick(&c.SMTP.Host, "", "SMTP_HOST")
+	pick(&c.SMTP.User, "", "SMTP_USER")
+	pick(&c.SMTP.From, "", "SMTP_FROM")
+	pick(&smtpPasswordFile, "", "SMTP_PASSWORD_FILE")
+	c.PublicURL = strings.TrimRight(c.PublicURL, "/")
+	c.VictoriaMetricsURL = strings.TrimRight(c.VictoriaMetricsURL, "/")
+	c.GrafanaURL = strings.TrimRight(c.GrafanaURL, "/")
+	c.GrafanaPublicURL = strings.TrimRight(c.GrafanaPublicURL, "/")
+
+	c.SeedOnEmpty = f.DemoData
+	if v := os.Getenv("FORGE_DEMO_DATA"); v != "" {
+		c.SeedOnEmpty = v == "true"
 	}
 	if c.ListenAddr == "" {
 		c.ListenAddr = "0.0.0.0:" + env("PORT", "8080")
 	}
-
-	dsn, err := databaseURL()
-	if err != nil {
-		return c, err
+	if u, err := url.Parse(c.PublicURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return c, fmt.Errorf("public_url %q: want http(s)://host[:port]", c.PublicURL)
 	}
-	c.DatabaseURL = dsn
-
-	if _, err := url.Parse(c.PublicURL); err != nil {
-		return c, fmt.Errorf("PUBLIC_URL: %w", err)
+	if _, err := time.LoadLocation(c.DefaultTimezone); err != nil {
+		return c, fmt.Errorf("timezone %q: %w", c.DefaultTimezone, err)
 	}
 
-	if v := os.Getenv("MONITOR_INTERVAL"); v != "" {
-		d, err := time.ParseDuration(v)
+	interval := f.MonitorInterval
+	pick(&interval, "", "MONITOR_INTERVAL")
+	if interval != "" {
+		d, err := time.ParseDuration(interval)
 		if err != nil || d < 10*time.Second {
-			return c, fmt.Errorf("MONITOR_INTERVAL %q: want a duration >= 10s", v)
+			return c, fmt.Errorf("monitor_interval %q: want a duration >= 10s", interval)
 		}
 		c.MonitorInterval = d
 	}
+	if f.BackupKeep != nil {
+		c.BackupKeep = *f.BackupKeep
+	}
+	if v := os.Getenv("FORGE_BACKUP_KEEP"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return c, fmt.Errorf("FORGE_BACKUP_KEEP %q: want a number >= 0", v)
+		}
+		c.BackupKeep = n
+	}
 
-	for _, raw := range strings.Split(os.Getenv("TRUSTED_PROXIES"), ",") {
+	proxies := f.TrustedProxies
+	if v := os.Getenv("TRUSTED_PROXIES"); v != "" {
+		proxies = strings.Split(v, ",")
+	}
+	for _, raw := range proxies {
 		if raw = strings.TrimSpace(raw); raw == "" {
 			continue
 		}
 		ip := net.ParseIP(raw)
 		if ip == nil {
-			return c, fmt.Errorf("TRUSTED_PROXIES: %q is not an IP", raw)
+			return c, fmt.Errorf("trusted_proxies: %q is not an IP", raw)
 		}
 		c.TrustedProxies = append(c.TrustedProxies, ip)
 	}
 
-	c.SMTP = SMTP{
-		Host: os.Getenv("SMTP_HOST"),
-		User: os.Getenv("SMTP_USER"),
-		From: os.Getenv("SMTP_FROM"),
-		Port: 587,
+	if c.SMTP.Port == 0 {
+		c.SMTP.Port = 587
 	}
 	if v := os.Getenv("SMTP_PORT"); v != "" {
 		p, err := strconv.Atoi(v)
@@ -113,60 +222,41 @@ func Load() (Config, error) {
 		}
 		c.SMTP.Port = p
 	}
-	c.SMTP.Password, err = secret("SMTP_PASSWORD", "SMTP_PASSWORD_FILE")
-	if err != nil {
-		return c, err
+	if v := os.Getenv("SMTP_PASSWORD"); v != "" {
+		c.SMTP.Password = v
+	}
+	if smtpPasswordFile != "" {
+		raw, err := os.ReadFile(smtpPasswordFile)
+		if err != nil {
+			return c, fmt.Errorf("smtp password file: %w", err)
+		}
+		c.SMTP.Password = strings.TrimSpace(string(raw))
 	}
 	return c, nil
 }
 
-// SecureCookies is true whenever the SPA is served over TLS.
-func (c Config) SecureCookies() bool { return strings.HasPrefix(c.PublicURL, "https://") }
-
-// databaseURL returns DATABASE_URL with the password from
-// DATABASE_PASSWORD_FILE spliced in when that is set — the same shape as
-// the password can live in a secret file mounted into the container rather
-// than in the job definition or the environment.
-func databaseURL() (string, error) {
-	base := os.Getenv("DATABASE_URL")
-	if base == "" {
-		return "", errors.New("DATABASE_URL is not set")
+// readFile reads config.json; a missing one is replaced by a starter file
+// holding the defaults, so the workspace documents itself.
+func readFile(path string) (File, error) {
+	var f File
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		starter := File{PublicURL: env("PUBLIC_URL", "http://localhost:8080"), Timezone: env("FORGE_TIMEZONE", "UTC")}
+		out, _ := json.MarshalIndent(starter, "", "  ")
+		_ = os.WriteFile(path, append(out, '\n'), 0o600)
+		return f, nil
 	}
-	password, err := secret("", "DATABASE_PASSWORD_FILE")
-	if err != nil || password == "" {
-		return base, err
-	}
-	u, err := url.Parse(base)
 	if err != nil {
-		return "", fmt.Errorf("DATABASE_URL is not a URL: %w", err)
+		return f, err
 	}
-	if u.User == nil {
-		return "", errors.New("DATABASE_URL has no user to attach the password to")
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return f, fmt.Errorf("%s: %w", path, err)
 	}
-	u.User = url.UserPassword(u.User.Username(), password)
-	return u.String(), nil
+	return f, nil
 }
 
-// secret reads a value from the environment, or from the file named by the
-// *_FILE variable when that is set (the file wins). Trailing whitespace is
-// trimmed: every editor and most secret managers add a newline.
-func secret(name, fileVar string) (string, error) {
-	if path := os.Getenv(fileVar); path != "" {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return "", fmt.Errorf("reading %s: %w", fileVar, err)
-		}
-		v := strings.TrimSpace(string(raw))
-		if v == "" {
-			return "", fmt.Errorf("%s (%s) is empty", fileVar, path)
-		}
-		return v, nil
-	}
-	if name == "" {
-		return "", nil
-	}
-	return os.Getenv(name), nil
-}
+// SecureCookies is true whenever the app is served over TLS.
+func (c Config) SecureCookies() bool { return strings.HasPrefix(c.PublicURL, "https://") }
 
 func env(name, fallback string) string {
 	if v := os.Getenv(name); v != "" {

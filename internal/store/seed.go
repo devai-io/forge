@@ -125,7 +125,7 @@ func (s *Store) Import(ctx context.Context, box *vault.Box, raw []byte, ip strin
 			if add == "" {
 				continue
 			}
-			tag, err := tx.Exec(ctx, `UPDATE servers SET notes = rtrim(notes) || E'\n\n' || $2, updated_at = now()
+			tag, err := tx.Exec(ctx, `UPDATE servers SET notes = rtrim(notes) || char(10, 10) || $2, updated_at = now()
 				WHERE name = $1 AND position($2 in notes) = 0`, u.Name, add)
 			if err != nil {
 				return err

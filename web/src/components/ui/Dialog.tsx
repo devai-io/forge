@@ -209,8 +209,8 @@ export function ConfirmDialog({
             data-autofocus
             disabled={loading}
             className={clsx(
-              "h-8.5 rounded-md px-3 text-sm font-medium text-white hover:brightness-110 disabled:opacity-60",
-              danger ? "bg-critical" : "bg-accent",
+              "h-8.5 rounded-md px-3 text-sm font-medium disabled:opacity-60",
+              danger ? "bg-critical text-white hover:brightness-110" : "bg-accent text-accent-fg hover:bg-accent-strong",
             )}
             onClick={onConfirm}
           >

@@ -13,13 +13,13 @@ import (
 	"time"
 )
 
-// `forge_runner mcp` is a Model Context Protocol server over stdio that Claude
+// `forge agent mcp` is a Model Context Protocol server over stdio that Claude
 // Code launches in every session on this machine (`claude mcp add --scope
-// user forge -- forge_runner mcp`). It speaks to Forge with this machine's
+// user forge -- forge agent mcp`). It speaks to Forge with this machine's
 // runner token, so a Claude session can read its project's context and tasks
 // and move them along without anyone copying anything between windows.
 //
-// `forge_runner context --hook` is the SessionStart hook: it prints the Forge
+// `forge agent context --hook` is the SessionStart hook: it prints the Forge
 // context for the session's directory (nothing, if the directory belongs to
 // no project), so Claude starts every session already knowing where it is.
 
@@ -159,7 +159,7 @@ func (c *client) get(ctx context.Context, path string, out any) error {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("User-Agent", "forge-runner/"+Version)
+	req.Header.Set("User-Agent", "forge-agent/"+Version)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
@@ -391,7 +391,7 @@ func asAPIError(err error, target **apiError) bool {
 	return ok
 }
 
-// PrintContext is `forge_runner context`: the Forge context for a directory.
+// PrintContext is `forge agent context`: the Forge context for a directory.
 // As a SessionStart hook (--hook) it reads the hook's JSON on stdin and emits
 // additionalContext; any failure prints nothing, so a hook can never block
 // or break a session.

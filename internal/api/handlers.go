@@ -78,10 +78,12 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request, u *store.
 }
 
 func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, u *store.User) {
-	if err := s.store.DeleteProject(r.Context(), r.PathValue("key")); err != nil {
+	key := strings.ToUpper(r.PathValue("key"))
+	if err := s.store.DeleteProject(r.Context(), key); err != nil {
 		writeErr(w, r, err)
 		return
 	}
+	s.retireProjectFiles(key)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -444,23 +446,6 @@ func (s *Server) listRunners(w http.ResponseWriter, r *http.Request, u *store.Us
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"runners": rs})
-}
-
-func (s *Server) createRunner(w http.ResponseWriter, r *http.Request, u *store.User) {
-	var in struct {
-		Name string `json:"name"`
-	}
-	if !decode(w, r, &in) {
-		return
-	}
-	token, hash := auth.Token("frg_")
-	rn, err := s.store.CreateRunner(r.Context(), in.Name, hash)
-	if err != nil {
-		writeErr(w, r, err)
-		return
-	}
-	s.sec(r, "runner_created", rn.Name)
-	writeJSON(w, http.StatusCreated, map[string]any{"runner": rn, "token": token})
 }
 
 func (s *Server) rotateRunner(w http.ResponseWriter, r *http.Request, u *store.User) {

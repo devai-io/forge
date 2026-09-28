@@ -35,6 +35,20 @@ describe("request", () => {
     expect((fetch.mock.calls[0] as unknown as [string])[0]).toBe("/api/dashboard");
   });
 
+  it("uploads multipart with the CSRF header and no hand-set Content-Type", async () => {
+    const fetch = mockFetch(201, { file: { name: "spec.pdf", size: 3, modified_at: "2026-09-28T10:00:00Z" } });
+    const form = new FormData();
+    form.append("file", new Blob(["abc"]), "spec.pdf");
+    await api.upload("/projects/SHOP/files", form);
+    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/projects/SHOP/files");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(form);
+    const headers = init.headers as Record<string, string>;
+    expect(headers["X-Forge-Client"]).toBe("web");
+    expect(headers["Content-Type"]).toBeUndefined();
+  });
+
   it("turns the error envelope into an ApiError", async () => {
     mockFetch(422, { error: { code: "validation", message: "title is required", field: "title" } });
     const err = await api.post("/tasks", {}).catch((e) => e);

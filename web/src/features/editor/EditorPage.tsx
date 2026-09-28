@@ -36,6 +36,8 @@ import {
   type StoredOpen,
 } from "@/lib/code";
 import { EditorToolbar } from "./EditorToolbar";
+import { accentHex } from "@/lib/accent";
+import { useUser } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
 import { useEditorLauncher } from "./launcher";
 
@@ -86,6 +88,7 @@ function EditorFrame({ target }: { target: EditorTarget }) {
   // The editor's first paint follows Forge's theme; a change of theme (a
   // toggle, or the OS at dusk) changes the src, which reloads the frame.
   const { resolved: theme } = useTheme();
+  const accent = accentHex(useUser().accent, theme);
 
   const reopen = useCallback(() => {
     setState({ kind: "opening" });
@@ -165,7 +168,7 @@ function EditorFrame({ target }: { target: EditorTarget }) {
     else navigate(target.kind === "project" ? `/p/${target.projectKey}` : "/editor");
   };
 
-  const url = state.kind === "ready" || state.kind === "probing" ? withTheme(state.open.url, theme) : null;
+  const url = state.kind === "ready" || state.kind === "probing" ? withTheme(state.open.url, theme, accent) : null;
 
   return (
     <div className="fixed inset-x-0 top-0 bottom-0 z-50 flex flex-col bg-surface md:top-13 md:left-60 md:z-20">
@@ -175,7 +178,7 @@ function EditorFrame({ target }: { target: EditorTarget }) {
           <iframe
             key={frameKey}
             ref={frame}
-            src={withTheme(state.open.url, theme)}
+            src={withTheme(state.open.url, theme, accent)}
             title={`VS Code — ${label}`}
             allow="clipboard-read; clipboard-write"
             onLoad={onFrameLoad}
@@ -286,7 +289,7 @@ function EditorLanding() {
             <p className="mt-0.5 text-[13px] text-fg-2">{status.data.reason || "The master machine is not serving it."}</p>
             <p className="mt-1 text-[12px] text-fg-3">
               It runs on the master ({status.data.runner_name ?? "desk"}) and needs that machine online with{" "}
-              <code className="font-mono">"code": true</code> in its runner.json.
+              VS Code enabled (<code className="font-mono">"code"</code>) in its <code className="font-mono">~/.forge/agent.json</code>.
             </p>
           </div>
         </div>

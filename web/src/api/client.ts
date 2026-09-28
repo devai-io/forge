@@ -94,13 +94,15 @@ export function promptElevation(): Promise<boolean> {
 
 // `elevate: false` lets background polling fail quietly with the 403 instead
 // of popping a password dialog nobody asked for.
-type RequestOptions = { body?: unknown; query?: Query; signal?: AbortSignal; elevate?: boolean };
+// `form` sends multipart/form-data; the browser writes that Content-Type
+// itself (with the boundary), so it is never set here.
+type RequestOptions = { body?: unknown; form?: FormData; query?: Query; signal?: AbortSignal; elevate?: boolean };
 
 /** Send a request and return the successful Response; every failure becomes an ApiError. */
 async function send(method: string, path: string, options: RequestOptions, accept: string, retried = false): Promise<Response> {
   const headers: Record<string, string> = { Accept: accept };
   if (method !== "GET") headers["X-Forge-Client"] = "web";
-  if (options.body !== undefined) headers["Content-Type"] = "application/json";
+  if (options.body !== undefined && !options.form) headers["Content-Type"] = "application/json";
 
   let res: Response;
   try {
@@ -108,7 +110,7 @@ async function send(method: string, path: string, options: RequestOptions, accep
       method,
       headers,
       credentials: "same-origin",
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      body: options.form ?? (options.body !== undefined ? JSON.stringify(options.body) : undefined),
       signal: options.signal,
     });
   } catch (err) {
@@ -169,6 +171,8 @@ export const api = {
   patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, { body }),
   put: <T>(path: string, body: unknown) => request<T>("PUT", path, { body }),
   del: <T = void>(path: string) => request<T>("DELETE", path),
+  /** POST multipart/form-data (file uploads). */
+  upload: <T>(path: string, form: FormData) => request<T>("POST", path, { form }),
 };
 
 export const isElevationError = (err: unknown) => err instanceof ApiError && err.code === "elevation_required";

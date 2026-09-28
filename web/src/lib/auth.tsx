@@ -13,6 +13,7 @@ import { ApiError, UNAUTHORIZED_EVENT } from "@/api/client";
 import { keys, useMe } from "@/api/hooks";
 import type { User } from "@/api/types";
 import { FullPageSpinner } from "@/components/ui/Spinner";
+import { applyAccent } from "@/lib/accent";
 
 export function useAuthListener() {
   const qc = useQueryClient();
@@ -23,6 +24,18 @@ export function useAuthListener() {
     window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, [qc]);
+}
+
+/**
+ * Paints the account's accent whenever /me loads or changes, and caches it for
+ * the next first paint. Signed out (or an API without the field), the accent
+ * theme-init.js painted from that cache stays.
+ */
+export function useAccentSync() {
+  const accent = useMe().data?.user.accent;
+  useEffect(() => {
+    if (accent !== undefined) applyAccent(accent);
+  }, [accent]);
 }
 
 /**

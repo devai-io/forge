@@ -341,7 +341,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, u *store
 		writeErr(w, r, err)
 		return
 	}
-	if err := s.store.SetPassword(r.Context(), u.ID, hash, sessionID(r)); err != nil {
+	if err := s.store.SetPassword(r.Context(), u.ID, hash, sessionID(r), false); err != nil {
 		writeErr(w, r, err)
 		return
 	}
@@ -430,7 +430,7 @@ func (s *Server) reset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
-	if err := s.store.SetPassword(r.Context(), userID, hash, 0); err != nil {
+	if err := s.store.SetPassword(r.Context(), userID, hash, 0, false); err != nil {
 		writeErr(w, r, err)
 		return
 	}

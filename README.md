@@ -5,21 +5,26 @@ and tasks in one place, with an agent on each of your machines that runs
 Claude Code for you, attaches you to its tmux sessions from any browser, opens
 VS Code in the browser, and checks every morning that everything still works.
 
+One binary, one SQLite file, one folder. MIT licensed.
+
 > **Status: early.** Single-user, used daily by its author, APIs may change.
 
 ## What it does
 
-- **Projects & tasks** — a kanban board per project, focus list, streaks, activity feed.
-- **Machines (agents)** — `forge agent` runs on your laptop, desktop, build box or Mac.
-  It dials out to the server (no inbound ports), reports git and CI state of your
-  repos, and runs what you queue: Claude Code sessions (`claude -p`, streamed live)
-  or named commands you whitelisted in its config.
-- **Terminals** — attach to the agents' tmux sessions from the browser or a phone;
-  peek and send keys to answer Claude without a full terminal.
-- **Claude context** — every Claude Code session in a registered repo starts with
-  that project's notes, open tasks and check-up actions, and can read and update
-  tasks through the `forge` MCP server.
-- **VS Code in the browser** — served from your always-on machine, embedded in the app.
+- **Projects & tasks** — a kanban board per project, focus list, streaks,
+  activity feed, and a folder of files per project.
+- **Machines (agents)** — `forge agent` runs on your laptop, desktop, build box
+  or Mac. It dials out to the server (no inbound ports), reports the git and CI
+  state of your repos, and runs what you queue: Claude Code sessions
+  (`claude -p`, streamed live) or named commands you allowed in its settings.
+  Adding one is a pairing code and one command.
+- **Terminals** — attach to the agents' tmux sessions from the browser or a
+  phone; peek and send keys to answer Claude without a full terminal.
+- **Claude context** — every Claude Code session in a registered repo starts
+  with that project's notes, open tasks and check-up actions, and can read and
+  update tasks through the `forge` MCP server.
+- **VS Code in the browser** — served from your always-on machine, embedded in
+  the app, in your theme and accent colour.
 - **Monitoring & daily check-up** — endpoint probes, TLS expiry, and (optional)
   VictoriaMetrics, Grafana alerts and Nomad jobs, turned into a daily action list.
 - **Vault** — keys, keystores and service accounts, encrypted with a key kept
@@ -30,59 +35,76 @@ VS Code in the browser, and checks every morning that everything still works.
 The in-app **Docs** page explains exactly what is automated, what is read live,
 and what is only configuration.
 
-## Quick start (Docker)
+## Install
+
+The short version — full steps (reverse proxy, backups, upgrades,
+troubleshooting) are in **[INSTALL.md](INSTALL.md)**, written so an AI coding
+agent can follow it too.
+
+**Server** (Docker):
 
 ```bash
-git clone https://github.com/devai-io/forge && cd forge
-cp .env.example .env            # set POSTGRES_PASSWORD; FORGE_DEMO_DATA=true for sample projects
-docker compose up -d --build
-docker compose exec forge /forge create-user admin you@example.com   # prints a password
-open http://localhost:8080
+curl -fsSLO https://raw.githubusercontent.com/devai-io/forge/main/docker-compose.yml
+docker compose up -d
+docker compose logs forge        # open the setup link it prints, create your account
 ```
 
-The server listens on `127.0.0.1:8080`. To reach it from elsewhere, put a TLS
-reverse proxy in front, set `PUBLIC_URL=https://your.domain`, and turn on
-two-factor under Settings. **Back up the `data` volume** — it holds
-`vault.key`, without which the vault cannot be decrypted.
+…or without Docker: install the binary (below) and run `forge server`.
 
-## Add a machine (agent)
+**A machine** — on the Agents page choose **Add machine**, then run the command
+it shows on that machine:
 
-1. In Forge: **Agents → Add runner**, name it, copy the token (shown once).
-2. On the machine: install the `forge` binary (build it with `make build`), then
-   ```bash
-   install -Dm600 deploy/runner.example.json ~/.config/forge/runner.json   # set api_url + token
-   forge agent                                                             # or install the service:
-   ```
-   Linux: `deploy/forge-agent.service` (systemd user unit) · macOS: `deploy/dev.forge.agent.plist`.
-3. Optional Claude Code integration on that machine:
-   ```bash
-   claude mcp add --scope user forge -- ~/.local/bin/forge agent mcp
-   ```
-   and a SessionStart hook running `~/.local/bin/forge agent context --hook`.
+```bash
+curl -fsSL https://github.com/devai-io/forge/releases/latest/download/install.sh \
+  | sh -s -- --pair https://forge.example.com K7QD-M3XP
+```
 
-What a machine may do is decided **in its own `runner.json`**: allowed
+That installs `forge`, pairs the machine, runs the agent in the background
+(systemd user unit / launchd) and connects Claude Code.
+
+## The workspace folder
+
+Everything Forge keeps is in one folder, on the server and on each machine:
+
+| Server — `FORGE_HOME` (default `~/.forge`, `/data` in Docker) | |
+|---|---|
+| `config.json` | settings (environment variables override it) |
+| `forge.db` | the SQLite database |
+| `vault.key` | the vault master key — **back it up separately** |
+| `backups/` | nightly database snapshots (14 kept) |
+| `projects/<KEY>/` | each project's files |
+
+| Machine — `~/.forge` | |
+|---|---|
+| `agent.json` | this machine's settings and token ([example](deploy/agent.example.json)) |
+| `workspaces/`, `vscode/` | VS Code workspace files and server data |
+| `projects/` | the default place for checkouts |
+| `logs/` | the background service's log (macOS) |
+
+What a machine may do is decided **in its own `agent.json`**: allowed
 directories, Claude permission modes, named commands (optionally repo-scoped
 and confirm-only), terminals, VS Code. Mark your always-on machine as
 **master** on the Agents page: it is the source of repo state and hosts VS Code.
 
-## Configuration
-
-Server: environment variables — see [`.env.example`](.env.example).
-Agent: `~/.config/forge/runner.json` — see [`deploy/runner.example.json`](deploy/runner.example.json).
-
 ## Build from source
 
-Requirements: Go 1.26+, Node 22+, Postgres 15+.
+Requirements: Go 1.26+, Node 22+.
 
 ```bash
 make ui build          # web app + bin/forge with the UI embedded
-make dev-db run        # local Postgres + server on :8080
-make test web-test     # tests (make test-db for the database-backed ones)
+make run               # server on :8080, workspace in ./.forge-dev
+make test web-test     # Go (SQLite, nothing to set up) and web tests
+make dist              # release archives for Linux/macOS × amd64/arm64
 ```
 
 Layout: `cmd/forge` (the one binary), `internal/` (server, agent, store),
-`web/` (React app), `docs/API.md` (the HTTP contract), `deploy/` (service files).
+`web/` (React app), `docs/API.md` (the HTTP contract). See
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Security
 
 See [SECURITY.md](SECURITY.md). Please report vulnerabilities privately.
+
+## License
+
+[MIT](LICENSE)

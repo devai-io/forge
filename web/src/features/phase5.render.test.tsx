@@ -35,7 +35,7 @@ describe("DocsPage", () => {
   it("renders every section with an anchor, the tier legend and the live facts", async () => {
     vi.stubGlobal("fetch", routeFetch({ "GET /system": () => jsonResponse(200, facts) }));
     renderWithProviders(<DocsPage />, { route: "/docs" });
-    for (const id of ["overview", "now", "sources", "checkup", "stored", "security", "limits"]) {
+    for (const id of ["overview", "now", "setup", "sources", "checkup", "stored", "security", "limits"]) {
       expect(document.getElementById(id)).not.toBeNull();
     }
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("What Forge does — and what it doesn't");

@@ -111,7 +111,7 @@ function MonitoringBody({ m, stale }: { m: Monitoring; stale: boolean }) {
   );
 }
 
-const LEVEL_FILL: Record<Level, string> = { ok: "bg-accent", warn: "bg-warning", fail: "bg-critical" };
+const LEVEL_FILL: Record<Level, string> = { ok: "bg-series-1", warn: "bg-warning", fail: "bg-critical" };
 
 /** A resource meter: severity carries the fill; the value is always printed. */
 export function UsageBar({ label, pct }: { label: string; pct: number | null }) {

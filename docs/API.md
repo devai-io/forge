@@ -29,8 +29,8 @@ under `/api/runner/*` and accept nothing else; browser routes never accept a
 runner token.
 
 Unauthenticated routes: `POST /api/auth/login`, `POST /api/auth/forgot`,
-`POST /api/auth/reset`, `GET /api/status`. Everything else → `401 unauthorized`
-without a valid session.
+`POST /api/auth/reset`, `GET /api/status`, `GET /api/setup`, `POST /api/setup`.
+Everything else → `401 unauthorized` without a valid session.
 
 ## Types
 
@@ -272,8 +272,9 @@ top = first − 1000).
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | /api/runners | – | `{runners: Runner[]}` |
-| POST | /api/runners | `{name}` | `201 {runner: Runner, token: string}` — the token is shown once |
-| POST | /api/runners/{id}/rotate | – | `{runner: Runner, token: string}` |
+| POST | /api/runners | `{name, role?}` | `201 {runner: Runner, pairing: Pairing}` — see *Machine pairing* below |
+| POST | /api/runners/{id}/pair | – | `{runner: Runner, pairing: Pairing}` — a new code for an existing machine |
+| POST | /api/runners/{id}/rotate | – | `{runner: Runner, token: string}` — the token is shown once (manual setup) |
 | DELETE | /api/runners/{id} | – | `204` |
 | GET | /api/runs | query `project` (key), `task` (id), `status`, `limit` (default 50) | `{runs: Run[]}` newest first |
 | POST | /api/runs | `{runner_id, repo_id, kind, prompt?, command?, permission_mode?, model?, worktree?, task_id?, resume_run_id?}` | `201 Run` (queued). `resume_run_id` copies runner/repo from that run and requires it to have a `session_id` |
@@ -401,7 +402,7 @@ Integrations read their credentials from the vault by tag: an item tagged
 `integration:grafana` (secret field `value` = a Grafana service-account token)
 turns on Grafana alerts and dashboards in monitoring.
 
-## Monitoring (VictoriaMetrics, Grafana, Nomad — all over the tailnet)
+## Monitoring (VictoriaMetrics, Grafana, Nomad — over a private network)
 
 ```ts
 type HostMetrics = {
@@ -482,7 +483,7 @@ is `true`; a command scoped to repos is refused for any other repo.
 
 # remote tmux terminals and Claude context
 
-Runners that opt in (`"terminal": true` in their runner.json) report their tmux
+Runners that opt in (`"terminal": true` in their `~/.forge/agent.json`) report their tmux
 sessions on every heartbeat and hold a control WebSocket open to the API. The
 browser attaches to a session through the API, which relays bytes between the
 browser's WebSocket and a per-terminal WebSocket the runner dials back — so no
@@ -541,8 +542,8 @@ just returns it.
 | PATCH | /api/runner/tasks/{id} | `{status?, title?, description?, priority?, focus?, labels?, due_date?}` → `Task` |
 | POST | /api/runner/tasks/{id}/comments | `{body}` → `201 Comment` |
 
-The last five back `forge_runner mcp` (an MCP server Claude Code launches on
-each machine) and `forge_runner context` (a SessionStart hook that prints the
+The last five back `forge agent mcp` (an MCP server Claude Code launches on
+each machine) and `forge agent context` (a SessionStart hook that prints the
 context for the session's directory), so every Claude session on a registered
 repo starts knowing its Forge project, open tasks and today's check-up actions.
 
@@ -576,8 +577,8 @@ type TerminalHost = { /* … as above, plus */ role: RunnerRole };
 ## VS Code (web) on the master
 
 The master serves VS Code's own web build (`code serve-web`) on localhost; its
-runner exposes it to forge-api over the tailnet through an authenticated
-gateway, and forge-api proxies it to the browser at **`/code/`** (same origin,
+runner exposes it to the server over a private network through an authenticated
+gateway, and the server proxies it to the browser at **`/code/`** (same origin,
 so it embeds in Forge). Opening needs elevation; after that a `forge_code`
 cookie (HttpOnly, Path=/code, 12 h, bound to the session) lets the editor's
 own requests and WebSockets through. Signing out ends it.
@@ -646,3 +647,113 @@ editor's boot configuration so VS Code's *default* theme is "Dark 2026" or
 VS Code still wins (it is a user setting; this only sets the default). The UI
 appends the resolved Forge theme to the editor URL and reloads the frame when
 it changes.
+
+---
+
+# first-run setup, machine pairing, accent themes, project files
+
+## First-run setup
+
+A server with no account prints a setup link, `<PUBLIC_URL>/setup?token=…`, in
+its log on first start; `forge setup-token` on the server prints it again. The
+token is only good until the account exists.
+
+```ts
+type SetupStatus = { needed: boolean };  // true while the server has no account
+type SetupInput = {
+  token: string; username: string; email: string;
+  password: string;          // 12–72 characters (bcrypt's 72-byte limit)
+  display_name?: string;
+  timezone: string;          // IANA
+  demo_data: boolean;        // load the demo seed (projects, servers, tasks)
+};
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | /api/setup | – (no auth) | `{needed: boolean}` |
+| POST | /api/setup | `SetupInput` (no auth) | `201 MeResponse` + session cookie, like login. `409 setup_done` (an account exists — sign in), `403 bad_setup_token`, `422 validation` with `field` (one of the `SetupInput` keys), `429 rate_limited` |
+
+The web app's `/login` redirects to `/setup` (keeping `?token=`) while `needed`
+is true; `/setup` redirects to `/login` once it is false. Usernames are 2–32
+letters, digits, dots, dashes or underscores; `display_name` (at most 100
+characters) defaults to the username and `timezone` to the server's.
+
+The security log gains the kinds `setup` (the account was created here),
+`runner_pair_code` (a code was issued) and `runner_paired` (a machine used one).
+
+## Machine pairing
+
+Adding a machine no longer shows its token. The server hands out a one-time
+pairing code instead; on the machine, `forge agent pair <origin> <code>` (or
+the install script's `--pair <origin> <code>`) swaps it for the token. Only the
+code's hash is stored.
+
+```ts
+type Pairing = { code: string;         // e.g. "K7QD-M3XP"
+                 expires_at: string };  // 15 minutes after it was issued; single use
+type Runner = { /* … as above, plus */
+  pair_expires_at: string | null;  // non-null = a code is outstanding and unused
+};
+```
+
+- `POST /api/runners` `{name, role?: "master" | "ios" | "worker"}` →
+  `201 {runner, pairing}`.
+- `POST /api/runners/{id}/pair` → `{runner, pairing}`: a new code for an
+  existing machine (reinstalled or moved). Any earlier unused code stops
+  working. The machine's current token keeps working until the new code is used.
+- `pair_expires_at` is set while a code is out and cleared (`null`) when it is
+  used. The web app treats "cleared" as "used", and "used, and `last_seen_at`
+  at or after `expires_at − 15 min`" as connected — so keep `pair_expires_at`
+  set on an expired, unused code (don't clear it in a cleanup job), and keep
+  the 15-minute lifetime in step with the UI.
+- `POST /api/runners/{id}/rotate` is unchanged (manual setup: the token goes
+  into `~/.forge/agent.json` as `"token"`).
+
+The machine's side — no session, no CSRF header (it is not a browser); the
+code is the credential, so failures are rate-limited (10 per address, 60 in
+all, per 15 minutes):
+
+- `POST /api/runner/pair` `{code, hostname?, os?, version?}` → `200
+  {runner_id, name, role, token, api_url}`. The code is matched
+  case-insensitively with separators ignored. `404 bad_code` for an unknown,
+  used or expired code; `429 rate_limited`. The returned `token` replaces the
+  machine's previous one.
+
+## Accent
+
+```ts
+type User = { /* … as above, plus */
+  accent: string;  // "" = default | preset id | custom "#rrggbb" (lowercase)
+};
+```
+
+Preset ids: `indigo` (the default look), `blue`, `sky`, `teal`, `green`,
+`lime`, `amber`, `orange`, `red`, `rose`, `pink`, `violet`. `PATCH
+/api/auth/me` accepts `{accent}`; anything other than `""`, a preset id or a
+`#rrggbb` colour → `422 validation` (`field: "accent"`). The web app sends
+`""` for the default rather than `"indigo"`, and treats an unknown value as
+the default.
+
+`GET /code/?…&forge_accent=rrggbb` (six hex digits, no `#`) — the resolved
+accent for the current theme, next to `forge_theme`, so the gateway can match
+VS Code's accent. It is omitted when not a valid colour.
+
+## Project files
+
+Each project has a folder on the server (`projects/<KEY>/` in the workspace).
+
+```ts
+type ProjectFile = { name: string; size: number /* bytes */; modified_at: string };
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | /api/projects/{key}/files | – | `{files: ProjectFile[]}` |
+| POST | /api/projects/{key}/files | `multipart/form-data`, one field `file` (max 100 MB); the file's name is kept, the same name overwrites | `201 {file: ProjectFile}` |
+| GET | /api/projects/{key}/files/{name} | – | the file, `Content-Disposition: attachment` |
+| DELETE | /api/projects/{key}/files/{name} | – | `204` |
+
+Names: no slashes, no leading dot, no control characters, at most 200 bytes
+(`422 validation` otherwise); over 100 MB → `413 too_large`. `{name}` is URL-encoded in the path. Uploads
+and deletes need `X-Forge-Client: web` like every other write.

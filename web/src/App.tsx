@@ -5,6 +5,7 @@ import { FullPageSpinner } from "@/components/ui/Spinner";
 import { AgentsPage } from "@/features/agents/AgentsPage";
 import { RunPage } from "@/features/agents/RunPage";
 import { ForgotPage, LoginPage, ResetPage } from "@/features/auth/AuthPages";
+import { SetupPage } from "@/features/auth/SetupPage";
 import { ElevationGate } from "@/features/auth/ElevationGate";
 import { CheckupPage } from "@/features/checkup/CheckupPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
@@ -14,7 +15,7 @@ import { ProjectsPage } from "@/features/projects/ProjectsPage";
 import { AppShell } from "@/features/shell/AppShell";
 import { TasksPage } from "@/features/tasks/TasksPage";
 import { TerminalPage } from "@/features/terminal/TerminalPage";
-import { RequireAuth, useAuthListener } from "@/lib/auth";
+import { RequireAuth, useAccentSync, useAuthListener } from "@/lib/auth";
 
 // Split off what isn't needed on a typical visit: xterm (the terminal view),
 // and pages opened now and then — the dashboard, board and lists stay in the
@@ -30,6 +31,7 @@ const page = (el: React.ReactNode) => <Suspense fallback={<FullPageSpinner />}>{
 
 export function App() {
   useAuthListener();
+  useAccentSync();
   return (
     <>
       {/* Answers every 403 elevation_required with "Confirm it's you", app-wide. */}
@@ -38,6 +40,7 @@ export function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot" element={<ForgotPage />} />
         <Route path="/reset" element={<ResetPage />} />
+        <Route path="/setup" element={<SetupPage />} />
         <Route
           element={
             <RequireAuth>

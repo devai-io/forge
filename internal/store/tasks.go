@@ -9,7 +9,7 @@ import (
 
 const taskSelect = `
 SELECT t.id, t.project_id, p.key, p.name, p.color, t.number, t.title, t.description, t.status, t.priority,
-       t.type, t.labels, to_char(t.due_date, 'YYYY-MM-DD'), t.focus, t.repo_id, r.name, t.estimate,
+       t.type, t.labels, t.due_date, t.focus, t.repo_id, r.name, t.estimate,
        t.sort_order, t.completed_at, t.created_at, t.updated_at,
        (SELECT count(*) FROM comments c WHERE c.task_id = t.id)
 FROM tasks t
@@ -17,9 +17,9 @@ JOIN projects p ON p.id = t.project_id
 LEFT JOIN repos r ON r.id = t.repo_id`
 
 // statusOrder is the kanban column order, used to sort flat lists too.
-const statusOrder = `array_position(ARRAY['backlog','todo','in_progress','blocked','done'], t.status)`
+const statusOrder = `CASE t.status WHEN 'backlog' THEN 1 WHEN 'todo' THEN 2 WHEN 'in_progress' THEN 3 WHEN 'blocked' THEN 4 ELSE 5 END`
 
-const priorityOrder = `array_position(ARRAY['urgent','high','medium','low'], t.priority)`
+const priorityOrder = `CASE t.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END`
 
 func scanTask(row interface{ Scan(...any) error }) (*Task, error) {
 	var t Task
@@ -73,7 +73,7 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]Task, error) {
 		where = append(where, "p.key = "+arg(strings.ToUpper(f.ProjectKey)))
 	}
 	if len(f.Statuses) > 0 {
-		where = append(where, "t.status = ANY("+arg(f.Statuses)+")")
+		where = append(where, "t.status IN (SELECT value FROM json_each("+arg(f.Statuses)+"))")
 	}
 	if f.Focus {
 		where = append(where, "t.focus")
@@ -88,15 +88,15 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]Task, error) {
 		where = append(where, "t.type = "+arg(f.Type))
 	}
 	if f.Label != "" {
-		where = append(where, arg(f.Label)+" = ANY(t.labels)")
+		where = append(where, "EXISTS (SELECT 1 FROM json_each(t.labels) WHERE value = "+arg(f.Label)+")")
 	}
 	if f.Overdue {
-		where = append(where, "t.status <> 'done' AND t.due_date < "+arg(f.Today)+"::date")
+		where = append(where, "t.status <> 'done' AND t.due_date < "+arg(f.Today)+"")
 	}
 	if q := strings.TrimSpace(f.Query); q != "" {
 		like := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q) + "%"
 		n := arg(like)
-		where = append(where, fmt.Sprintf("(t.title ILIKE %s OR p.key || '-' || t.number ILIKE %s OR t.description ILIKE %s)", n, n, n))
+		where = append(where, fmt.Sprintf("(t.title LIKE %[1]s ESCAPE '\\' OR p.key || '-' || t.number LIKE %[1]s ESCAPE '\\' OR t.description LIKE %[1]s ESCAPE '\\')", n))
 	}
 	q := taskSelect
 	if len(where) > 0 {
@@ -212,7 +212,7 @@ func (s *Store) CreateTask(ctx context.Context, in TaskInput) (*Task, error) {
 			                   focus, repo_id, estimate, sort_order, completed_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
 			        (SELECT coalesce(max(sort_order), 0) + 1000 FROM tasks WHERE project_id = $1 AND status = $5),
-			        CASE WHEN $5 = 'done' THEN coalesce($13::timestamptz, now()) END)
+			        CASE WHEN $5 = 'done' THEN coalesce($13, now()) END)
 			RETURNING id`,
 			pid, number, in.Title, in.Description, in.Status, in.Priority, in.Type, in.Labels, in.DueDate,
 			in.Focus, in.RepoID, in.Estimate, in.CompletedAt).Scan(&id)
@@ -296,7 +296,7 @@ func (s *Store) UpdateTask(ctx context.Context, id int64, p Patch) (*Task, error
 	}
 
 	err = s.tx(ctx, func(tx pgxTx) error {
-		cur, err := scanTask(tx.QueryRow(ctx, taskSelect+` WHERE t.id = $1 FOR UPDATE OF t`, id))
+		cur, err := scanTask(tx.QueryRow(ctx, taskSelect+` WHERE t.id = $1`, id))
 		if err != nil {
 			return err
 		}

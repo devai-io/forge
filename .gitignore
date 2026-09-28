@@ -15,3 +15,11 @@ coverage.out
 *.key
 runner.json
 !/deploy/runner.example.json
+agent.json
+!/deploy/agent.example.json
+/dist/
+/.forge-dev/
+*.db
+*.db-wal
+*.db-shm
+setup-token

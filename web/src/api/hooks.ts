@@ -19,6 +19,10 @@ import type {
   CheckupSummary,
   MeResponse,
   Monitoring,
+  Pairing,
+  ProjectFile,
+  SetupInput,
+  SetupStatus,
   CodeOpenInput,
   SecurityEvent,
   SystemFacts,
@@ -58,11 +62,13 @@ import type {
 
 export const keys = {
   me: ["me"] as const,
+  setup: ["setup"] as const,
   sessions: ["sessions"] as const,
   dashboard: ["dashboard"] as const,
   projects: (includeArchived = false) => ["projects", { includeArchived }] as const,
   project: (key: string) => ["project", key] as const,
   projectActivity: (key: string) => ["project-activity", key] as const,
+  projectFiles: (key: string) => ["project-files", key] as const,
   tasks: (filters: TaskFilters) => ["tasks", filters] as const,
   task: (id: number) => ["task", id] as const,
   servers: ["servers"] as const,
@@ -127,6 +133,33 @@ export function useLogin() {
   });
 }
 
+/** Whether the server still needs its first account. An API without the route (404) never does. */
+export function useSetupStatus() {
+  return useQuery({
+    queryKey: keys.setup,
+    queryFn: () =>
+      api.get<SetupStatus>("/setup").catch((err) => {
+        if (err instanceof ApiError && err.status === 404) return { needed: false };
+        throw err;
+      }),
+    retry: false,
+    staleTime: 60_000,
+  });
+}
+
+/** Creates the account and signs it in: the answer is a MeResponse, like login's. */
+export function useSetup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: SetupInput) => api.post<MeResponse>("/setup", body),
+    onSuccess: (me) => {
+      qc.clear();
+      qc.setQueryData(keys.me, me);
+      qc.setQueryData<SetupStatus>(keys.setup, { needed: false });
+    },
+  });
+}
+
 function setMeUser(qc: QueryClient, user: User) {
   qc.setQueryData<MeResponse | null>(keys.me, (old) => ({ user, elevated_until: old?.elevated_until ?? null }));
 }
@@ -172,7 +205,9 @@ export function useUpdateMe() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (
-      body: Partial<Pick<User, "email" | "display_name" | "timezone" | "weekly_goal" | "checkup_time" | "checkup_email">>,
+      body: Partial<
+        Pick<User, "email" | "display_name" | "timezone" | "weekly_goal" | "checkup_time" | "checkup_email" | "accent">
+      >,
     ) => api.patch<{ user: User }>("/auth/me", body).then((r) => r.user),
     onSuccess: (user) => {
       setMeUser(qc, user);
@@ -312,6 +347,41 @@ export function useSaveRepo(projectKey: string) {
         ? api.patch<Repo>(`/repos/${id}`, body)
         : api.post<Repo>(`/projects/${encodeURIComponent(projectKey)}/repos`, body),
     onSuccess: () => void qc.invalidateQueries({ queryKey: keys.project(projectKey) }),
+  });
+}
+
+export function useProjectFiles(key: string) {
+  return useQuery({
+    queryKey: keys.projectFiles(key),
+    queryFn: () =>
+      api.get<{ files: ProjectFile[] }>(`/projects/${encodeURIComponent(key)}/files`).then((r) => r.files),
+  });
+}
+
+/** The download URL: a plain link, so the browser streams it with the session cookie. */
+export const projectFileUrl = (key: string, name: string) =>
+  `/api/projects/${encodeURIComponent(key)}/files/${encodeURIComponent(name)}`;
+
+export function useUploadProjectFile(key: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.append("file", file, file.name);
+      return api.upload<{ file: ProjectFile }>(`/projects/${encodeURIComponent(key)}/files`, form).then((r) => r.file);
+    },
+    onSettled: () => void qc.invalidateQueries({ queryKey: keys.projectFiles(key) }),
+  });
+}
+
+export function useDeleteProjectFile(key: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => api.del(`/projects/${encodeURIComponent(key)}/files/${encodeURIComponent(name)}`),
+    onSuccess: (_d, name) => {
+      qc.setQueryData<ProjectFile[]>(keys.projectFiles(key), (old) => old?.filter((f) => f.name !== name));
+      void qc.invalidateQueries({ queryKey: keys.projectFiles(key) });
+    },
   });
 }
 
@@ -534,10 +604,24 @@ export function useRunners(refetchInterval: number | false = 10_000) {
   });
 }
 
+/** Adds a machine and returns its first pairing code (15 minutes, single use). */
 export function useCreateRunner() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (name: string) => api.post<{ runner: Runner; token: string }>("/runners", { name }),
+    mutationFn: (body: { name: string; role?: RunnerRole }) =>
+      api.post<{ runner: Runner; pairing: Pairing }>("/runners", body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.runners });
+      void qc.invalidateQueries({ queryKey: keys.dashboard });
+    },
+  });
+}
+
+/** A new pairing code for an existing machine; its current token works until the code is used. */
+export function usePairRunner() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.post<{ runner: Runner; pairing: Pairing }>(`/runners/${id}/pair`),
     onSuccess: () => void qc.invalidateQueries({ queryKey: keys.runners }),
   });
 }

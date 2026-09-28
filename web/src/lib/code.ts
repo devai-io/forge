@@ -138,13 +138,17 @@ export function frameFailure(doc: Pick<Document, "contentType"> & { body: { text
 }
 
 /**
- * The editor URL with Forge's resolved theme, so VS Code's first paint is
- * already the right colour. Replaces an earlier value; never touches the rest.
+ * The editor URL with Forge's resolved theme (and accent, as "rrggbb" without
+ * the "#"), so VS Code's first paint already matches. Replaces earlier values;
+ * never touches the rest.
  */
-export function withTheme(url: string, theme: "light" | "dark"): string {
+export function withTheme(url: string, theme: "light" | "dark", accentHex?: string): string {
   const [base, hash = ""] = url.split("#");
   const [path, query = ""] = base.split("?");
   const q = new URLSearchParams(query);
   q.set("forge_theme", theme);
+  const accent = accentHex?.replace(/^#/, "").toLowerCase();
+  if (accent && /^[0-9a-f]{6}$/.test(accent)) q.set("forge_accent", accent);
+  else q.delete("forge_accent");
   return `${path}?${q.toString()}${hash ? `#${hash}` : ""}`;
 }

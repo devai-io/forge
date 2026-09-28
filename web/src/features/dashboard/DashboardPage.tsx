@@ -8,6 +8,10 @@ import {
   Bot,
   CalendarCheck,
   CircleAlert,
+  CircleCheck,
+  Circle,
+  Rocket,
+  X,
   Flame,
   FolderKanban,
   ListTodo,
@@ -16,6 +20,7 @@ import {
   TrendingUp,
   WifiOff,
 } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useDashboard, useUpdateTask } from "@/api/hooks";
 import type { Dashboard, Task } from "@/api/types";
@@ -33,6 +38,7 @@ import { FocusRow } from "@/features/tasks/TaskCard";
 import { ClaudeSessionsPanel } from "@/features/terminal/SessionStrips";
 import { useUser } from "@/lib/auth";
 import { greeting, hourInTz, longDate } from "@/lib/format";
+import { dismissGettingStarted, docsRead, gettingStartedDismissed, gettingStartedSteps } from "@/lib/gettingStarted";
 import { ActivityFeed } from "./ActivityFeed";
 import { CompletionsChart, GoalRing, StatTile } from "./charts";
 
@@ -56,6 +62,7 @@ export function DashboardPage() {
         </div>
       </div>
 
+      {d.runners.length === 0 ? <GettingStarted d={d} /> : null}
       <Alerts d={d} />
       <CheckupPanel summary={d.checkup ?? null} />
       <Stats d={d} />
@@ -101,6 +108,68 @@ export function DashboardPage() {
         </Panel>
       </div>
     </div>
+  );
+}
+
+/** A small checklist for a fresh account (no machines yet); dismissible per browser. */
+function GettingStarted({ d }: { d: Dashboard }) {
+  const user = useUser();
+  const [hidden, setHidden] = useState(gettingStartedDismissed);
+  if (hidden) return null;
+  const steps = gettingStartedSteps({
+    machines: d.runners.length,
+    projects: d.projects.length,
+    totp: user.totp_enabled,
+    docsRead: docsRead(),
+  });
+  const done = steps.filter((s) => s.done).length;
+  return (
+    <section aria-labelledby="dash-start" className="rounded-xl border border-line bg-surface p-3.5">
+      <div className="mb-2.5 flex items-center gap-2">
+        <Rocket className="size-4 text-fg-3" aria-hidden />
+        <h2 id="dash-start" className="text-[13.5px] font-semibold">
+          Get started
+        </h2>
+        <span className="tabular text-[12px] text-fg-3">
+          {done} of {steps.length}
+        </span>
+        <button
+          type="button"
+          onClick={() => {
+            dismissGettingStarted();
+            setHidden(true);
+          }}
+          className="ml-auto grid size-7 place-items-center rounded-md text-fg-3 hover:bg-surface-2 hover:text-fg"
+          aria-label="Dismiss getting started"
+          title="Dismiss"
+        >
+          <X className="size-4" />
+        </button>
+      </div>
+      <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        {steps.map((s, i) => (
+          <li key={s.id}>
+            <Link
+              to={s.to}
+              className="flex h-full items-start gap-2.5 rounded-lg border border-line px-3 py-2.5 hover:bg-surface-2"
+            >
+              {s.done ? (
+                <CircleCheck className="mt-0.5 size-4 shrink-0 text-good" aria-hidden />
+              ) : (
+                <Circle className="mt-0.5 size-4 shrink-0 text-fg-3" aria-hidden />
+              )}
+              <span className="min-w-0">
+                <span className={s.done ? "block text-[13px] text-fg-3 line-through" : "block text-[13px] font-medium"}>
+                  {i + 1}. {s.label}
+                </span>
+                <span className="block text-[12px] text-fg-3">{s.hint}</span>
+                <span className="sr-only">{s.done ? " (done)" : " (to do)"}</span>
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 
@@ -302,7 +371,7 @@ function AgentsPanel({ d }: { d: Dashboard }) {
           ))
         ) : (
           <Link to="/agents" className="hover:text-fg-2">
-            No runners yet — set one up →
+            No machines yet — add one →
           </Link>
         )}
       </div>

@@ -57,7 +57,7 @@ func (s *Store) Dashboard(ctx context.Context, tz string) (*Dashboard, error) {
 	d := &Dashboard{Today: today}
 
 	// Completion days, for streaks.
-	rows, err := s.DB.Query(ctx, `SELECT DISTINCT (completed_at AT TIME ZONE $1)::date AS d
+	rows, err := s.DB.Query(ctx, `SELECT DISTINCT local_date(completed_at, $1) AS d
 		FROM tasks WHERE completed_at IS NOT NULL ORDER BY d`, tz)
 	if err != nil {
 		return nil, err
@@ -80,15 +80,15 @@ func (s *Store) Dashboard(ctx context.Context, tz string) (*Dashboard, error) {
 	st := &d.Stats
 	err = s.DB.QueryRow(ctx, `
 		SELECT
-		  count(*) FILTER (WHERE (t.completed_at AT TIME ZONE $1)::date = $2::date),
-		  count(*) FILTER (WHERE (t.completed_at AT TIME ZONE $1)::date >= $3::date),
-		  count(*) FILTER (WHERE (t.completed_at AT TIME ZONE $1)::date >= $3::date - 7
-		                     AND (t.completed_at AT TIME ZONE $1)::date < $3::date),
+		  count(*) FILTER (WHERE local_date(t.completed_at, $1) = $2),
+		  count(*) FILTER (WHERE local_date(t.completed_at, $1) >= $3),
+		  count(*) FILTER (WHERE local_date(t.completed_at, $1) >= date($3, '-7 days')
+		                     AND local_date(t.completed_at, $1) < $3),
 		  count(*) FILTER (WHERE t.status <> 'done'),
 		  count(*) FILTER (WHERE t.status = 'in_progress'),
 		  count(*) FILTER (WHERE t.status = 'blocked'),
-		  count(*) FILTER (WHERE t.status <> 'done' AND t.due_date < $2::date),
-		  count(*) FILTER (WHERE t.status <> 'done' AND t.due_date >= $2::date AND t.due_date <= $2::date + 3)
+		  count(*) FILTER (WHERE t.status <> 'done' AND t.due_date < $2),
+		  count(*) FILTER (WHERE t.status <> 'done' AND t.due_date >= $2 AND t.due_date <= date($2, '+3 days'))
 		FROM tasks t JOIN projects p ON p.id = t.project_id
 		WHERE p.status <> 'archived'`, tz, today, dateStr(weekStart)).Scan(
 		&st.DoneToday, &st.DoneWeek, &st.DonePrevWeek, &st.OpenTasks, &st.InProgress, &st.Blocked,
@@ -103,12 +103,12 @@ func (s *Store) Dashboard(ctx context.Context, tz string) (*Dashboard, error) {
 	// 28 days, oldest first, today last.
 	from := dateStr(todayT.AddDate(0, 0, -27))
 	rows, err = s.DB.Query(ctx, `
-		WITH days AS (SELECT generate_series($2::date, $3::date, interval '1 day')::date AS d),
-		done AS (SELECT (completed_at AT TIME ZONE $1)::date AS d, count(*) AS n FROM tasks
-		         WHERE completed_at >= $2::date - 1 GROUP BY 1),
-		created AS (SELECT (created_at AT TIME ZONE $1)::date AS d, count(*) AS n FROM tasks
-		            WHERE created_at >= $2::date - 1 GROUP BY 1)
-		SELECT to_char(days.d, 'YYYY-MM-DD'), coalesce(done.n, 0), coalesce(created.n, 0)
+		WITH RECURSIVE days(d) AS (SELECT $2 UNION ALL SELECT date(d, '+1 day') FROM days WHERE d < $3),
+		done AS (SELECT local_date(completed_at, $1) AS d, count(*) AS n FROM tasks
+		         WHERE completed_at >= date($2, '-1 day') GROUP BY 1),
+		created AS (SELECT local_date(created_at, $1) AS d, count(*) AS n FROM tasks
+		            WHERE created_at >= date($2, '-1 day') GROUP BY 1)
+		SELECT days.d, coalesce(done.n, 0), coalesce(created.n, 0)
 		FROM days LEFT JOIN done ON done.d = days.d LEFT JOIN created ON created.d = days.d
 		ORDER BY days.d`, tz, from, today)
 	if err != nil {
@@ -133,7 +133,7 @@ func (s *Store) Dashboard(ctx context.Context, tz string) (*Dashboard, error) {
 		` ORDER BY `+priorityOrder+`, t.due_date NULLS LAST, p.priority, t.id LIMIT 50`); err != nil {
 		return nil, err
 	}
-	if d.Overdue, err = s.queryTasks(ctx, taskSelect+` WHERE t.status <> 'done' AND t.due_date < $1::date`+notArchived+
+	if d.Overdue, err = s.queryTasks(ctx, taskSelect+` WHERE t.status <> 'done' AND t.due_date < $1`+notArchived+
 		` ORDER BY t.due_date, `+priorityOrder+` LIMIT 20`, today); err != nil {
 		return nil, err
 	}

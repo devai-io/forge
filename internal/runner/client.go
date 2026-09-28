@@ -38,7 +38,7 @@ func (c *client) post(ctx context.Context, path string, body, out any) (bool, er
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("User-Agent", "forge-runner/"+Version)
+	req.Header.Set("User-Agent", "forge-agent/"+Version)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return false, err

@@ -66,7 +66,7 @@ func summarize(c *Checkup) {
 	}
 }
 
-const checkupCols = `id, to_char(date, 'YYYY-MM-DD'), trigger, started_at, finished_at, status, items, emailed`
+const checkupCols = `id, date, trigger, started_at, finished_at, status, items, emailed`
 
 func scanCheckup(row interface{ Scan(...any) error }) (*Checkup, error) {
 	var c Checkup
@@ -82,13 +82,13 @@ func scanCheckup(row interface{ Scan(...any) error }) (*Checkup, error) {
 
 func (s *Store) CheckupExistsFor(ctx context.Context, date string) (bool, error) {
 	var ok bool
-	err := s.DB.QueryRow(ctx, `SELECT exists(SELECT 1 FROM checkups WHERE date = $1::date AND trigger = 'schedule')`, date).Scan(&ok)
+	err := s.DB.QueryRow(ctx, `SELECT exists(SELECT 1 FROM checkups WHERE date = $1 AND trigger = 'schedule')`, date).Scan(&ok)
 	return ok, err
 }
 
 func (s *Store) StartCheckup(ctx context.Context, date, trigger string) (int64, error) {
 	var id int64
-	err := s.DB.QueryRow(ctx, `INSERT INTO checkups (date, trigger) VALUES ($1::date, $2) RETURNING id`, date, trigger).Scan(&id)
+	err := s.DB.QueryRow(ctx, `INSERT INTO checkups (date, trigger) VALUES ($1, $2) RETURNING id`, date, trigger).Scan(&id)
 	return id, err
 }
 
@@ -140,7 +140,7 @@ func (s *Store) ListCheckups(ctx context.Context, limit int) ([]CheckupSummary, 
 // ticks in a row cannot overwrite each other.
 func (s *Store) UpdateCheckupItem(ctx context.Context, id int64, key string, fn func(*CheckItem) error) (*Checkup, error) {
 	err := s.tx(ctx, func(tx pgxTx) error {
-		c, err := scanCheckup(tx.QueryRow(ctx, `SELECT `+checkupCols+` FROM checkups WHERE id = $1 FOR UPDATE`, id))
+		c, err := scanCheckup(tx.QueryRow(ctx, `SELECT `+checkupCols+` FROM checkups WHERE id = $1`, id))
 		if err != nil {
 			return err
 		}
@@ -204,17 +204,17 @@ func (s *Store) AllRepos(ctx context.Context) ([]RepoWithProject, error) {
 
 // StaleBlocked lists tasks blocked for more than `days` days.
 func (s *Store) StaleBlocked(ctx context.Context, days int) ([]Task, error) {
-	return s.queryTasks(ctx, taskSelect+fmt.Sprintf(` WHERE t.status = 'blocked' AND t.updated_at < now() - interval '%d days'
+	return s.queryTasks(ctx, taskSelect+fmt.Sprintf(` WHERE t.status = 'blocked' AND t.updated_at < ts_add(now(), -%d * 86400)
 		AND p.status <> 'archived' ORDER BY t.updated_at`, days))
 }
 
 func (s *Store) DueOn(ctx context.Context, date string) ([]Task, error) {
-	return s.queryTasks(ctx, taskSelect+` WHERE t.status <> 'done' AND t.due_date = $1::date AND p.status <> 'archived'
+	return s.queryTasks(ctx, taskSelect+` WHERE t.status <> 'done' AND t.due_date = $1 AND p.status <> 'archived'
 		ORDER BY `+priorityOrder, date)
 }
 
 func (s *Store) OverdueTasks(ctx context.Context, today string) ([]Task, error) {
-	return s.queryTasks(ctx, taskSelect+` WHERE t.status <> 'done' AND t.due_date < $1::date AND p.status <> 'archived'
+	return s.queryTasks(ctx, taskSelect+` WHERE t.status <> 'done' AND t.due_date < $1 AND p.status <> 'archived'
 		ORDER BY t.due_date, `+priorityOrder, today)
 }
 

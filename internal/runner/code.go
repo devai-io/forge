@@ -35,7 +35,7 @@ type CodeConfig struct {
 	Listen  string `json:"listen"`   // private address the server can reach, e.g. "10.0.0.5:7422"
 	Port    int    `json:"port"`     // local port for serve-web (default 18765)
 	Command string `json:"command"`  // the VS Code CLI (default "code")
-	DataDir string `json:"data_dir"` // server data: extensions, settings (default ~/.local/share/forge/vscode)
+	DataDir string `json:"data_dir"` // server data: extensions, settings (default ~/.forge/vscode)
 }
 
 func (r *Runner) codeEnabled() bool {
@@ -219,8 +219,7 @@ func (r *Runner) codeWorkspace(name string, raw json.RawMessage) (string, error)
 	if len(out) == 0 {
 		return "", errors.New("none of the project's repos exist on this machine")
 	}
-	home, _ := os.UserHomeDir()
-	dir := filepath.Join(home, ".local", "share", "forge", "workspaces")
+	dir := filepath.Join(Home(), "workspaces")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}

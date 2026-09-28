@@ -151,8 +151,8 @@ func (s *Store) TerminalHosts(ctx context.Context) ([]TerminalHost, error) {
 		return nil, err
 	}
 	rows, err := s.DB.Query(ctx, `SELECT id, name, role, hostname,
-		coalesce(last_seen_at > now() - interval '`+onlineWindow+`', false),
-		coalesce((capabilities->>'terminal')::boolean, false), tmux, tmux_at
+		coalesce(last_seen_at > ts_add(now(), -`+onlineWindow+`), 0),
+		coalesce(capabilities->>'terminal', 0), tmux, tmux_at
 		FROM runners ORDER BY (role = 'master') DESC, name`)
 	if err != nil {
 		return nil, err

@@ -23,8 +23,11 @@ export const SECURITY_KINDS: Record<SecurityKind, KindMeta> = {
   terminal_keys: { label: "Keys sent to a session", tone: "accent", group: "sensitive" },
   terminal_create: { label: "Session started", tone: "accent", group: "sensitive" },
   code_open: { label: "VS Code opened", tone: "accent", group: "sensitive" },
-  runner_created: { label: "Runner added", tone: "neutral", group: "machines" },
-  runner_rotated: { label: "Runner token rotated", tone: "neutral", group: "machines" },
+  setup: { label: "Account created (first-run setup)", tone: "accent", group: "account" },
+  runner_created: { label: "Machine added", tone: "neutral", group: "machines" },
+  runner_pair_code: { label: "Pairing code issued", tone: "neutral", group: "machines" },
+  runner_paired: { label: "Machine paired", tone: "accent", group: "machines" },
+  runner_rotated: { label: "Machine token rotated", tone: "neutral", group: "machines" },
 };
 
 /** Label for a kind; unknown kinds (a newer API) are shown as typed. */

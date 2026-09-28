@@ -12,8 +12,8 @@ import (
 const endpointSelect = `
 SELECT e.id, e.project_id, p.key, p.name, p.color, e.name, e.url, e.kind, e.expect_status, e.enabled,
        e.last_status, e.last_code, e.last_latency_ms, e.last_error, e.last_checked_at, e.last_change_at,
-       (SELECT avg(CASE WHEN c.ok THEN 1.0 ELSE 0.0 END)::float8
-          FROM endpoint_checks c WHERE c.endpoint_id = e.id AND c.at > now() - interval '24 hours')
+       (SELECT avg(CASE WHEN c.ok THEN 1.0 ELSE 0.0 END)
+          FROM endpoint_checks c WHERE c.endpoint_id = e.id AND c.at > ts_add(now(), -86400))
 FROM endpoints e JOIN projects p ON p.id = e.project_id`
 
 func scanEndpoint(row interface{ Scan(...any) error }) (*Endpoint, error) {
@@ -187,14 +187,14 @@ func (s *Store) RecordCheck(ctx context.Context, e Endpoint, r CheckResult) erro
 			return err
 		}
 		var prev string
-		err := tx.QueryRow(ctx, `
-			UPDATE endpoints e SET last_status = $2, last_code = $3, last_latency_ms = $4, last_error = $5,
+		if err := tx.QueryRow(ctx, `SELECT last_status FROM endpoints WHERE id = $1`, e.ID).Scan(&prev); err != nil {
+			return mapErr(err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE endpoints SET last_status = $2, last_code = $3, last_latency_ms = $4, last_error = $5,
 			       last_checked_at = now(),
-			       last_change_at = CASE WHEN e.last_status <> $2 THEN now() ELSE e.last_change_at END
-			FROM (SELECT id, last_status FROM endpoints WHERE id = $1 FOR UPDATE) old
-			WHERE e.id = old.id
-			RETURNING old.last_status`, e.ID, status, r.Code, r.LatencyMS, truncate(r.Error, 500)).Scan(&prev)
-		if err != nil {
+			       last_change_at = CASE WHEN last_status <> $2 THEN now() ELSE last_change_at END
+			WHERE id = $1`, e.ID, status, r.Code, r.LatencyMS, truncate(r.Error, 500)); err != nil {
 			return mapErr(err)
 		}
 		if prev == status || (prev == "unknown" && status == "up") {
@@ -215,7 +215,7 @@ func (s *Store) RecordCheck(ctx context.Context, e Endpoint, r CheckResult) erro
 func (s *Store) EndpointChecks(ctx context.Context, id int64, hours int) ([]EndpointCheck, error) {
 	rows, err := s.DB.Query(ctx, `
 		SELECT at, ok, code, latency_ms, error FROM endpoint_checks
-		WHERE endpoint_id = $1 AND at > now() - $2::float8 * interval '1 hour'
+		WHERE endpoint_id = $1 AND at > ts_add(now(), -$2 * 3600)
 		ORDER BY at DESC LIMIT 2000`, id, float64(hours))
 	if err != nil {
 		return nil, err
@@ -233,7 +233,7 @@ func (s *Store) EndpointChecks(ctx context.Context, id int64, hours int) ([]Endp
 }
 
 func (s *Store) PruneChecks(ctx context.Context, keep time.Duration) error {
-	_, err := s.DB.Exec(ctx, `DELETE FROM endpoint_checks WHERE at < now() - $1::float8 * interval '1 second'`,
+	_, err := s.DB.Exec(ctx, `DELETE FROM endpoint_checks WHERE at < ts_add(now(), -$1)`,
 		keep.Seconds())
 	return err
 }

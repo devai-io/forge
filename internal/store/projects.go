@@ -19,15 +19,15 @@ WITH ts AS (
 	       count(*) FILTER (WHERE status = 'in_progress')                  AS in_progress,
 	       count(*) FILTER (WHERE status = 'blocked')                      AS blocked,
 	       count(*) FILTER (WHERE status = 'done')                         AS done,
-	       count(*) FILTER (WHERE status <> 'done' AND due_date < $1::date) AS overdue,
-	       count(*) FILTER (WHERE completed_at >= now() - interval '7 days') AS done_7d,
-	       count(*) FILTER (WHERE created_at >= now() - interval '7 days')  AS created_7d
+	       count(*) FILTER (WHERE status <> 'done' AND due_date < $1) AS overdue,
+	       count(*) FILTER (WHERE completed_at >= ts_add(now(), -604800)) AS done_7d,
+	       count(*) FILTER (WHERE created_at >= ts_add(now(), -604800))  AS created_7d
 	FROM tasks GROUP BY project_id
 ), rs AS (
 	SELECT project_id,
-	       coalesce(sum((git->>'commits_7d')::int), 0)                    AS commits_7d,
-	       count(*) FILTER (WHERE (git->>'dirty')::int > 0)                AS dirty,
-	       max((git->>'last_commit_at')::timestamptz)                      AS last_commit
+	       coalesce(sum(CAST(git->>'commits_7d' AS INTEGER)), 0)          AS commits_7d,
+	       count(*) FILTER (WHERE CAST(git->>'dirty' AS INTEGER) > 0)      AS dirty,
+	       max(ts_norm(git->>'last_commit_at'))                            AS last_commit
 	FROM repos GROUP BY project_id
 ), es AS (
 	SELECT project_id,
@@ -43,12 +43,13 @@ WITH ts AS (
 	WHERE kind NOT LIKE 'endpoint.%' GROUP BY project_id
 )
 SELECT p.id, p.key, p.name, p.category, p.status, p.priority, p.color, p.summary, p.description,
-       p.infra_notes, to_char(p.target_date, 'YYYY-MM-DD'), p.links, p.created_at, p.updated_at,
+       p.infra_notes, p.target_date, p.links, p.created_at, p.updated_at,
        coalesce(ts.total, 0), coalesce(ts.backlog, 0), coalesce(ts.todo, 0), coalesce(ts.in_progress, 0),
        coalesce(ts.blocked, 0), coalesce(ts.done, 0), coalesce(ts.overdue, 0), coalesce(ts.done_7d, 0),
        coalesce(ts.created_7d, 0), coalesce(rs.commits_7d, 0), coalesce(rs.dirty, 0),
        coalesce(es.total, 0), coalesce(es.up, 0), coalesce(es.down, 0), coalesce(ru.active, 0),
-       greatest(ac.last, rs.last_commit)
+       CASE WHEN ac.last IS NULL THEN rs.last_commit WHEN rs.last_commit IS NULL THEN ac.last
+            ELSE max(ac.last, rs.last_commit) END
 FROM projects p
 LEFT JOIN ts ON ts.project_id = p.id
 LEFT JOIN rs ON rs.project_id = p.id
@@ -114,6 +115,11 @@ func (s *Store) ProjectByKey(ctx context.Context, today, key string) (*ProjectDe
 		return nil, err
 	}
 	return d, nil
+}
+
+// ProjectIDByKey resolves a project key (any case).
+func (s *Store) ProjectIDByKey(ctx context.Context, key string) (int64, error) {
+	return s.projectID(ctx, s.DB, key)
 }
 
 func (s *Store) projectID(ctx context.Context, q querier, key string) (int64, error) {

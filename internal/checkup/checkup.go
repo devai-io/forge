@@ -350,12 +350,12 @@ func (r *Runner) backups(ctx context.Context) []store.CheckItem {
 	var out []store.CheckItem
 	for host, hours := range ages {
 		if hours > 26 {
-			out = append(out, item("backup:"+host, "backups", "fail", fmt.Sprintf("Postgres backup on %s is %.0f h old", host, hours), "",
+			out = append(out, item("backup:"+host, "backups", "fail", fmt.Sprintf("Database backup on %s is %.0f h old", host, hours), "",
 				"Check the backup job and its destination on that host", "/monitoring", ""))
 		}
 	}
 	if len(out) == 0 {
-		out = append(out, allClear("backups", fmt.Sprintf("Postgres backups fresh on %d hosts", len(ages))))
+		out = append(out, allClear("backups", fmt.Sprintf("Database backups fresh on %d hosts", len(ages))))
 	}
 	return out
 }
@@ -387,7 +387,7 @@ func (r *Runner) runners(ctx context.Context) []store.CheckItem {
 			detail = "last seen " + rn.LastSeenAt.Format("2006-01-02 15:04")
 		}
 		return []store.CheckItem{item("runner:"+rn.Name, "runners", "fail", "Master "+rn.Name+" is offline", detail,
-			"It should always be on: check power/network, then `systemctl --user status forge-runner` on it", "/agents", "")}
+			"It should always be on: check power/network, then `systemctl --user status forge-agent` on it", "/agents", "")}
 	}
 	return []store.CheckItem{item("runners:no-master", "runners", "warn", "No master runner elected", "",
 		"Make your always-on machine the master on the Agents page", "/agents", "")}

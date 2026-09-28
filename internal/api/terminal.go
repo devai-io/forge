@@ -237,7 +237,7 @@ func (s *Server) terminalRunner(w http.ResponseWriter, r *http.Request) (*store.
 		return nil, nil, false
 	}
 	if !rn.Capabilities.Terminal {
-		writeError(w, http.StatusConflict, "terminal_disabled", "terminals are off on "+rn.Name+" (\"terminal\": true in its runner.json)")
+		writeError(w, http.StatusConflict, "terminal_disabled", "terminals are off on "+rn.Name+" (\"terminal\": true in its agent.json)")
 		return nil, nil, false
 	}
 	cc := s.terminals.control(rn.ID)
@@ -515,7 +515,7 @@ func (s *Server) terminalCreate(w http.ResponseWriter, r *http.Request, u *store
 	}
 }
 
-// ── Runner-side context and task access (backs `forge_runner mcp`) ─────────
+// ── Runner-side context and task access (backs `forge agent mcp`) ─────────
 
 func (s *Server) runnerContext(w http.ResponseWriter, r *http.Request, rn *store.Runner) {
 	cwd := r.URL.Query().Get("cwd")

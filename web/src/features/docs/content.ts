@@ -3,6 +3,7 @@
 // can render it consistently and the facts strip can overlay live numbers
 // from GET /api/system. Every interval and threshold here mirrors the server
 // (internal/monitor, internal/checkup, internal/runner) — change both together.
+// The same goes for the workspace layout and the backup schedule below.
 
 export type Tier = "automated" | "live" | "stored" | "on-demand";
 
@@ -42,9 +43,11 @@ export const SOURCES: Source[] = [
   { name: "Claude context", tier: "on-demand", who: "the agent (`forge agent context --hook` and `forge agent mcp`) with the machine's token", when: "At the start of every Claude Code session in a registered repo, and whenever Claude calls a forge_* tool",
     what: "Injects the project's summary, infra and change-control notes, repo state, open tasks and open check-up actions. The MCP tools let Claude list, create, update and comment on tasks and read the check-up — nothing else." },
   { name: "Agent runs and commands", tier: "on-demand", who: "the agent on the machine you pick", when: "When you queue one",
-    what: "Claude Code (`claude -p`, streamed back as a transcript) or a named command from that machine's runner.json, inside a repo directory. What a machine may do is decided in its own runner.json." },
+    what: "Claude Code (`claude -p`, streamed back as a transcript) or a named command from that machine's `~/.forge/agent.json`, inside a repo directory. What a machine may do is decided in its own `agent.json`." },
   { name: "Terminals and VS Code", tier: "on-demand", who: "the agent on the master (terminals on every machine that allows them)", when: "When you attach or open",
     what: "tmux sessions attached through a relay in the server; VS Code's own web build served from the master. Terminals need no inbound connection — the agents dial out; the VS Code gateway must be reachable from the server over a private network." },
+  { name: "Database backup", tier: "automated", who: "the Forge server", when: "Every night",
+    what: "A consistent snapshot of `forge.db` into `backups/` in the Forge workspace; the newest 14 are kept, older ones deleted. `vault.key` is not part of it — back that file up separately." },
   { name: "E-mail", tier: "automated", who: "the Forge server, through your SMTP account", when: "Password-reset links, the daily check-up, sign-ins from a new device",
     what: "Sent only when SMTP is configured." },
 ];
@@ -63,13 +66,13 @@ export const CHECKS: Check[] = [
   { category: "Nomad", rule: "A job has allocations waiting for placement", severity: "warn", source: "each host's Nomad API" },
   { category: "Alerts", rule: "A Grafana rule is firing with severity critical (or none)", severity: "fail", source: "Grafana (needs the token)" },
   { category: "Alerts", rule: "Any other firing or pending rule; Grafana not connected", severity: "warn", source: "Grafana" },
-  { category: "Backups", rule: "Last successful Postgres backup older than 26 h (only when the `pgbackup_*` metrics exist)", severity: "fail", source: "VictoriaMetrics" },
+  { category: "Backups", rule: "A monitored host's last successful database backup is older than 26 h (only when the `pgbackup_*` metrics exist)", severity: "fail", source: "VictoriaMetrics" },
   { category: "Runners", rule: "The master machine has been offline for more than 10 minutes; or no master is elected", severity: "fail / warn", source: "heartbeats" },
   { category: "Repos", rule: "Uncommitted tracked changes, unpushed commits, behind origin, or a git error", severity: "warn", source: "master's repo scan" },
   { category: "CI", rule: "The latest run on a repo's default branch failed", severity: "fail", source: "master's `gh`" },
   { category: "Tasks", rule: "Overdue, due today, or blocked for more than 3 days", severity: "warn", source: "Forge tasks" },
   { category: "Vault", rule: "A credential expired; expires within 30 days", severity: "fail / warn", source: "vault expiry dates you entered" },
-  { category: "Security", rule: "Two-factor is off; the initial password was never changed; sign-ins from new devices in the last 7 days", severity: "warn", source: "Forge's own security log" },
+  { category: "Security", rule: "Two-factor is off; a password Forge generated (on the command line) was never changed; sign-ins from new devices in the last 7 days", severity: "warn", source: "Forge's own security log" },
 ];
 
 export const STORED: { name: string; origin: string; note: string }[] = [
@@ -80,7 +83,9 @@ export const STORED: { name: string; origin: string; note: string }[] = [
   { name: "Tasks", origin: "Created by you, imported, turned into tasks from the check-up, or created by Claude through the MCP server", note: "Nothing completes a task automatically." },
   { name: "Vault items", origin: "Added in the app or with `forge import`", note: "An item can hold values and a file, or be a reference only (where the original lives) — useful for secrets that belong in another secret manager. Expiry dates are what you enter." },
   { name: "Grafana dashboards", origin: "Read from Grafana", note: "Listed once a Grafana token is connected." },
-  { name: "Runner commands, permission modes, allowed roots, terminal and VS Code settings", origin: "Each machine's ~/.config/forge/runner.json", note: "Reported at every heartbeat; Forge only chooses among what a machine advertises." },
+  { name: "Project files", origin: "Uploaded on a project's Files tab", note: "Kept as they are in `projects/<KEY>/` in the Forge workspace, up to 100 MB each. Forge does not read or index them." },
+  { name: "Machine commands, permission modes, allowed roots, terminal and VS Code settings", origin: "Each machine's `~/.forge/agent.json`", note: "Pairing writes the address and token; the rest is edited on the machine. Reported at every heartbeat; Forge only chooses among what a machine advertises." },
+  { name: "Appearance", origin: "Settings → Appearance", note: "Light, dark or system is per browser. The accent colour is saved to your account, so every browser — and the embedded VS Code — follows it. Chart and status colours never change with it." },
 ];
 
 export const SECURITY: { title: string; body: string }[] = [
@@ -88,9 +93,10 @@ export const SECURITY: { title: string; body: string }[] = [
   { title: "Sessions", body: "An HttpOnly, Secure cookie whose value is only stored hashed. It slides for 30 days of use and ends 90 days after sign-in regardless. Every session is listed under Settings with its address and browser, and can be revoked; changing the password revokes the others." },
   { title: "Step-up for the dangerous things", body: "Revealing or downloading a credential, deleting one, attaching a terminal, sending keys, creating a session, opening VS Code, and enrolling two-factor all need the password (and code) again within the last 10 minutes on that session." },
   { title: "Cross-site protection", body: "Every write must carry a header a foreign site cannot add, and the browser's Origin must be the app's own; the terminal and VS Code WebSockets check the Origin too. The app's Content-Security-Policy allows only its own scripts." },
-  { title: "Vault", body: "Secret values and files are sealed with AES-256-GCM under a key kept outside the database (a file in the data directory, or one you provide) — the database and its nightly dumps hold ciphertext. Lists never return values; every reveal, download, edit and delete is in the audit log." },
-  { title: "Machines", body: "Runners hold a token that only lets them take runs, report repos and sessions, provide terminals, read project context and write tasks. They never accept connections. Store uploads and deploys are commands that must be confirmed by name; permission modes above plan/acceptEdits exist only if written into that machine's runner.json by hand." },
-  { title: "Network", body: "Put Forge behind a TLS reverse proxy and keep the database, Nomad and metrics on a private network. VS Code runs on the master and is reachable only through Forge, over your private network, with a per-open secret." },
+  { title: "Vault", body: "Secret values and files are sealed with AES-256-GCM under a key kept outside the database (`vault.key` in the Forge workspace, or one you provide) — the database and its nightly snapshots hold ciphertext. Lists never return values; every reveal, download, edit and delete is in the audit log." },
+  { title: "Machines", body: "A machine gets its token by pairing: a one-time code, valid 15 minutes, that only the Agents page hands out; only its hash is stored. The token only lets it take runs, report repos and sessions, provide terminals, read project context and write tasks. Machines never accept connections. Store uploads and deploys are commands that must be confirmed by name; permission modes above plan/acceptEdits exist only if written into that machine's `agent.json` by hand." },
+  { title: "Network", body: "Put Forge behind a TLS reverse proxy and keep Nomad and metrics on a private network. VS Code runs on the master and is reachable only through Forge, over your private network, with a per-open secret." },
+  { title: "The setup token", body: "Until the one account exists, the setup page needs the setup token the server prints in its log (or `forge setup-token` prints). Once the account is created, setup is closed for good." },
   { title: "Recovery, from the server", body: "On the server: `forge reset-password <user>` · `forge disable-2fa <user>` · `forge create-runner <name>` (e.g. through `docker compose exec forge …`). Container logs and the security log keep the record." },
 ];
 
@@ -100,4 +106,40 @@ export const NOT_AUTOMATED: string[] = [
   "Tasks are never completed automatically, including the ones created from a check-up item.",
   "Machines sleep; anything that needs one (e.g. iOS builds on a Mac) waits until it wakes. The daily check-up ignores sleeping non-master machines on purpose.",
   "Grafana alerts appear only once a Viewer service-account token is stored in the vault.",
+];
+
+// ── Setup and storage ──────────────────────────────────────────────────────
+
+export const SETUP: { title: string; body: string }[] = [
+  { title: "First run", body: "A new server has no account. On first start it prints a setup link — `<public URL>/setup?token=…` — in its log; `forge setup-token` on the server prints it again (Docker: `docker compose exec forge forge setup-token`). The setup page creates the one account, optionally with demo data to explore, and signs you in." },
+  { title: "Adding a machine", body: "Agents → Add machine gives a one-time pairing code (like `K7QD-M3XP`, valid 15 minutes). On a machine without Forge, one command installs `forge` into `~/.local/bin`, pairs, installs the background service (a systemd user unit on Linux, launchd on macOS) and connects Claude Code: `curl -fsSL …/install.sh | sh -s -- --pair <url> <code>`. With Forge already there: `forge agent pair <url> <code>`, then `forge agent install`, and optionally `forge agent setup-claude`. Pair again gives a reinstalled or moved machine a new code; its old token keeps working until that code is used." },
+  { title: "Backups", body: "Every night the server snapshots `forge.db` into `backups/` and keeps the newest 14. Copy that folder off the machine now and then. `vault.key` is not in it — back it up separately: without it the vault cannot be decrypted." },
+  { title: "Accent colour", body: "Twelve presets or any colour you pick, under Settings → Appearance. It is saved to your account and passed on to the embedded VS Code; text on it is chosen for contrast." },
+];
+
+export type WorkspaceDir = { where: string; root: string; entries: { path: string; what: string }[] };
+
+export const WORKSPACE: WorkspaceDir[] = [
+  {
+    where: "Server",
+    root: "`FORGE_HOME` — default `~/.forge`, `/data` in Docker",
+    entries: [
+      { path: "config.json", what: "Server settings" },
+      { path: "forge.db", what: "The database: one SQLite file holds everything" },
+      { path: "vault.key", what: "The vault master key — keep a copy somewhere else" },
+      { path: "backups/", what: "Nightly database snapshots, the newest 14 kept" },
+      { path: "projects/<KEY>/", what: "Each project's files" },
+    ],
+  },
+  {
+    where: "Each machine",
+    root: "`~/.forge`",
+    entries: [
+      { path: "agent.json", what: "Machine settings and its token: commands, permission modes, allowed roots, terminals, VS Code" },
+      { path: "workspaces/", what: "VS Code workspace files for projects" },
+      { path: "vscode/", what: "VS Code server data" },
+      { path: "projects/", what: "Default place for checkouts" },
+      { path: "logs/", what: "The agent's logs" },
+    ],
+  },
 ];

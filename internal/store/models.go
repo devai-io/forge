@@ -16,6 +16,7 @@ type User struct {
 	DisplayName  string    `json:"display_name"`
 	Timezone     string    `json:"timezone"`
 	WeeklyGoal   int       `json:"weekly_goal"`
+	Accent       string    `json:"accent"` // "" (default), a preset name or #rrggbb
 	TOTPEnabled  bool      `json:"totp_enabled"`
 	CheckupTime  string    `json:"checkup_time"`
 	CheckupEmail bool      `json:"checkup_email"`
@@ -294,6 +295,8 @@ type Runner struct {
 	Capabilities RunnerCapabilities `json:"capabilities"`
 	Running      int                `json:"running"`
 	CreatedAt    time.Time          `json:"created_at"`
+	// PairExpiresAt is set while a pairing code is outstanding.
+	PairExpiresAt *time.Time `json:"pair_expires_at"`
 }
 
 type Run struct {

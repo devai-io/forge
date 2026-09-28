@@ -81,7 +81,7 @@ func (s *Server) codeRunner(r *http.Request) (*store.Runner, string) {
 	case !rn.Online:
 		return rn, rn.Name + " is offline"
 	case !rn.Capabilities.Code || rn.Capabilities.CodeGateway == "":
-		return rn, "VS Code is not enabled on " + rn.Name + ` ("code" in its runner.json)`
+		return rn, "VS Code is not enabled on " + rn.Name + ` ("code" in its agent.json)`
 	}
 	return rn, ""
 }

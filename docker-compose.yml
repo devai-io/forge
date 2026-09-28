@@ -1,43 +1,27 @@
-# Forge with its own Postgres. Quick start:
-#   cp .env.example .env   # set POSTGRES_PASSWORD (and PUBLIC_URL for a real domain)
+# Forge in one container; everything it keeps is in the `data` volume
+# (the workspace: config.json, forge.db, vault.key, backups/, projects/).
+#
 #   docker compose up -d
-#   docker compose exec forge /forge create-user admin you@example.com
-#   open http://localhost:8080
+#   docker compose logs forge          # shows the first-run setup link
+#   docker compose exec forge forge setup-token   # …or prints it again
 #
 # The server listens on 127.0.0.1 only. To expose it, put a TLS reverse proxy
 # (Caddy, nginx, Traefik…) in front and set PUBLIC_URL to the https address.
 services:
-  db:
-    image: postgres:17-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: forge
-      POSTGRES_DB: forge
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-    volumes:
-      - db:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U forge"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   forge:
     image: ghcr.io/devai-io/forge:latest
     build: .
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-    env_file: .env
     environment:
-      DATABASE_URL: postgres://forge:${POSTGRES_PASSWORD}@db:5432/forge?sslmode=disable
-      PORT: "8080"
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      FORGE_TIMEZONE: ${FORGE_TIMEZONE:-UTC}
+    env_file:
+      - path: .env
+        required: false
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
       - data:/data
 
 volumes:
-  db:
   data:

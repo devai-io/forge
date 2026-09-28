@@ -1,4 +1,4 @@
-// Package runner is forge_runner: the process on the user's own machines
+// Package runner is `forge agent`: the process on the user's own machines
 // that polls Forge for work, runs it (Claude Code headless, or a named shell
 // command) inside a registered repo, streams the output back, and reports the
 // git state of every repo it can see.
@@ -79,18 +79,43 @@ type Command struct {
 	Confirm     bool     `json:"confirm"`
 }
 
-// DefaultConfigPath is ~/.config/forge/runner.json on every OS — also on
-// macOS, where os.UserConfigDir would say ~/Library/Application Support; one
-// path to document beats following each platform's convention.
-func DefaultConfigPath() string {
-	if p := os.Getenv("FORGE_RUNNER_CONFIG"); p != "" {
-		return p
+// Home is the machine's Forge workspace: FORGE_AGENT_HOME, else ~/.forge
+// (the same folder name as the server's, which is fine on one machine — the
+// files differ):
+//
+//	agent.json   this machine's settings and token
+//	workspaces/  VS Code multi-root workspace files
+//	vscode/      VS Code server data (extensions, settings)
+//	projects/    the default place for checkouts
+//	logs/        the background service's log (macOS)
+func Home() string {
+	if h := os.Getenv("FORGE_AGENT_HOME"); h != "" {
+		return h
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = os.Getenv("HOME")
 	}
-	return filepath.Join(home, ".config", "forge", "runner.json")
+	return filepath.Join(home, ".forge")
+}
+
+// DefaultConfigPath is <Home>/agent.json — or, on a machine set up before
+// the workspace existed, ~/.config/forge/runner.json while that is the only
+// one present.
+func DefaultConfigPath() string {
+	if p := os.Getenv("FORGE_RUNNER_CONFIG"); p != "" {
+		return p
+	}
+	p := filepath.Join(Home(), "agent.json")
+	if _, err := os.Stat(p); err != nil {
+		if home, herr := os.UserHomeDir(); herr == nil {
+			legacy := filepath.Join(home, ".config", "forge", "runner.json")
+			if _, lerr := os.Stat(legacy); lerr == nil {
+				return legacy
+			}
+		}
+	}
+	return p
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -136,7 +161,7 @@ func (c *Config) normalize() error {
 		c.Code.Command = "code"
 	}
 	if c.Code.DataDir == "" {
-		c.Code.DataDir = filepath.Join(expandHome("~/.local/share/forge"), "vscode")
+		c.Code.DataDir = filepath.Join(Home(), "vscode")
 	}
 	c.Code.DataDir = expandHome(c.Code.DataDir)
 	if len(c.PermissionModes) == 0 {

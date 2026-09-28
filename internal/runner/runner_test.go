@@ -115,7 +115,7 @@ func TestShrinkKeepsEventsValidAndBounded(t *testing.T) {
 	if !json.Valid(out) || len(out) > 20<<10 {
 		t.Fatalf("shrunk event is %d bytes, valid=%v", len(out), json.Valid(out))
 	}
-	if !strings.Contains(string(out), "truncated by forge-runner") {
+	if !strings.Contains(string(out), "truncated by forge-agent") {
 		t.Error("truncation should be visible")
 	}
 }
@@ -189,6 +189,14 @@ func TestInjectTheme(t *testing.T) {
 	r := httptest.NewRequest("GET", "/code/?folder=%2Fx&forge_theme=light", nil)
 	if got := stripThemeParam(r); got != "light" || r.URL.Query().Has("forge_theme") || r.URL.Query().Get("folder") != "/x" {
 		t.Errorf("strip: %q %s", got, r.URL.RawQuery)
+	}
+	r = httptest.NewRequest("GET", "/code/?forge_theme=dark&forge_accent=0D9488", nil)
+	if got := stripThemeParam(r); got != "dark:0d9488" || r.URL.Query().Has("forge_accent") {
+		t.Errorf("strip with accent: %q %s", got, r.URL.RawQuery)
+	}
+	out, err = injectTheme(page, "dark:0d9488")
+	if err != nil || !strings.Contains(string(out), "&quot;focusBorder&quot;:&quot;#0d9488&quot;") {
+		t.Errorf("accent not injected: %v %s", err, out)
 	}
 	r = httptest.NewRequest("GET", "/code/?forge_theme=purple", nil)
 	if got := stripThemeParam(r); got != "" {

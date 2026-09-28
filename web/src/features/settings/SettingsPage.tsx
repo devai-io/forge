@@ -25,7 +25,9 @@ import { passwordStrength } from "@/lib/password";
 import { useTheme, type ThemePref } from "@/lib/theme";
 import { describeAgent } from "@/lib/security";
 import { useHashScroll } from "@/lib/docs";
+import { timezoneOptions } from "@/lib/setup";
 import { groupSecret } from "@/lib/vault";
+import { AccentPicker } from "./AccentPicker";
 import { RevokeOthersButton, SecurityLogPanel } from "./SecurityLog";
 
 export function SettingsPage() {
@@ -49,18 +51,6 @@ export function SettingsPage() {
   );
 }
 
-function timezones(current: string): string[] {
-  let zones: string[] = [];
-  try {
-    zones = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.("timeZone") ?? [];
-  } catch {
-    zones = [];
-  }
-  if (!zones.includes(current)) zones = [current, ...zones];
-  if (!zones.includes("UTC")) zones.push("UTC");
-  return zones;
-}
-
 function AccountPanel() {
   const user = useUser();
   const update = useUpdateMe();
@@ -69,7 +59,7 @@ function AccountPanel() {
   const [email, setEmail] = useState(user.email);
   const [timezone, setTimezone] = useState(user.timezone);
   const [goal, setGoal] = useState(user.weekly_goal);
-  const zones = useMemo(() => timezones(user.timezone), [user.timezone]);
+  const zones = useMemo(() => timezoneOptions(user.timezone), [user.timezone]);
   const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const dirty =
     displayName !== user.display_name || email !== user.email || timezone !== user.timezone || goal !== user.weekly_goal;
@@ -247,7 +237,7 @@ function StrengthBar({ score, label }: { score: number; label: string }) {
 function AppearancePanel() {
   const { pref, setPref } = useTheme();
   return (
-    <Panel title="Appearance" id="settings-appearance" bodyClassName="p-4">
+    <Panel title="Appearance" id="settings-appearance" bodyClassName="space-y-5 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-[13px] text-fg-2">Theme for this browser.</p>
         <Segmented<ThemePref>
@@ -261,6 +251,7 @@ function AppearancePanel() {
           ]}
         />
       </div>
+      <AccentPicker />
     </Panel>
   );
 }

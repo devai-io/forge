@@ -1,23 +1,35 @@
-// Sign-in, forgot-password and reset-password: three small centred cards.
+// Sign-in, forgot-password and reset-password: three small centred cards
+// (first-run setup, in SetupPage.tsx, uses the same card).
 //
 // The forgot form always answers the same way, whether or not the login
 // exists — that is the API's contract, and the copy here does not undo it.
 
 import { useState, type ReactNode } from "react";
-import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError } from "@/api/client";
-import { useForgotPassword, useLogin, useResetPassword } from "@/api/hooks";
+import { useForgotPassword, useLogin, useResetPassword, useSetupStatus } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { CodeInput } from "@/components/ui/CodeInput";
 import { Field, Input } from "@/components/ui/Input";
 import { FullPageSpinner } from "@/components/ui/Spinner";
 import { safeNext, useCurrentUser } from "@/lib/auth";
 import { passwordStrength } from "@/lib/password";
+import { setupRedirect } from "@/lib/setup";
 
-function AuthCard({ title, subtitle, children }: { title: string; subtitle?: ReactNode; children: ReactNode }) {
+export function AuthCard({
+  title,
+  subtitle,
+  children,
+  wide,
+}: {
+  title: string;
+  subtitle?: ReactNode;
+  children: ReactNode;
+  wide?: boolean;
+}) {
   return (
     <div className="grid min-h-dvh place-items-center bg-bg px-4 py-10">
-      <div className="w-full max-w-sm">
+      <div className={wide ? "w-full max-w-lg" : "w-full max-w-sm"}>
         <div className="mb-6 flex items-center justify-center gap-2 text-lg font-semibold tracking-tight">
           <img src="/favicon.svg" alt="" className="size-7" />
           Forge
@@ -32,7 +44,7 @@ function AuthCard({ title, subtitle, children }: { title: string; subtitle?: Rea
   );
 }
 
-function FormError({ children }: { children: ReactNode }) {
+export function FormError({ children }: { children: ReactNode }) {
   if (!children) return null;
   return (
     <p role="alert" className="rounded-md border border-critical/40 bg-critical/8 px-3 py-2 text-[13px]">
@@ -52,9 +64,14 @@ export function LoginPage() {
   // Revealed once the API says this account has 2FA on; stays for the retry.
   const [needsCode, setNeedsCode] = useState(false);
   const next = safeNext(params.get("next"));
+  // A server without an account has nobody to sign in: first-run setup instead.
+  const setup = useSetupStatus();
+  const location = useLocation();
 
-  if (loading) return <FullPageSpinner />;
+  if (loading || setup.isPending) return <FullPageSpinner />;
   if (user) return <Navigate to={next} replace />;
+  const toSetup = setupRedirect(setup.data?.needed, location.search);
+  if (toSetup) return <Navigate to={toSetup} replace />;
 
   const err = login.error instanceof ApiError ? login.error : null;
   const error = err

@@ -1,4 +1,4 @@
-// The contract's types, verbatim from ../forge_api/docs/API.md. When that file
+// The contract's types, verbatim from docs/API.md at the repo root. When that file
 // changes, this one changes in the same session — the two halves agree by
 // copying, not by generation, because the contract is small and read by people.
 
@@ -15,10 +15,25 @@ export type User = {
   totp_enabled: boolean;
   checkup_time: string; // "HH:MM" in the user's timezone
   checkup_email: boolean; // e-mail the daily check-up result
+  accent: string; // "" = default, a preset id ("teal") or a custom "#rrggbb"
 };
 
-/** GET /api/auth/me and POST /api/auth/login. */
+/** GET /api/auth/me, POST /api/auth/login and POST /api/setup. */
 export type MeResponse = { user: User; elevated_until: string | null };
+
+/** GET /api/setup (no auth): true until the server has its one account. */
+export type SetupStatus = { needed: boolean };
+
+/** POST /api/setup — the setup token is printed in the server log on first start. */
+export type SetupInput = {
+  token: string;
+  username: string;
+  email: string;
+  password: string;
+  display_name?: string;
+  timezone: string;
+  demo_data: boolean;
+};
 
 export type Session = {
   id: number;
@@ -167,6 +182,9 @@ export type EndpointCheck = {
   error: string;
 };
 
+/** A file in the project's folder on the server. */
+export type ProjectFile = { name: string; size: number; modified_at: string };
+
 export type ProjectDetail = Project & {
   repos: Repo[];
   servers: ProjectServer[];
@@ -248,7 +266,11 @@ export type Runner = {
   running: number;
   created_at: string;
   role: RunnerRole;
+  pair_expires_at: string | null; // non-null = a pairing code is outstanding and unused
 };
+
+/** A one-time code a machine swaps for its token (`forge agent pair <origin> <code>`). */
+export type Pairing = { code: string; expires_at: string };
 
 export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type RunKind = "agent" | "command";
@@ -635,7 +657,10 @@ export type SecurityKind =
   | "terminal_keys"
   | "terminal_create"
   | "code_open"
+  | "setup"
   | "runner_created"
+  | "runner_pair_code"
+  | "runner_paired"
   | "runner_rotated";
 
 export type SecurityEvent = {

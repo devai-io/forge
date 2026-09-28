@@ -1,8 +1,8 @@
 {
   "api_url": "https://forge.example.com",
-  "token": "PASTE-THE-TOKEN-SHOWN-WHEN-YOU-ADD-THE-MACHINE",
+  "token": "WRITTEN-BY-forge-agent-pair",
 
-  "allowed_roots": ["~/dev"],
+  "allowed_roots": ["~/dev", "~/.forge/projects"],
   "permission_modes": ["plan", "acceptEdits"],
   "claude_path": "claude",
 

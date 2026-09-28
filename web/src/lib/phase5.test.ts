@@ -40,6 +40,12 @@ describe("withTheme", () => {
     expect(withTheme("/code/", "light")).toBe("/code/?forge_theme=light");
     expect(withTheme("/code/?a=1#frag", "dark")).toBe("/code/?a=1&forge_theme=dark#frag");
   });
+  it("adds the accent as rrggbb, replacing or dropping an earlier one", () => {
+    expect(withTheme("/code/?folder=%2Fx", "dark", "#3987E5")).toBe("/code/?folder=%2Fx&forge_theme=dark&forge_accent=3987e5");
+    expect(withTheme("/code/?forge_accent=000000&forge_theme=light", "light", "#0f766e")).toBe("/code/?forge_accent=0f766e&forge_theme=light");
+    expect(withTheme("/code/?forge_accent=000000", "light")).toBe("/code/?forge_theme=light");
+    expect(withTheme("/code/", "light", "not-a-colour")).toBe("/code/?forge_theme=light");
+  });
 });
 
 describe("docs helpers", () => {

@@ -59,7 +59,7 @@ describe("EditorPage", () => {
     renderWithProviders(routes, { route: "/editor?project=SHOP" });
     const frame = await screen.findByTitle(/VS Code — /);
     // The resolved Forge theme rides along so VS Code's first paint matches (jsdom: light).
-    expect(frame.getAttribute("src")).toBe("/code/?workspace=shop&forge_theme=light");
+    expect(frame.getAttribute("src")).toBe("/code/?workspace=shop&forge_theme=light&forge_accent=2a78d6");
     expect(frame.getAttribute("allow")).toBe("clipboard-read; clipboard-write");
     expect(frame.hasAttribute("sandbox")).toBe(false);
     expect(bodies).toEqual([{ project_key: "SHOP" }]);
@@ -85,7 +85,7 @@ describe("EditorPage", () => {
     expect(opens).toBe(0); // the remembered URL was tried first, no POST
     await userEvent.setup().click(screen.getByRole("button", { name: "Reopen" }));
     const frame = await screen.findByTitle(/VS Code — /);
-    await waitFor(() => expect(frame.getAttribute("src")).toBe("/code/?workspace=new&forge_theme=light"));
+    await waitFor(() => expect(frame.getAttribute("src")).toBe("/code/?workspace=new&forge_theme=light&forge_accent=2a78d6"));
     expect(opens).toBe(1);
   });
 

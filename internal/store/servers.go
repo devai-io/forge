@@ -9,7 +9,7 @@ import (
 const serverSelect = `
 SELECT sv.id, sv.name, sv.role, sv.provider, sv.arch, sv.public_address, sv.tailscale_ip, sv.environment,
        sv.critical, sv.tags, sv.notes, sv.created_at, sv.updated_at,
-       coalesce((SELECT json_agg(json_build_object('key', p.key, 'name', p.name, 'color', p.color, 'role', ps.role)
+       coalesce((SELECT json_group_array(json_object('key', p.key, 'name', p.name, 'color', p.color, 'role', ps.role)
                                 ORDER BY p.priority, p.name)
                  FROM project_servers ps JOIN projects p ON p.id = ps.project_id
                  WHERE ps.server_id = sv.id), '[]')
@@ -31,7 +31,7 @@ func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 func (s *Store) ListServers(ctx context.Context) ([]Server, error) {
 	rows, err := s.DB.Query(ctx, serverSelect+`
 		ORDER BY sv.critical DESC,
-		         array_position(ARRAY['production','staging','infra','dev'], sv.environment), sv.name`)
+		         CASE sv.environment WHEN 'production' THEN 1 WHEN 'staging' THEN 2 WHEN 'infra' THEN 3 ELSE 4 END, sv.name`)
 	if err != nil {
 		return nil, err
 	}
