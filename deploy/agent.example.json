@@ -2,7 +2,7 @@
   "api_url": "https://forge.example.com",
   "token": "WRITTEN-BY-forge-agent-pair",
 
-  "allowed_roots": ["~/dev", "~/.forge/projects"],
+  "allowed_roots": ["~/dev"],
   "permission_modes": ["plan", "acceptEdits"],
   "claude_path": "claude",
 

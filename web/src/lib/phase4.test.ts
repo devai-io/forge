@@ -75,7 +75,7 @@ describe("editor targets", () => {
   });
 
   it("only frames Forge's own /code/", () => {
-    expect(isSafeCodeUrl("/code/?workspace=/home/ada/.forge/SHOP.code-workspace")).toBe(true);
+    expect(isSafeCodeUrl("/code/?workspace=/home/ada/.config/forge/SHOP.code-workspace")).toBe(true);
     expect(isSafeCodeUrl("https://evil.example/code/")).toBe(false);
     expect(isSafeCodeUrl("//evil.example/code/")).toBe(false);
     expect(isSafeCodeUrl("/api/x")).toBe(false);

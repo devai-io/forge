@@ -90,14 +90,17 @@ func Pair(ctx context.Context, serverURL, code, configPath string) (*PairResult,
 
 // DefaultSettings is a new machine's agent.json: plan and edit modes only,
 // terminals and VS Code off, a few read-mostly git commands, and the usual
-// source folders that exist here as the roots runs may use.
+// source folders that exist here (else ~/dev) as the roots runs may use.
 func DefaultSettings() map[string]any {
-	roots := []string{"~/.forge/projects"}
+	var roots []string
 	home, _ := os.UserHomeDir()
 	for _, d := range []string{"dev", "code", "src", "projects", "work"} {
 		if st, err := os.Stat(filepath.Join(home, d)); err == nil && st.IsDir() {
 			roots = append(roots, "~/"+d)
 		}
+	}
+	if len(roots) == 0 {
+		roots = []string{"~/dev"}
 	}
 	return map[string]any{
 		"allowed_roots":    roots,

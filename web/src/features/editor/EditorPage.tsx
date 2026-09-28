@@ -289,7 +289,7 @@ function EditorLanding() {
             <p className="mt-0.5 text-[13px] text-fg-2">{status.data.reason || "The master machine is not serving it."}</p>
             <p className="mt-1 text-[12px] text-fg-3">
               It runs on the master ({status.data.runner_name ?? "desk"}) and needs that machine online with{" "}
-              VS Code enabled (<code className="font-mono">"code"</code>) in its <code className="font-mono">~/.forge/agent.json</code>.
+              VS Code enabled (<code className="font-mono">"code"</code>) in its <code className="font-mono">~/.config/forge/agent.json</code>.
             </p>
           </div>
         </div>

@@ -473,7 +473,7 @@ function TokenDialog({ runner, token, onClose }: { runner: Runner; token: string
           <code className="block rounded-md border border-line bg-surface-2 px-3 py-2 font-mono text-[12px] break-all">{token}</code>
         </div>
         <p className="text-fg-2">
-          On {runner.name}, put it in <code className="font-mono">~/.forge/agent.json</code> as{" "}
+          On {runner.name}, put it in <code className="font-mono">~/.config/forge/agent.json</code> as{" "}
           <code className="font-mono">"token"</code>, then run <code className="font-mono">forge agent install</code> (or
           restart the agent if it is already installed).
         </p>

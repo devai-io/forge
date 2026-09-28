@@ -2,8 +2,8 @@
 // app), the agent that runs on your machines, and the admin commands.
 //
 // The server keeps everything in its workspace folder, FORGE_HOME (default
-// ~/.forge): config.json, the SQLite database forge.db, vault.key, backups/
-// and projects/. The agent's settings are ~/.forge/agent.json.
+// ~/.config/forge): config.json, the SQLite database forge.db, vault.key,
+// backups/ and projects/. The agent's settings are ~/.config/forge/agent.json.
 package main
 
 import (
@@ -41,7 +41,7 @@ var version = "dev"
 
 const usage = `forge — projects, machines and Claude Code sessions in one place.
 
-Server (workspace: FORGE_HOME, default ~/.forge):
+Server (workspace: FORGE_HOME, default ~/.config/forge):
   forge server                           run the API and web app
   forge setup-token                      print the first-run setup link
   forge add-machine <name> [role]        register a machine, print its pairing code
@@ -52,7 +52,7 @@ Server (workspace: FORGE_HOME, default ~/.forge):
   forge import < data.json               add projects, servers, vault items
   forge migrate                          apply database migrations
 
-Machine (settings: ~/.forge/agent.json):
+Machine (settings: ~/.config/forge/agent.json):
   forge agent pair <server-url> <code>   connect this machine (code from the Agents page)
   forge agent install | uninstall        run the agent in the background, at login
   forge agent setup-claude               add the Forge MCP server + hook to Claude Code

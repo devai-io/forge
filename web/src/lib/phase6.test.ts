@@ -58,7 +58,7 @@ describe("pairing helpers", () => {
   });
   it("defaults allowed_roots to ~/dev and the agent's projects folder", () => {
     const cfg = JSON.parse(runnerConfigSnippet("https://forge.example.com", "frg_x"));
-    expect(cfg.allowed_roots).toEqual(["~/dev", "~/.forge/projects"]);
+    expect(cfg.allowed_roots).toEqual(["~/dev"]);
     expect(cfg.api_url).toBe("https://forge.example.com");
     expect(cfg.token).toBe("frg_x");
   });

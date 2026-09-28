@@ -203,3 +203,21 @@ func TestInjectTheme(t *testing.T) {
 		t.Errorf("unknown theme should be ignored, got %q", got)
 	}
 }
+
+func TestAgentHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("FORGE_AGENT_HOME", "")
+	t.Setenv("FORGE_RUNNER_CONFIG", "")
+	want := filepath.Join(home, ".config", "forge", "agent.json")
+	if got := DefaultConfigPath(); got != want {
+		t.Fatalf("default %s, want %s", got, want)
+	}
+	old := filepath.Join(home, ".forge")
+	_ = os.MkdirAll(old, 0o700)
+	_ = os.WriteFile(filepath.Join(old, "agent.json"), []byte("{}"), 0o600)
+	if got := DefaultConfigPath(); got != filepath.Join(old, "agent.json") {
+		t.Fatalf("legacy %s", got)
+	}
+}

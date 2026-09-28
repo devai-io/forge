@@ -66,7 +66,7 @@ That installs `forge`, pairs the machine, runs the agent in the background
 
 Everything Forge keeps is in one folder, on the server and on each machine:
 
-| Server — `FORGE_HOME` (default `~/.forge`, `/data` in Docker) | |
+| Server — `FORGE_HOME` (default `~/.config/forge`, `/data` in Docker) | |
 |---|---|
 | `config.json` | settings (environment variables override it) |
 | `forge.db` | the SQLite database |
@@ -74,11 +74,10 @@ Everything Forge keeps is in one folder, on the server and on each machine:
 | `backups/` | nightly database snapshots (14 kept) |
 | `projects/<KEY>/` | each project's files |
 
-| Machine — `~/.forge` | |
+| Machine — `~/.config/forge` | |
 |---|---|
 | `agent.json` | this machine's settings and token ([example](deploy/agent.example.json)) |
 | `workspaces/`, `vscode/` | VS Code workspace files and server data |
-| `projects/` | the default place for checkouts |
 | `logs/` | the background service's log (macOS) |
 
 What a machine may do is decided **in its own `agent.json`**: allowed

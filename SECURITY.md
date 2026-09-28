@@ -33,7 +33,7 @@ vulnerability) on this repository. Do not open a public issue.
 - Vault values and files: AES-256-GCM, key outside the database, each blob
   bound to its row.
 - Agents authenticate with a token (stored hashed) and can only do what their
-  local configuration (`~/.forge/agent.json`) allows.
+  local configuration (`~/.config/forge/agent.json`) allows.
 - Machines join with a one-time pairing code (valid 15 minutes, stored
   hashed, rate-limited); the first account is created with a one-time setup
   token printed by the server. Neither is ever shown again.

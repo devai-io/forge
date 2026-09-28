@@ -35,7 +35,7 @@ type CodeConfig struct {
 	Listen  string `json:"listen"`   // private address the server can reach, e.g. "10.0.0.5:7422"
 	Port    int    `json:"port"`     // local port for serve-web (default 18765)
 	Command string `json:"command"`  // the VS Code CLI (default "code")
-	DataDir string `json:"data_dir"` // server data: extensions, settings (default ~/.forge/vscode)
+	DataDir string `json:"data_dir"` // server data: extensions, settings (default ~/.config/forge/vscode)
 }
 
 func (r *Runner) codeEnabled() bool {

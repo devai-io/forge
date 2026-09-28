@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/devai-io/forge/internal/config"
 )
 
 // Version is the build version (set by cmd/forge).
@@ -79,40 +81,38 @@ type Command struct {
 	Confirm     bool     `json:"confirm"`
 }
 
-// Home is the machine's Forge workspace: FORGE_AGENT_HOME, else ~/.forge
-// (the same folder name as the server's, which is fine on one machine — the
-// files differ):
+// Home is the machine's Forge folder: FORGE_AGENT_HOME, else
+// ~/.config/forge (config.Dir; the same folder as a server's workspace on
+// that machine, which is fine — the files differ):
 //
 //	agent.json   this machine's settings and token
 //	workspaces/  VS Code multi-root workspace files
 //	vscode/      VS Code server data (extensions, settings)
-//	projects/    the default place for checkouts
 //	logs/        the background service's log (macOS)
+//
+// A v0.1 install that still has ~/.forge/agent.json keeps using ~/.forge.
 func Home() string {
 	if h := os.Getenv("FORGE_AGENT_HOME"); h != "" {
 		return h
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = os.Getenv("HOME")
+	if old, ok := config.LegacyDir("agent.json"); ok {
+		return old
 	}
-	return filepath.Join(home, ".forge")
+	return config.Dir()
 }
 
-// DefaultConfigPath is <Home>/agent.json — or, on a machine set up before
-// the workspace existed, ~/.config/forge/runner.json while that is the only
-// one present.
+// DefaultConfigPath is <Home>/agent.json — or runner.json in the same
+// folder on a machine set up before agent.json existed, while that is the
+// only one present.
 func DefaultConfigPath() string {
 	if p := os.Getenv("FORGE_RUNNER_CONFIG"); p != "" {
 		return p
 	}
 	p := filepath.Join(Home(), "agent.json")
 	if _, err := os.Stat(p); err != nil {
-		if home, herr := os.UserHomeDir(); herr == nil {
-			legacy := filepath.Join(home, ".config", "forge", "runner.json")
-			if _, lerr := os.Stat(legacy); lerr == nil {
-				return legacy
-			}
+		legacy := filepath.Join(config.Dir(), "runner.json")
+		if _, lerr := os.Stat(legacy); lerr == nil {
+			return legacy
 		}
 	}
 	return p

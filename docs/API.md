@@ -483,7 +483,7 @@ is `true`; a command scoped to repos is refused for any other repo.
 
 # remote tmux terminals and Claude context
 
-Runners that opt in (`"terminal": true` in their `~/.forge/agent.json`) report their tmux
+Runners that opt in (`"terminal": true` in their `~/.config/forge/agent.json`) report their tmux
 sessions on every heartbeat and hold a control WebSocket open to the API. The
 browser attaches to a session through the API, which relays bytes between the
 browser's WebSocket and a per-terminal WebSocket the runner dials back — so no
@@ -708,7 +708,7 @@ type Runner = { /* … as above, plus */
   set on an expired, unused code (don't clear it in a cleanup job), and keep
   the 15-minute lifetime in step with the UI.
 - `POST /api/runners/{id}/rotate` is unchanged (manual setup: the token goes
-  into `~/.forge/agent.json` as `"token"`).
+  into `~/.config/forge/agent.json` as `"token"`).
 
 The machine's side — no session, no CSRF header (it is not a browser); the
 code is the credential, so failures are rate-limited (10 per address, 60 in

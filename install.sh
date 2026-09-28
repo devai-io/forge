@@ -103,7 +103,7 @@ esac
 if [ -z "$PAIR_URL" ]; then
   say ""
   say "Next:"
-  say "  Server:   forge server          (workspace: ~/.forge; or use Docker — see INSTALL.md)"
+  say "  Server:   forge server          (workspace: ~/.config/forge; or use Docker — see INSTALL.md)"
   say "  Machine:  forge agent pair <server-url> <code>, then forge agent install"
   exit 0
 fi

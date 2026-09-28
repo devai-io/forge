@@ -74,7 +74,7 @@ export function TerminalPage() {
       ) : list.length === 0 ? (
         <EmptyState icon={<SquareTerminal />} title="No machines yet">
           Terminals come from the Forge agent on your machines. Add and pair one on the Agents page, then set{" "}
-          <code className="font-mono">"terminal": true</code> in its <code className="font-mono">~/.forge/agent.json</code>.
+          <code className="font-mono">"terminal": true</code> in its <code className="font-mono">~/.config/forge/agent.json</code>.
         </EmptyState>
       ) : (
         <>
@@ -134,7 +134,7 @@ function HostSessions({ host }: { host: TerminalHost }) {
   if (!host.terminal) {
     return (
       <EmptyState icon={<SquareTerminal />} title={`Terminals disabled on ${host.runner_name}`}>
-        Set <code className="font-mono">"terminal": true</code> in its <code className="font-mono">~/.forge/agent.json</code>{" "}
+        Set <code className="font-mono">"terminal": true</code> in its <code className="font-mono">~/.config/forge/agent.json</code>{" "}
         and restart the agent.
       </EmptyState>
     );

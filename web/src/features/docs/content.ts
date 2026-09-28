@@ -43,7 +43,7 @@ export const SOURCES: Source[] = [
   { name: "Claude context", tier: "on-demand", who: "the agent (`forge agent context --hook` and `forge agent mcp`) with the machine's token", when: "At the start of every Claude Code session in a registered repo, and whenever Claude calls a forge_* tool",
     what: "Injects the project's summary, infra and change-control notes, repo state, open tasks and open check-up actions. The MCP tools let Claude list, create, update and comment on tasks and read the check-up — nothing else." },
   { name: "Agent runs and commands", tier: "on-demand", who: "the agent on the machine you pick", when: "When you queue one",
-    what: "Claude Code (`claude -p`, streamed back as a transcript) or a named command from that machine's `~/.forge/agent.json`, inside a repo directory. What a machine may do is decided in its own `agent.json`." },
+    what: "Claude Code (`claude -p`, streamed back as a transcript) or a named command from that machine's `~/.config/forge/agent.json`, inside a repo directory. What a machine may do is decided in its own `agent.json`." },
   { name: "Terminals and VS Code", tier: "on-demand", who: "the agent on the master (terminals on every machine that allows them)", when: "When you attach or open",
     what: "tmux sessions attached through a relay in the server; VS Code's own web build served from the master. Terminals need no inbound connection — the agents dial out; the VS Code gateway must be reachable from the server over a private network." },
   { name: "Database backup", tier: "automated", who: "the Forge server", when: "Every night",
@@ -84,7 +84,7 @@ export const STORED: { name: string; origin: string; note: string }[] = [
   { name: "Vault items", origin: "Added in the app or with `forge import`", note: "An item can hold values and a file, or be a reference only (where the original lives) — useful for secrets that belong in another secret manager. Expiry dates are what you enter." },
   { name: "Grafana dashboards", origin: "Read from Grafana", note: "Listed once a Grafana token is connected." },
   { name: "Project files", origin: "Uploaded on a project's Files tab", note: "Kept as they are in `projects/<KEY>/` in the Forge workspace, up to 100 MB each. Forge does not read or index them." },
-  { name: "Machine commands, permission modes, allowed roots, terminal and VS Code settings", origin: "Each machine's `~/.forge/agent.json`", note: "Pairing writes the address and token; the rest is edited on the machine. Reported at every heartbeat; Forge only chooses among what a machine advertises." },
+  { name: "Machine commands, permission modes, allowed roots, terminal and VS Code settings", origin: "Each machine's `~/.config/forge/agent.json`", note: "Pairing writes the address and token; the rest is edited on the machine. Reported at every heartbeat; Forge only chooses among what a machine advertises." },
   { name: "Appearance", origin: "Settings → Appearance", note: "Light, dark or system is per browser. The accent colour is saved to your account, so every browser — and the embedded VS Code — follows it. Chart and status colours never change with it." },
 ];
 
@@ -122,7 +122,7 @@ export type WorkspaceDir = { where: string; root: string; entries: { path: strin
 export const WORKSPACE: WorkspaceDir[] = [
   {
     where: "Server",
-    root: "`FORGE_HOME` — default `~/.forge`, `/data` in Docker",
+    root: "`FORGE_HOME` — default `~/.config/forge`, `/data` in Docker",
     entries: [
       { path: "config.json", what: "Server settings" },
       { path: "forge.db", what: "The database: one SQLite file holds everything" },
@@ -133,12 +133,11 @@ export const WORKSPACE: WorkspaceDir[] = [
   },
   {
     where: "Each machine",
-    root: "`~/.forge`",
+    root: "`~/.config/forge`",
     entries: [
       { path: "agent.json", what: "Machine settings and its token: commands, permission modes, allowed roots, terminals, VS Code" },
       { path: "workspaces/", what: "VS Code workspace files for projects" },
       { path: "vscode/", what: "VS Code server data" },
-      { path: "projects/", what: "Default place for checkouts" },
       { path: "logs/", what: "The agent's logs" },
     ],
   },

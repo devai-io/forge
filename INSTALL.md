@@ -40,7 +40,7 @@ Requirements: Linux or macOS, amd64 or arm64.
 
 ```bash
 curl -fsSL https://github.com/devai-io/forge/releases/latest/download/install.sh | sh
-forge server        # workspace: ~/.forge (set FORGE_HOME to change it)
+forge server        # workspace: ~/.config/forge (set FORGE_HOME to change it)
 ```
 
 Check: as in 1a.
@@ -159,7 +159,7 @@ VS Code in the browser (master only), the `code` CLI.
    ```
 
    This installs `forge` into `~/.local/bin`, trades the code (valid 15
-   minutes, once) for the machine's token, writes `~/.forge/agent.json`,
+   minutes, once) for the machine's token, writes `~/.config/forge/agent.json`,
    installs the background service and connects Claude Code.
 
    If `forge` is already installed, the same in three commands:
@@ -172,7 +172,7 @@ VS Code in the browser (master only), the `code` CLI.
 
 Check: the dialog turns to "connected" within ~10 seconds; on the machine,
 `systemctl --user status forge-agent` (Linux) or
-`tail ~/.forge/logs/agent.log` (macOS) shows it running.
+`tail ~/.config/forge/logs/agent.log` (macOS) shows it running.
 
 On Linux, to keep the agent running while you are logged out:
 `sudo loginctl enable-linger $USER`.
@@ -182,13 +182,13 @@ code and the command.
 
 ### 2b. Decide what it may do
 
-Everything a machine accepts is in **its own** `~/.forge/agent.json`, never
+Everything a machine accepts is in **its own** `~/.config/forge/agent.json`, never
 on the server. Edit it, then `forge agent install` (restarts the service).
 Full reference: [`deploy/agent.example.json`](deploy/agent.example.json).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `allowed_roots` | `~/.forge/projects` + existing `~/dev`, `~/code`, `~/src`… | runs only happen inside these folders |
+| `allowed_roots` | the existing ones of `~/dev`, `~/code`, `~/src`, `~/projects`, `~/work` (else `~/dev`) | runs only happen inside these folders |
 | `permission_modes` | `["plan", "acceptEdits"]` | Claude Code modes the UI may choose; add `bypassPermissions` only by hand |
 | `commands` | a few git commands | named shell commands: `"name": "cmd"` or `{"run", "description", "repos": [...], "confirm": true}` |
 | `terminal` | `false` | let Forge attach to this machine's tmux sessions |
@@ -222,7 +222,7 @@ start); an environment variable with the same meaning wins.
 | `trusted_proxies` | `TRUSTED_PROXIES` (comma-separated) | — | proxies allowed to set X-Forwarded-For |
 | `smtp.host`, `.port`, `.user`, `.password` / `.password_file`, `.from` | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` / `SMTP_PASSWORD_FILE`, `SMTP_FROM` | off | password resets, daily check-up, new-device alerts |
 | `monitoring.victoriametrics_url`, `.grafana_url`, `.grafana_public_url` | `VICTORIAMETRICS_URL`, `GRAFANA_URL`, `GRAFANA_PUBLIC_URL` | off | optional fleet monitoring |
-| — | `FORGE_HOME` | `~/.forge` (`/data` in Docker) | the workspace |
+| — | `FORGE_HOME` | `~/.config/forge` (`/data` in Docker) | the workspace |
 | — | `VAULT_KEY_FILE` | `<workspace>/vault.key` | bring your own vault key |
 
 ---
@@ -257,6 +257,12 @@ start); an environment variable with the same meaning wins.
 - Machines: run the install script again without `--pair`, then
   `forge agent install` to restart the agent.
 
+**From v0.1.x:** the default folder moved from `~/.forge` to
+`~/.config/forge`. Nothing breaks — Forge keeps using `~/.forge` while that
+is where the database (server) or `agent.json` (machine) is. To move, stop
+the server or agent, `mv ~/.forge ~/.config/forge`, then start it again
+(machines: `forge agent install`, which also rewrites the service).
+
 Database migrations run automatically at start. Check: the status URL shows
 the new version; each machine's version is on the Agents page.
 
@@ -270,7 +276,7 @@ the new version; each machine's version is on the Agents page.
 | Signed out right after signing in | serving over plain http while `PUBLIC_URL` is https (secure cookie), or the other way round |
 | Terminal / VS Code never connect behind nginx | missing `Upgrade`/`Connection` headers or a short `proxy_read_timeout` |
 | `unknown or expired pairing code` | codes last 15 minutes and work once — **Pair again** on the Agents page |
-| Machine shows "never connected" | the agent is not running (`systemctl --user status forge-agent`), or it cannot reach `api_url` in `~/.forge/agent.json` |
+| Machine shows "never connected" | the agent is not running (`systemctl --user status forge-agent`), or it cannot reach `api_url` in `~/.config/forge/agent.json` |
 | Runs fail with "outside allowed roots" | add the repo's folder to `allowed_roots` in that machine's `agent.json` |
 | "VS Code is not enabled on …" | set `code.enabled` + `code.listen` on the master and install the `code` CLI |
 | Lost the password | `forge reset-password <username>` on the server (Docker: `docker compose exec forge forge reset-password <username>`) |

@@ -2,7 +2,8 @@
 // a bad value rather than letting it surface as a confusing error later.
 //
 // Everything the server keeps lives in one workspace folder, FORGE_HOME
-// (default ~/.forge; /data in the container image):
+// (default ~/.config/forge — $XDG_CONFIG_HOME/forge when that is set; /data
+// in the container image):
 //
 //	config.json   settings (this package; environment variables override it)
 //	forge.db      the SQLite database (+ -wal/-shm while running)
@@ -91,7 +92,43 @@ type File struct {
 	} `json:"monitoring"`
 }
 
-// DefaultHome is FORGE_HOME, else ~/.forge.
+// Dir is Forge's folder under the user's configuration directory:
+// $XDG_CONFIG_HOME/forge, else ~/.config/forge — on macOS too, where
+// os.UserConfigDir would say ~/Library/Application Support; one path to
+// document beats following each platform's convention. The server's
+// workspace and a machine's agent settings both default to it (their files
+// do not overlap).
+func Dir() string {
+	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" && filepath.IsAbs(x) {
+		return filepath.Join(x, "forge")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.Getenv("HOME")
+	}
+	return filepath.Join(home, ".config", "forge")
+}
+
+// LegacyDir is where v0.1 kept everything, ~/.forge. It is still used when
+// it holds the file that matters (name) and Dir does not, so an existing
+// install keeps working until it is moved.
+func LegacyDir(name string) (string, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", false
+	}
+	old := filepath.Join(home, ".forge")
+	if _, err := os.Stat(filepath.Join(Dir(), name)); err == nil {
+		return "", false
+	}
+	if _, err := os.Stat(filepath.Join(old, name)); err != nil {
+		return "", false
+	}
+	return old, true
+}
+
+// DefaultHome is FORGE_HOME, else Dir() (or ~/.forge while an older install
+// still has its database there).
 func DefaultHome() string {
 	if h := os.Getenv("FORGE_HOME"); h != "" {
 		return h
@@ -99,11 +136,10 @@ func DefaultHome() string {
 	if h := os.Getenv("FORGE_DATA_DIR"); h != "" { // the name before FORGE_HOME
 		return h
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ".forge"
+	if old, ok := LegacyDir("forge.db"); ok {
+		return old
 	}
-	return filepath.Join(home, ".forge")
+	return Dir()
 }
 
 func (c Config) ConfigPath() string  { return filepath.Join(c.Home, "config.json") }

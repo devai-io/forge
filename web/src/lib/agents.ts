@@ -2,7 +2,7 @@
 
 import type { CommandDetail, Pairing, Run, Runner, RunnerCapabilities, RunnerRole } from "@/api/types";
 
-// Mirrors deploy/runner.example.json, which is the machine's ~/.forge/agent.json:
+// Mirrors deploy/runner.example.json, which is the machine's ~/.config/forge/agent.json:
 // the keys an agent needs to start (api_url, token, allowed_roots) plus safe
 // defaults for the rest. What the machine may do is decided in this file on
 // the machine itself. Pairing writes it; this is for a manual setup.
@@ -11,7 +11,7 @@ export function runnerConfigSnippet(origin: string, token: string): string {
     {
       api_url: origin,
       token,
-      allowed_roots: ["~/dev", "~/.forge/projects"],
+      allowed_roots: ["~/dev"],
       permission_modes: ["plan", "acceptEdits"],
       commands: {
         "git-status": "git status -sb",
