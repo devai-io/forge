@@ -61,9 +61,8 @@ func (r *Runner) runCode(ctx context.Context) {
 	sum := sha256.Sum256([]byte(r.cfg.Token))
 	b := make([]byte, 24)
 	_, _ = rand.Read(b)
-	home, _ := os.UserHomeDir()
 	cs := &codeServer{cfg: c, secret: hex.EncodeToString(sum[:]), vsToken: hex.EncodeToString(b),
-		tokenDir: filepath.Join(home, ".local", "share", "forge")}
+		tokenDir: Home()}
 	if err := os.MkdirAll(cs.tokenDir, 0o700); err != nil {
 		slog.Error("vscode: token dir", "err", err)
 		return
