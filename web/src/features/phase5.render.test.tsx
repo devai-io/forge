@@ -13,6 +13,7 @@ const facts = {
   intervals: {
     endpoint_check: "2m0s",
     repo_scan: "5m0s",
+    repo_sync: "30m0s",
     ci_status: "15m0s",
     runner_heartbeat: "10s",
     monitoring_cache: "30s",

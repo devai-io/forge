@@ -196,6 +196,7 @@ Full reference: [`deploy/agent.example.json`](deploy/agent.example.json).
 | `path_map` | `{}` | where repos registered with other machines' paths live here, e.g. `{"/home/me/": "/Users/me/"}` |
 | `max_concurrent`, `max_run_minutes` | 2, 120 | run limits |
 | `ci_interval` | `15m` | how often GitHub Actions status is read with `gh` (`0` = off) |
+| `pull_interval` | `30m` | master only: fetch every repo, fast-forward the ones with no local changes or unpushed commits (`0` = off). Uses this machine's git credentials — SSH keys must work without a prompt (no passphrase, or an agent the service can reach) |
 
 ### 2c. Register your repos
 

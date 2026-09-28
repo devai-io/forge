@@ -102,6 +102,14 @@ export type GitStatus = {
   runner_name: string;
   error: string;
   ci: CIStatus | null;
+  sync?: SyncStatus | null; // the master's latest fetch + fast-forward
+};
+
+export type SyncStatus = {
+  at: string;
+  result: "up_to_date" | "pulled" | "skipped" | "error";
+  detail: string;
+  pulled: number;
 };
 
 export type CIStatus = {
@@ -680,6 +688,7 @@ export type SystemFacts = {
   intervals: {
     endpoint_check: string;
     repo_scan: string;
+    repo_sync: string;
     ci_status: string;
     runner_heartbeat: string;
     monitoring_cache: string;

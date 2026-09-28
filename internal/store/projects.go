@@ -438,8 +438,23 @@ func (s *Store) SaveRepoScans(ctx context.Context, runnerName string, scans []Re
 		if g.LastCommitAt != nil && *g.LastCommitAt == "" {
 			g.LastCommitAt = nil
 		}
+		// A sync result rides along with every scan until the next sync; the
+		// feed hears about a pull once.
+		var name string
+		var prevSync *string
+		if err := s.DB.QueryRow(ctx, `SELECT name, json_extract(git, '$.sync.at') FROM repos WHERE id = $1`,
+			sc.RepoID).Scan(&name, &prevSync); err != nil {
+			continue // a repo deleted since the runner's list
+		}
 		if _, err := s.DB.Exec(ctx, `UPDATE repos SET git = $2 WHERE id = $1`, sc.RepoID, g); err != nil {
 			return err
+		}
+		if g.Sync != nil && g.Sync.Pulled > 0 && (prevSync == nil || *prevSync != g.Sync.At) {
+			if _, err := s.DB.Exec(ctx, `INSERT INTO activity (project_id, kind, summary)
+				SELECT project_id, 'repo.pulled', $2 FROM repos WHERE id = $1`, sc.RepoID,
+				fmt.Sprintf("%s: pulled %d new commit(s) on %s", name, g.Sync.Pulled, runnerName)); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

@@ -2,7 +2,7 @@ import { makeTask } from "@/test/fixtures";
 import { niceMax } from "./chart";
 import { bucketChecks } from "./infra";
 import { passwordStrength } from "./password";
-import { isStale } from "./projects";
+import { isStale, syncLabel } from "./projects";
 import { defaultListFilters, filterTasks } from "./taskFilters";
 import { safeNext } from "./auth";
 import type { Project } from "@/api/types";
@@ -73,5 +73,19 @@ describe("safeNext", () => {
     expect(safeNext("//evil.example")).toBe("/");
     expect(safeNext("/\\evil.example")).toBe("/");
     expect(safeNext(null)).toBe("/");
+  });
+});
+
+describe("syncLabel", () => {
+  it("says what the last automatic pull did", () => {
+    const at = "2026-09-28T10:00:00Z";
+    expect(syncLabel({ at, result: "pulled", detail: "fast-forwarded 3 commits", pulled: 3 }).text).toBe("pulled 3");
+    expect(syncLabel({ at, result: "up_to_date", detail: "", pulled: 0 })).toMatchObject({ text: "synced", tone: "muted" });
+    expect(syncLabel({ at, result: "skipped", detail: "2 local changes; 1 commit to pull", pulled: 0 })).toMatchObject({
+      text: "pull skipped",
+      tone: "warning",
+      title: "2 local changes; 1 commit to pull",
+    });
+    expect(syncLabel({ at, result: "error", detail: "fetch: Permission denied", pulled: 0 }).tone).toBe("critical");
   });
 });

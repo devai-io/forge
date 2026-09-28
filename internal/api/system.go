@@ -63,7 +63,7 @@ func (s *Server) systemFacts(w http.ResponseWriter, r *http.Request, u *store.Us
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version": s.cfg.Version, "started_at": startedAt, "public_url": s.cfg.PublicURL,
 		"intervals": map[string]string{
-			"endpoint_check": s.cfg.MonitorInterval.String(), "repo_scan": "5m0s", "ci_status": "15m0s",
+			"endpoint_check": s.cfg.MonitorInterval.String(), "repo_scan": "5m0s", "repo_sync": "30m0s", "ci_status": "15m0s",
 			"runner_heartbeat": "10s", "monitoring_cache": "30s", "checkup_time": u.CheckupTime, "timezone": u.Timezone,
 			"session_ttl": sessionTTL.String(), "session_max": (90 * 24 * time.Hour).String(),
 			"elevation": elevationTTL.String(), "code_session": codeTTL.String(),

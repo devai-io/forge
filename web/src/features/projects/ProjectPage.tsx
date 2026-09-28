@@ -21,7 +21,7 @@ import { useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { ApiError } from "@/api/client";
 import { useDeleteRepo, useProject, useProjectActivity, useRuns, useTasks } from "@/api/hooks";
-import type { ProjectDetail, Repo } from "@/api/types";
+import type { ProjectDetail, Repo, SyncStatus } from "@/api/types";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/Dialog";
@@ -34,6 +34,7 @@ import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import { Tabs } from "@/components/ui/Tabs";
 import { useToast } from "@/components/ui/Toast";
 import { RunRow } from "@/features/agents/RunBits";
+import { syncLabel } from "@/lib/projects";
 import { ActivityFeed } from "@/features/dashboard/ActivityFeed";
 import { EndpointsTable } from "@/features/infra/endpoints";
 import { OpenInCodeButton } from "@/features/editor/OpenInCode";
@@ -377,6 +378,7 @@ function RepoRow({ repo: r, projectKey, onEdit }: { repo: Repo; projectKey: stri
                 scanned <RelativeTime iso={g.scanned_at} /> on {g.runner_name}
               </span>
             ) : null}
+            {g?.sync ? <SyncNote sync={g.sync} /> : null}
             {r.deploy ? <span className="truncate">deploy: {r.deploy}</span> : null}
           </div>
         </div>
@@ -490,5 +492,18 @@ function ActivityTab({ project }: { project: ProjectDetail }) {
         />
       )}
     </Panel>
+  );
+}
+
+function SyncNote({ sync }: { sync: SyncStatus }) {
+  const l = syncLabel(sync);
+  return (
+    <span
+      title={l.title}
+      className={clsx(l.tone === "warning" && "text-fg-2", l.tone === "critical" && "text-critical-ink")}
+    >
+      {l.text}
+      {l.tone !== "muted" && l.title ? `: ${l.title}` : null} · <RelativeTime iso={sync.at} />
+    </span>
   );
 }

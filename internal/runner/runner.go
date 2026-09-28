@@ -26,6 +26,11 @@ type Runner struct {
 	ciMu    sync.Mutex
 	ciCache map[int64]ciEntry
 
+	// busy counts the runs working in each repo directory: no sync there.
+	busy     map[string]int
+	lastSync time.Time
+	syncs    map[int64]*syncResult // the latest sync per repo, reported with every scan
+
 	scanOK bool
 	role   string
 }
@@ -40,6 +45,8 @@ func New(cfg *Config) *Runner {
 		slots:    make(chan struct{}, cfg.MaxConcurrent),
 		rescan:   make(chan struct{}, 1),
 		ciCache:  map[int64]ciEntry{},
+		busy:     map[string]int{},
+		syncs:    map[int64]*syncResult{},
 	}
 }
 
@@ -225,12 +232,17 @@ func (r *Runner) claimLoop(ctx context.Context) {
 func (r *Runner) handle(parent context.Context, run claimedRun) {
 	defer func() { <-r.slots }()
 	ctx, cancel := context.WithCancel(parent)
+	busyDir, _ := r.cfg.Allowed(run.RepoPath)
 	r.mu.Lock()
 	r.running[run.ID] = cancel
+	r.busy[busyDir]++
 	r.mu.Unlock()
 	defer func() {
 		r.mu.Lock()
 		delete(r.running, run.ID)
+		if r.busy[busyDir]--; r.busy[busyDir] <= 0 {
+			delete(r.busy, busyDir)
+		}
 		r.mu.Unlock()
 		cancel()
 	}()
@@ -285,16 +297,38 @@ func (r *Runner) scan(ctx context.Context) {
 	if !ok {
 		return // not the master: its view of the repos is the one Forge keeps
 	}
+	doSync := r.cfg.pullEvery > 0 && time.Since(r.lastSync) >= r.cfg.pullEvery
+	if doSync {
+		r.lastSync = time.Now()
+	}
 	scans := []repoScan{}
+	pulled := 0
 	for _, repo := range repos {
 		dir, ok := r.cfg.Allowed(repo.Path)
 		if !ok {
 			continue
 		}
+		if doSync {
+			if st, err := os.Stat(dir); err == nil && st.IsDir() {
+				r.mu.Lock()
+				busy := r.busy[dir] > 0
+				r.mu.Unlock()
+				res := syncRepo(ctx, dir, busy)
+				r.syncs[repo.ID] = &res
+				pulled += res.Pulled
+				if res.Result == "pulled" || res.Result == "error" {
+					slog.Info("repo sync", "repo", repo.Name, "result", res.Result, "detail", res.Detail)
+				}
+			}
+		}
 		if s, ok := scanRepo(ctx, dir, repo.ID); ok {
 			s.CI = r.ciStatus(ctx, dir, repo)
+			s.Sync = r.syncs[repo.ID]
 			scans = append(scans, s)
 		}
+	}
+	if doSync {
+		slog.Info("repos synced", "repos", len(repos), "commits_pulled", pulled)
 	}
 	if len(scans) == 0 {
 		return

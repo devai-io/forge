@@ -106,8 +106,18 @@ type GitStatus struct {
 	LastCommitAt *string   `json:"last_commit_at"`
 	ScannedAt    string    `json:"scanned_at"`
 	RunnerName   string    `json:"runner_name"`
-	Error        string    `json:"error"`
-	CI           *CIStatus `json:"ci"`
+	Error        string      `json:"error"`
+	CI           *CIStatus   `json:"ci"`
+	Sync         *SyncStatus `json:"sync"`
+}
+
+// SyncStatus is the master's latest fetch + fast-forward of the repo
+// (runner/sync.go): result is up_to_date, pulled, skipped or error.
+type SyncStatus struct {
+	At     string `json:"at"`
+	Result string `json:"result"`
+	Detail string `json:"detail"`
+	Pulled int    `json:"pulled"`
 }
 
 // CIStatus is the latest GitHub Actions run on the default branch, as the

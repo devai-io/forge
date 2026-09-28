@@ -19,5 +19,6 @@
   "max_concurrent": 2,
   "max_run_minutes": 120,
   "scan_interval": "5m",
-  "ci_interval": "15m"
+  "ci_interval": "15m",
+  "pull_interval": "30m"
 }

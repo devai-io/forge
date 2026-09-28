@@ -420,8 +420,16 @@ func (r *Runner) repos(ctx context.Context) []store.CheckItem {
 				"Commit, stash or discard", link, rp.ProjectKey))
 		}
 		if g.Behind > 0 {
-			out = append(out, item(key+":behind", "repos", "warn", fmt.Sprintf("%s: %d commit(s) behind origin", rp.Name, g.Behind), "",
+			detail := ""
+			if g.Sync != nil && g.Sync.Result == "skipped" {
+				detail = "Not pulled automatically: " + g.Sync.Detail
+			}
+			out = append(out, item(key+":behind", "repos", "warn", fmt.Sprintf("%s: %d commit(s) behind origin", rp.Name, g.Behind), detail,
 				"Pull before starting work", link, rp.ProjectKey))
+		}
+		if g.Sync != nil && g.Sync.Result == "error" {
+			out = append(out, item(key+":sync", "repos", "warn", rp.Name+": automatic pull failed", g.Sync.Detail,
+				"Check the remote and this machine's git credentials (the agent runs without a terminal)", link, rp.ProjectKey))
 		}
 		if g.CI != nil && g.CI.Status == "completed" && g.CI.Conclusion != "" && g.CI.Conclusion != "success" && g.CI.Conclusion != "skipped" {
 			x := item(key+":ci", "ci", "fail", fmt.Sprintf("%s: CI %s (%s)", rp.Name, g.CI.Conclusion, g.CI.Workflow), g.CI.Title,

@@ -1,6 +1,6 @@
 // Project display helpers.
 
-import type { CIStatus, Project } from "@/api/types";
+import type { CIStatus, Project, SyncStatus } from "@/api/types";
 
 // Distinct, readable on both surfaces; the first eight follow the dataviz
 // categorical order so the default choices stay CVD-separable side by side.
@@ -15,6 +15,22 @@ export function isStale(project: Project, now: Date = new Date()): boolean {
   return now.getTime() - new Date(project.stats.last_activity_at).getTime() > STALE_DAYS * 86_400_000;
 }
 
+
+export type SyncLabel = { text: string; tone: "muted" | "warning" | "critical"; title: string };
+
+/** What the repo row says about the last automatic pull. */
+export function syncLabel(sync: SyncStatus): SyncLabel {
+  switch (sync.result) {
+    case "pulled":
+      return { text: `pulled ${sync.pulled}`, tone: "muted", title: sync.detail };
+    case "skipped":
+      return { text: "pull skipped", tone: "warning", title: sync.detail };
+    case "error":
+      return { text: "pull failed", tone: "critical", title: sync.detail };
+    default:
+      return { text: "synced", tone: "muted", title: sync.detail || "Fetched; nothing new to pull" };
+  }
+}
 
 export type CIState = "success" | "failure" | "running" | "cancelled" | "neutral";
 

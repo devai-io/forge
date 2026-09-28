@@ -51,6 +51,9 @@ type Config struct {
 	MaxConcurrent int    `json:"max_concurrent"`
 	MaxRunMinutes int    `json:"max_run_minutes"`
 	ScanInterval  string `json:"scan_interval"`
+	// PullInterval is how often the scanning machine fetches every repo and
+	// fast-forwards the clean ones (sync.go). Default 30m; "0" turns it off.
+	PullInterval string `json:"pull_interval"`
 	// CIInterval is how often GitHub Actions status is read per repo with
 	// the gh CLI ("0" turns it off). Default 15m.
 	CIInterval string `json:"ci_interval"`
@@ -72,6 +75,7 @@ type Config struct {
 	Commands  map[string]Command `json:"-"`
 	scanEvery time.Duration
 	ciEvery   time.Duration
+	pullEvery time.Duration
 }
 
 type Command struct {
@@ -210,6 +214,14 @@ func (c *Config) normalize() error {
 			return fmt.Errorf("ci_interval %q: want 0 or a duration >= 1m", c.CIInterval)
 		}
 		c.ciEvery = d
+	}
+	c.pullEvery = 30 * time.Minute
+	if c.PullInterval != "" {
+		d, err := time.ParseDuration(c.PullInterval)
+		if err != nil || (d != 0 && d < 5*time.Minute) {
+			return fmt.Errorf("pull_interval %q: want 0 or a duration >= 5m", c.PullInterval)
+		}
+		c.pullEvery = d
 	}
 	c.scanEvery = 5 * time.Minute
 	if c.ScanInterval != "" {

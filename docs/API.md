@@ -80,6 +80,19 @@ type GitStatus = {
   branch: string; dirty: number; ahead: number; behind: number;
   head: GitHead | null; commits_7d: number; last_commit_at: string | null;
   scanned_at: string; runner_name: string; error: string;
+  untracked?: number; ci: CIStatus | null;
+  sync?: SyncStatus | null;  // the master's latest automatic fetch + fast-forward
+};
+
+// Every pull_interval (agent.json, default 30m) the master fetches each repo
+// and fast-forwards it only with no tracked changes, no unpushed commits, no
+// merge/rebase in progress and no run working there. A sync with pulled > 0
+// is logged once as activity kind "repo.pulled".
+type SyncStatus = {
+  at: string;                                          // RFC 3339
+  result: "up_to_date" | "pulled" | "skipped" | "error";
+  detail: string;                                      // why skipped / the error
+  pulled: number;                                      // commits fast-forwarded
 };
 
 type RepoKind = "api" | "ui" | "mobile" | "infra" | "lib" | "site" | "other";
@@ -624,7 +637,7 @@ Sessions now also expire 90 days after they were created, however active.
 ```ts
 type SystemFacts = {
   version: string; started_at: string; public_url: string;
-  intervals: { endpoint_check: string; repo_scan: string; ci_status: string; runner_heartbeat: string;
+  intervals: { endpoint_check: string; repo_scan: string; repo_sync: string; ci_status: string; runner_heartbeat: string;
                monitoring_cache: string; checkup_time: string; timezone: string; session_ttl: string;
                session_max: string; elevation: string; code_session: string };
   features: { smtp: boolean; vault: boolean; totp_enabled: boolean; grafana_connected: boolean;

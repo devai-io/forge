@@ -27,17 +27,18 @@ type gitHead struct {
 }
 
 type repoScan struct {
-	RepoID       int64     `json:"repo_id"`
-	Branch       string    `json:"branch"`
-	Dirty        int       `json:"dirty"`
-	Untracked    int       `json:"untracked"`
-	Ahead        int       `json:"ahead"`
-	Behind       int       `json:"behind"`
-	Head         *gitHead  `json:"head"`
-	Commits7d    int       `json:"commits_7d"`
-	LastCommitAt *string   `json:"last_commit_at"`
-	Error        string    `json:"error"`
-	CI           *ciStatus `json:"ci"`
+	RepoID       int64       `json:"repo_id"`
+	Branch       string      `json:"branch"`
+	Dirty        int         `json:"dirty"`
+	Untracked    int         `json:"untracked"`
+	Ahead        int         `json:"ahead"`
+	Behind       int         `json:"behind"`
+	Head         *gitHead    `json:"head"`
+	Commits7d    int         `json:"commits_7d"`
+	LastCommitAt *string     `json:"last_commit_at"`
+	Error        string      `json:"error"`
+	CI           *ciStatus   `json:"ci"`
+	Sync         *syncResult `json:"sync"`
 }
 
 // scanRepo reads a repo's state with plain git, without touching the network:
@@ -105,11 +106,18 @@ func parseStatus(out string) (branch string, ahead, behind, dirty, untracked int
 }
 
 func git(ctx context.Context, dir string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
+	if _, ok := ctx.Deadline(); !ok { // local commands; network ones bring their own
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+	}
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "--no-optional-locks"}, args...)...)
-	// Never prompt for credentials or open a pager from a daemon.
+	// Never prompt for credentials or open a pager from a daemon; SSH fails
+	// instead of waiting for a passphrase or a host-key question.
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "LC_ALL=C")
+	if os.Getenv("GIT_SSH_COMMAND") == "" {
+		cmd.Env = append(cmd.Env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes -o ConnectTimeout=15")
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {

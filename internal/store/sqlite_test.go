@@ -231,3 +231,27 @@ func TestQueriesRunOnSQLite(t *testing.T) {
 	ok(t, st.LogActivity(ctx, store.ActivityInput{Kind: "note", Summary: "hello"}))
 	ok(t, st.DeleteProject(ctx, "BLOG"))
 }
+
+// A pull reaches the feed once, however many scans report the same sync.
+func TestRepoSyncActivity(t *testing.T) {
+	cur = t
+	st := open(t)
+	ctx := context.Background()
+	p := must(st.ProjectByKey(ctx, "2026-01-01", "SHOP"))
+	repo := p.Repos[0]
+	sync := &store.SyncStatus{At: "2026-09-28T10:00:00Z", Result: "pulled", Pulled: 3}
+	for i := 0; i < 3; i++ {
+		ok(t, st.SaveRepoScans(ctx, "desk", []store.RepoScan{{RepoID: repo.ID, GitStatus: store.GitStatus{Branch: "main", Sync: sync}}}))
+	}
+	sync2 := &store.SyncStatus{At: "2026-09-28T10:30:00Z", Result: "pulled", Pulled: 1}
+	ok(t, st.SaveRepoScans(ctx, "desk", []store.RepoScan{{RepoID: repo.ID, GitStatus: store.GitStatus{Branch: "main", Sync: sync2}}}))
+	var n int
+	ok(t, st.DB.QueryRow(ctx, `SELECT count(*) FROM activity WHERE kind = 'repo.pulled'`).Scan(&n))
+	if n != 2 {
+		t.Fatalf("repo.pulled entries = %d, want 2", n)
+	}
+	got := must(st.RepoByID(ctx, repo.ID))
+	if got.Git == nil || got.Git.Sync == nil || got.Git.Sync.Pulled != 1 {
+		t.Fatalf("stored sync = %+v", got.Git)
+	}
+}
