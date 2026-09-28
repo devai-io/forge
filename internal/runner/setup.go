@@ -252,8 +252,22 @@ WantedBy=default.target
 		}
 		domain := fmt.Sprintf("gui/%d", os.Getuid())
 		_ = exec.Command("launchctl", "bootout", domain+"/"+launchdLabel).Run() // not loaded yet is fine
-		if o, err := exec.Command("launchctl", "bootstrap", domain, path).CombinedOutput(); err != nil {
-			return fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(string(o)))
+		// bootout returns before the old agent has gone; bootstrapping over
+		// it fails with "5: Input/output error". Wait for it, then retry.
+		for i := 0; i < 20 && exec.Command("launchctl", "print", domain+"/"+launchdLabel).Run() == nil; i++ {
+			time.Sleep(250 * time.Millisecond)
+		}
+		var err error
+		for attempt := 0; attempt < 5; attempt++ {
+			var o []byte
+			if o, err = exec.Command("launchctl", "bootstrap", domain, path).CombinedOutput(); err == nil {
+				break
+			}
+			err = fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(string(o)))
+			time.Sleep(time.Second)
+		}
+		if err != nil {
+			return err
 		}
 		fmt.Fprintf(out, "Installed %s and started it.\n  logs: tail -f %s\n", path, filepath.Join(logs, "agent.log"))
 		return nil
