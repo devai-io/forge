@@ -176,4 +176,34 @@ describe("Assistant engines", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "Effort" }), "off");
     await waitFor(() => expect(patches).toEqual([{ effort: "off" }]));
   });
+
+  it("follows to the end of the page, below the composer, so it never covers the last lines", async () => {
+    const targets: Element[] = [];
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      targets.push(this);
+    };
+    try {
+      vi.stubGlobal(
+        "fetch",
+        routeFetch({
+          "GET /assistant": () => jsonResponse(200, status),
+          "GET /chats": () => jsonResponse(200, { chats: [chat()] }),
+          "GET /chats/7": () =>
+            jsonResponse(200, {
+              chat: chat(),
+              messages: [msg({ seq: 1, content: "Summarise the README" }), msg({ seq: 2, role: "assistant", content: "Queued." })],
+              turns: [turn()],
+            }),
+        }),
+      );
+      renderChat("/assistant/7");
+      const composer = (await screen.findByRole("textbox", { name: "Message" })).closest("form")!;
+      await waitFor(() => expect(targets.length).toBeGreaterThan(0));
+      const end = targets[targets.length - 1];
+      expect(composer.compareDocumentPosition(end) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    } finally {
+      Element.prototype.scrollIntoView = orig;
+    }
+  });
 });

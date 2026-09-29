@@ -24,6 +24,9 @@ import { TurnSpend } from "./TurnSpend";
 
 // Fills the page below the top bar, so the composer sits at the bottom even
 // when the chat is short (the main area's own padding differs on phones).
+// The composer is sticky, so text scrolls under it; "the bottom" is the end
+// marker after it (ChatEnd), never a point above it — else the composer would
+// cover the last lines.
 const FRAME = "flex min-h-[calc(100dvh-10.25rem)] flex-col md:min-h-[calc(100dvh-6.75rem)]";
 
 /** A brand-new chat: the intro, examples, and a composer whose first send creates the chat. */
@@ -42,6 +45,7 @@ export function NewChat() {
     edits: false,
   };
   const input = useRef<HTMLTextAreaElement>(null);
+  const end = useRef<HTMLDivElement>(null);
 
   const send = (text: string) => {
     setDraft("");
@@ -59,7 +63,7 @@ export function NewChat() {
       <ChatHeader title={<h2 className="truncate text-[15px] font-semibold">New chat</h2>} />
       <div className="flex-1">
         {create.isPending ? (
-          <Messages messages={[]} turns={[]} pendingText={create.variables?.content} working />
+          <Messages messages={[]} turns={[]} pendingText={create.variables?.content} working endRef={end} />
         ) : (
           <Intro
             onPick={(prompt) => {
@@ -78,6 +82,7 @@ export function NewChat() {
         autoFocus
         settings={<ChatSettingsBar value={settings} onChange={(p) => setSettings({ ...settings, ...p })} disabled={create.isPending} />}
       />
+      <ChatEnd ref={end} />
     </div>
   );
 }
@@ -104,6 +109,7 @@ function ChatView({ chat, messages, turns }: { chat: Chat; messages: ChatMessage
   const settings = useChatSettings(chat.id);
   const toast = useToast();
   const [draft, setDraft] = useState("");
+  const end = useRef<HTMLDivElement>(null);
   const pendingText = send.isPending ? send.variables : undefined;
   const busy = chat.busy || send.isPending;
 
@@ -119,6 +125,7 @@ function ChatView({ chat, messages, turns }: { chat: Chat; messages: ChatMessage
           onStop={chat.busy ? () => stop.mutate(undefined, { onError: (e) => toast.error(e) }) : undefined}
           stopping={stop.isPending}
           lastError={busy ? "" : chat.last_error}
+          endRef={end}
         />
       </div>
       <Composer
@@ -141,8 +148,17 @@ function ChatView({ chat, messages, turns }: { chat: Chat; messages: ChatMessage
           });
         }}
       />
+      <ChatEnd ref={end} />
     </div>
   );
+}
+
+/**
+ * The end of the chat, after the composer. On phones the tab bar covers the
+ * last 3.5rem of the screen, so "at the end" stops that much short.
+ */
+function ChatEnd({ ref }: { ref: RefObject<HTMLDivElement | null> }) {
+  return <div ref={ref} aria-hidden className="h-px scroll-mb-[calc(3.5rem+env(safe-area-inset-bottom))] md:scroll-mb-0" />;
 }
 
 // ── Header ─────────────────────────────────────────────────────────────────
@@ -265,7 +281,9 @@ function Messages({
   onStop,
   stopping,
   lastError = "",
+  endRef,
 }: {
+  endRef: RefObject<HTMLDivElement | null>;
   messages: ChatMessage[];
   turns: ChatTurn[];
   pendingText?: string;
@@ -276,7 +294,6 @@ function Messages({
 }) {
   const items = useMemo(() => buildChatItems(messages), [messages]);
   const turnBySeq = useMemo(() => new Map(turns.map((t) => [t.seq, t])), [turns]);
-  const bottom = useRef<HTMLDivElement>(null);
   const [follow, setFollow] = useState(true);
 
   // Follow the bottom while the reader is there; stop once they scroll up.
@@ -288,12 +305,13 @@ function Messages({
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
-  // The last message's seq and whether its tool calls have answers change as
-  // the turn goes on; any of them moves the bottom.
-  const tail = `${items.length}:${messages[messages.length - 1]?.seq ?? 0}:${pendingText ?? ""}:${working}:${lastError}`;
+  // The last message's seq, whether its tool calls have answers, and the
+  // turns' spend lines change as the turn goes on; any of them moves the end.
+  const lastTurn = turns[turns.length - 1];
+  const tail = `${items.length}:${messages[messages.length - 1]?.seq ?? 0}:${pendingText ?? ""}:${working}:${lastError}:${turns.length}:${lastTurn?.status}`;
   useEffect(() => {
-    if (follow) bottom.current?.scrollIntoView?.({ block: "end" });
-  }, [tail, follow]);
+    if (follow) endRef.current?.scrollIntoView?.({ block: "end" });
+  }, [tail, follow, endRef]);
 
   return (
     <>
@@ -318,7 +336,6 @@ function Messages({
           <p className="mt-0.5 text-[12px] text-fg-3">Send a message to try again.</p>
         </div>
       ) : null}
-      <div ref={bottom} className="h-1" />
     </>
   );
 }

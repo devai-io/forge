@@ -17,7 +17,7 @@ export function TurnSpend({ turn }: { turn: ChatTurn }) {
   const engine = [ENGINE_NAME[turn.engine], turn.model, turn.effort ? EFFORT_LABEL[turn.effort] ?? turn.effort : ""]
     .filter(Boolean)
     .join(" · ");
-  const parts = [`${formatSpend(spend.billed)} API`];
+  const parts = [spend.unpriced && spend.billed === 0 ? "API price unknown" : `${formatSpend(spend.billed)} API${spend.unpriced ? " + unpriced calls" : ""}`];
   if (spend.subscription > 0) parts.push(`≈${formatSpend(spend.subscription)} on the Claude subscription`);
   if (spend.pending) parts.push("runs still going");
 
