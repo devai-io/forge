@@ -25,6 +25,11 @@ const USES: { key: keyof Omit<JevSettings, "enabled">; label: string; hint: stri
     hint: "With more than 8 open tasks, a session lists only the ones relevant to its repo (focus, in-progress, blocked, urgent and the repo's own tasks always stay).",
   },
   {
+    key: "match",
+    label: "Match what you ask Claude Code to your tasks",
+    hint: "Each request typed into Claude Code (with the Forge hook installed) is checked against the project's open tasks; the likely ones are added to the conversation once per session. Off: shared keywords decide instead.",
+  },
+  {
     key: "compaction",
     label: "Jev compaction in Claude Code on every machine",
     hint: "Each machine installs the fast-jev-compaction plugin (pinned by Forge) and gets the key, so long sessions drop tool output that no longer matters instead of summarising.",

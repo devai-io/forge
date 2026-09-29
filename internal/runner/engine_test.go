@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -48,5 +49,28 @@ func TestDeepSeekCost(t *testing.T) {
 	}
 	if (&claudeResult{}).deepseekCost(peak) != nil {
 		t.Fatal("no usage must give no cost")
+	}
+}
+
+func TestSetupHooksReplaceOnlyForgeOnes(t *testing.T) {
+	path := t.TempDir() + "/settings.json"
+	orig := `{"model":"opus","hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"other-tool"}]}],
+		"SessionStart":[{"hooks":[{"type":"command","command":"/old/forge agent context --hook"}]}]}}`
+	if err := os.WriteFile(path, []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ { // running setup twice changes nothing more
+		if err := addHook(path, "SessionStart", "/bin/forge agent context --hook", "context --hook"); err != nil {
+			t.Fatal(err)
+		}
+		if err := addHook(path, "UserPromptSubmit", "/bin/forge agent match --hook", "match --hook"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, _ := os.ReadFile(path)
+	s := string(raw)
+	if strings.Count(s, "match --hook") != 1 || strings.Count(s, "context --hook") != 1 || !strings.Contains(s, "other-tool") ||
+		strings.Contains(s, "/old/forge") || !strings.Contains(s, `"model": "opus"`) {
+		t.Fatalf("settings = %s", s)
 	}
 }

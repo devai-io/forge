@@ -755,6 +755,7 @@ export type JevSettings = {
   routing: boolean; // pick haiku/sonnet for agent runs queued without a model
   context: boolean; // session context lists only tasks relevant to the repo
   compaction: boolean; // machines wire Jev compaction into Claude Code
+  match: boolean; // requests typed into Claude Code are matched to open tasks
 };
 
 export type JevStatus = {

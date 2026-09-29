@@ -318,8 +318,9 @@ func xmlEscape(s string) string {
 // ── Claude Code ───────────────────────────────────────────────────────────
 
 // SetupClaude registers the Forge MCP server with Claude Code (user scope)
-// and adds the SessionStart hook to ~/.claude/settings.json, replacing
-// earlier Forge entries so running it again is harmless.
+// and adds the SessionStart (project context) and UserPromptSubmit (task
+// matching) hooks to ~/.claude/settings.json, replacing earlier Forge
+// entries so running it again is harmless.
 func SetupClaude(configPath, claudePath string, out io.Writer) error {
 	if _, err := LoadConfig(configPath); err != nil {
 		return fmt.Errorf("%w — pair this machine first: forge agent pair <url> <code>", err)
@@ -346,16 +347,21 @@ func SetupClaude(configPath, claudePath string, out io.Writer) error {
 	home, _ := os.UserHomeDir()
 	path := filepath.Join(home, ".claude", "settings.json")
 	hook := shellJoin(append([]string{exe}, agentArgs(configPath, "context", "--hook")...))
-	if err := addSessionHook(path, hook); err != nil {
+	if err := addHook(path, "SessionStart", hook, "context --hook"); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Added the SessionStart hook to %s.\n", path)
+	match := shellJoin(append([]string{exe}, agentArgs(configPath, "match", "--hook")...))
+	if err := addHook(path, "UserPromptSubmit", match, "match --hook"); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Added the SessionStart (context) and UserPromptSubmit (task matching) hooks to %s.\n", path)
 	return nil
 }
 
-// addSessionHook puts one Forge SessionStart hook into a Claude Code
-// settings file, dropping earlier Forge ones and leaving everything else.
-func addSessionHook(path, command string) error {
+// addHook puts one Forge hook for event into a Claude Code settings file,
+// dropping earlier Forge ones (commands containing marker) and leaving
+// everything else.
+func addHook(path, event, command, marker string) error {
 	settings := map[string]any{}
 	raw, err := os.ReadFile(path)
 	switch {
@@ -371,7 +377,7 @@ func addSessionHook(path, command string) error {
 		hooks = map[string]any{}
 	}
 	var kept []any
-	existing, _ := hooks["SessionStart"].([]any)
+	existing, _ := hooks[event].([]any)
 	for _, group := range existing {
 		g, _ := group.(map[string]any)
 		inner, _ := g["hooks"].([]any)
@@ -379,7 +385,7 @@ func addSessionHook(path, command string) error {
 		for _, h := range inner {
 			hm, _ := h.(map[string]any)
 			cmd, _ := hm["command"].(string)
-			if isForgeHook(cmd) {
+			if isForgeHook(cmd, marker) {
 				continue
 			}
 			keep = append(keep, h)
@@ -390,7 +396,7 @@ func addSessionHook(path, command string) error {
 		}
 	}
 	kept = append(kept, map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command}}})
-	hooks["SessionStart"] = kept
+	hooks[event] = kept
 	settings["hooks"] = hooks
 	if raw != nil { // the first time only: the file as it was before Forge touched it
 		if _, err := os.Stat(path + ".before-forge"); errors.Is(err, os.ErrNotExist) {
@@ -400,7 +406,7 @@ func addSessionHook(path, command string) error {
 	return writePrivateJSON(path, settings)
 }
 
-func isForgeHook(cmd string) bool {
-	return strings.Contains(cmd, "context --hook") &&
+func isForgeHook(cmd, marker string) bool {
+	return strings.Contains(cmd, marker) &&
 		(strings.Contains(cmd, "forge") || strings.Contains(cmd, "runner"))
 }

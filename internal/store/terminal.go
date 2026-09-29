@@ -379,3 +379,14 @@ func clipLines(s string, maxLines, maxChars int) string {
 	}
 	return out
 }
+
+// ProjectForPath is the project (and repo, when inside one) a working
+// directory belongs to, as the session context resolves it; "" when none.
+func (s *Store) ProjectForPath(ctx context.Context, cwd string) (string, *RepoWithProject, error) {
+	idx, err := s.loadPathIndex(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	key, repo := idx.match(cwd, filepath.Base(cwd))
+	return key, repo, nil
+}

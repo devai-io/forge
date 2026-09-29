@@ -733,6 +733,26 @@ all, per 15 minutes):
   used or expired code; `429 rate_limited`. The returned `token` replaces the
   machine's previous one.
 
+## Task matching (Claude Code prompts)
+
+`forge agent setup-claude` installs a `UserPromptSubmit` hook,
+`forge agent match --hook`, next to the SessionStart context hook. For each
+request typed into Claude Code it posts:
+
+- `POST /api/runner/match` `{cwd, prompt, known?: string[]}` →
+  `{project_key, matches: [{ref, title, status, priority, score, why}], markdown}`.
+  `why`: `named` (a ref such as `SHOP-3` in the prompt, score 1), `jev` (Jev
+  probability ≥ 0.6 that the request is work on that task; Jev on with `match`),
+  or `keywords` (≥ 2 significant title words shared, covering ≥ ⅓ of the title).
+  Candidates: the open tasks of the project `cwd` resolves to (as the session
+  context does; all projects when none), up to 60. Prompts under 12 characters or
+  starting with `/` only match named refs. At most 3 matches; refs in `known` are
+  left out. `markdown` is empty when nothing matched.
+
+The hook adds `markdown` as context and remembers the refs per session (user
+cache dir, `forge/prompt-matches/<session>.json`, pruned after 7 days), so a
+session hears about each task once. Errors print nothing.
+
 ## Agent engine
 
 An agent run's Claude Code talks to Anthropic (`claude`) or to DeepSeek's
@@ -769,7 +789,7 @@ fraction of Claude's tokens. Off until enabled; the key is the `value` secret of
 the newest vault item tagged `integration:jev`. Every use fails open.
 
 ```ts
-type JevSettings = { enabled: boolean; routing: boolean; context: boolean; compaction: boolean };
+type JevSettings = { enabled: boolean; routing: boolean; context: boolean; compaction: boolean; match: boolean };
 type JevStatus = {
   settings: JevSettings;
   key_configured: boolean;                   // the key itself is never returned
@@ -790,6 +810,7 @@ type Run = { /* … */ model_note: string };   // "Jev: light task (91% sure) �
   tasks, the always-kept ones (focus, in progress, blocked, urgent, the repo's own)
   plus up to 12 in total that Jev scores ≥ 0.4 relevant to the repo; the heading
   says so. Scores are cached 30 minutes per task set.
+- **Match**: see *Task matching* below — Jev scores the candidates when on.
 - **Machines**: the heartbeat answer carries `jev_rev`; when it changes the agent
   reads `GET /api/runner/jev` → `{compaction, api_key?, plugin_repo, plugin_commit,
   rev}` and, with compaction on, installs the plugin at exactly `plugin_commit` and

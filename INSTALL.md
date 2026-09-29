@@ -221,6 +221,14 @@ forge assistant model deepseek-flash          # optional: model [base-url]
 forge assistant on
 ```
 
+### 2d′. Claude Code and your tasks
+
+`forge agent setup-claude` connects Claude Code on a machine to Forge: the
+`forge` MCP server (tasks, comments, check-up), a SessionStart hook with the
+project's context, and a UserPromptSubmit hook that matches each request to
+the open tasks it is about (Jev when on, else shared keywords) so Claude keeps
+them current. Run it again after upgrading to pick up new hooks.
+
 ### 2e. Agent engine: DeepSeek by default
 
 Agent runs start Claude Code on a machine. By default it talks to

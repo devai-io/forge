@@ -144,6 +144,11 @@ func runAgent(args []string) error {
 			runner.PrintContext(cfg, fs.Arg(1) == "--hook", os.Stdin, os.Stdout)
 		}
 		return nil
+	case "match":
+		if err == nil { // the UserPromptSubmit hook: never fails a prompt
+			runner.PrintMatch(cfg, os.Stdin, os.Stdout)
+		}
+		return nil
 	case "", "run":
 	default:
 		return fmt.Errorf("unknown agent command %q (see forge help)", fs.Arg(0))

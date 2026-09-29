@@ -7,7 +7,7 @@ import { jsonResponse, makeUser, renderWithProviders, routeFetch, testClient } f
 afterEach(() => vi.unstubAllGlobals());
 
 const status = (over: Partial<JevStatus> = {}): JevStatus => ({
-  settings: { enabled: false, routing: true, context: true, compaction: true },
+  settings: { enabled: false, routing: true, context: true, compaction: true, match: true },
   key_configured: false,
   stats: { calls: 0, errors: 0, input_tokens: 0, last_at: null, last_error: "", last_model: "" },
   ...over,

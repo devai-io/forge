@@ -44,10 +44,13 @@ type JevSettings struct {
 	// Compaction: every machine's Claude Code gets the Jev compaction plugin,
 	// which drops tool results that no longer matter instead of summarising.
 	Compaction bool `json:"compaction"`
+	// Match: each request typed into Claude Code is matched against the open
+	// tasks, so the session knows which one it is working on.
+	Match bool `json:"match"`
 }
 
 func (s *Store) JevSettings(ctx context.Context) (JevSettings, error) {
-	v := JevSettings{Routing: true, Context: true, Compaction: true}
+	v := JevSettings{Routing: true, Context: true, Compaction: true, Match: true}
 	_, err := s.getSetting(ctx, "jev", &v)
 	return v, err
 }

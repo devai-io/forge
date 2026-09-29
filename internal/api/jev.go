@@ -70,13 +70,13 @@ func (s *Server) updateJev(w http.ResponseWriter, r *http.Request, u *store.User
 		return
 	}
 	var in struct {
-		Enabled, Routing, Context, Compaction *bool
+		Enabled, Routing, Context, Compaction, Match *bool
 	}
 	if !decode(w, r, &in) {
 		return
 	}
 	for dst, v := range map[*bool]*bool{&set.Enabled: in.Enabled, &set.Routing: in.Routing, &set.Context: in.Context,
-		&set.Compaction: in.Compaction} {
+		&set.Compaction: in.Compaction, &set.Match: in.Match} {
 		if v != nil {
 			*dst = *v
 		}
@@ -85,7 +85,7 @@ func (s *Server) updateJev(w http.ResponseWriter, r *http.Request, u *store.User
 		writeErr(w, r, err)
 		return
 	}
-	s.sec(r, "jev_settings", fmt.Sprintf("enabled=%t routing=%t context=%t compaction=%t", set.Enabled, set.Routing, set.Context, set.Compaction))
+	s.sec(r, "jev_settings", fmt.Sprintf("enabled=%t routing=%t context=%t compaction=%t match=%t", set.Enabled, set.Routing, set.Context, set.Compaction, set.Match))
 	s.getJev(w, r, u)
 }
 
