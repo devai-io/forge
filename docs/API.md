@@ -888,7 +888,7 @@ type ChatSettings = {
   engine: "deepseek" | "claude"; // the DeepSeek API loop on the server | a Claude Code session on the master
   model: string;                 // "" = default (AssistantSettings.model | Claude Code's own)
   effort: string;                // "" = default; deepseek: off|low|high|max (thinking off / reasoning_effort)
-  edits: boolean;                // claude: acceptEdits instead of plan
+  edits: boolean;                // claude: acceptEdits (files, Forge's task tools) instead of plan (reads only)
 };
 type UsageEntry = {                // one line of a turn's bill
   api: string;                     // "deepseek" | "jev" | "claude-code" | the provider's host
@@ -958,7 +958,8 @@ type ChatMessage = {
   and turns another engine answered in between are handed over as a transcript.
   The claim answer carries `assistant: {append_system}` (the chat's
   instructions); the agent adds `--append-system-prompt` and
-  `--allowedTools mcp__forge` (Forge's MCP tools; nothing else is widened). When
+  `--allowedTools mcp__forge` (Forge's MCP tools; nothing else is widened; in plan
+  mode only the tools Forge's MCP server marks `readOnlyHint` run). When
   the run finishes (or is found finished on a poll), its `result` becomes the
   assistant message and its `usage` (Claude Code's `modelUsage`) the turn's.
   A server restart does not end a Claude Code turn; it does end a DeepSeek one.

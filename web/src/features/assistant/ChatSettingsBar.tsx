@@ -1,6 +1,7 @@
 // What answers the chat, above the composer: the engine (the DeepSeek API
 // loop on the server, or a Claude Code session on the master machine), its
-// model and effort, and — for Claude Code — whether it may edit files.
+// model and effort, and — for Claude Code — whether it may make changes
+// (edit files, update tasks; otherwise it only reads).
 // Changes apply from the next message.
 
 import { useAssistant } from "@/api/hooks";
@@ -66,7 +67,7 @@ export function ChatSettingsBar({
         ))}
       </Select>
       {value.engine === "claude" ? (
-        <Switch checked={value.edits} onChange={(v) => onChange({ edits: v })} label="Can edit files" disabled={disabled} />
+        <Switch checked={value.edits} onChange={(v) => onChange({ edits: v })} label="Can make changes" disabled={disabled} />
       ) : null}
     </div>
   );

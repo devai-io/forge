@@ -225,7 +225,7 @@ forge assistant ask "What needs my attention today?"   # one turn from the shell
 Each chat picks its engine above the message box: **DeepSeek API** (the agent
 loop on the server, with a model and thinking effort) or **Claude Code** (a
 session on the master machine, on that machine's Claude login, with a model
-and effort; read-only unless "Can edit files" is on). Under every answer, the
+and effort; read-only unless "Can make changes" is on). Under every answer, the
 turn's spend: the chat model's calls, Jev's, the Claude Code session's tokens
 (at API prices), and each run it queued.
 

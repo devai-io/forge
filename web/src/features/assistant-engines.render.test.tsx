@@ -137,7 +137,7 @@ describe("Assistant engines", () => {
     renderChat("/assistant/new");
     const user = userEvent.setup();
     await user.selectOptions(await screen.findByRole("combobox", { name: "Engine" }), "claude");
-    expect(screen.getByRole("switch", { name: "Can edit files" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Can make changes" })).toBeInTheDocument();
     await user.selectOptions(screen.getByRole("combobox", { name: "Model" }), "sonnet");
     await user.selectOptions(screen.getByRole("combobox", { name: "Effort" }), "xhigh");
     await user.type(screen.getByRole("textbox", { name: "Message" }), "What is open on SHOP?{Enter}");

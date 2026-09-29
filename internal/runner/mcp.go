@@ -51,6 +51,22 @@ func obj(props map[string]any, required ...string) map[string]any {
 
 func str(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
 
+// readOnlyTools only read Forge. Their readOnlyHint lets Claude Code use them
+// in plan mode (a read-only Assistant chat, a plan run); the others change
+// tasks and are left to modes that allow changes.
+var readOnlyTools = map[string]bool{"forge_context": true, "forge_projects": true, "forge_tasks": true,
+	"forge_task": true, "forge_checkup": true}
+
+func listedTools() []map[string]any {
+	out := make([]map[string]any, len(mcpTools))
+	for i, t := range mcpTools {
+		out[i] = map[string]any{"name": t.Name, "description": t.Description, "inputSchema": t.InputSchema,
+			"annotations": map[string]any{"readOnlyHint": readOnlyTools[t.Name], "destructiveHint": false,
+				"openWorldHint": false}}
+	}
+	return out
+}
+
 var taskStatus = map[string]any{"type": "string", "enum": []string{"backlog", "todo", "in_progress", "blocked", "done"}}
 var taskPriority = map[string]any{"type": "string", "enum": []string{"urgent", "high", "medium", "low"}}
 
@@ -126,7 +142,7 @@ func handleMCP(c *client, m rpcMsg) (any, map[string]any) {
 	case "ping":
 		return map[string]any{}, nil
 	case "tools/list":
-		return map[string]any{"tools": mcpTools}, nil
+		return map[string]any{"tools": listedTools()}, nil
 	case "tools/call":
 		var p struct {
 			Name      string         `json:"name"`

@@ -114,3 +114,13 @@ echo '{"type":"result","subtype":"success","result":"ok","total_cost_usd":0.03,"
 		t.Fatalf("no repo, no assistant: %+v", rep)
 	}
 }
+
+func TestMCPReadToolsAreMarkedReadOnly(t *testing.T) {
+	for _, tl := range listedTools() {
+		ro := tl["annotations"].(map[string]any)["readOnlyHint"].(bool)
+		name := tl["name"].(string)
+		if want := !strings.Contains(name, "create") && !strings.Contains(name, "update") && name != "forge_comment"; ro != want {
+			t.Errorf("%s readOnlyHint = %v", name, ro)
+		}
+	}
+}
