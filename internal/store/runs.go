@@ -233,33 +233,37 @@ func (s *Store) FailOrphanedRuns(ctx context.Context) error {
 // ── Runs ──────────────────────────────────────────────────────────────────
 
 const runSelect = `
-SELECT r.id, coalesce(r.runner_id, 0), coalesce(rn.name, r.runner_name), r.project_id, p.key, p.color,
-       r.repo_id, rp.name, r.task_id, CASE WHEN t.id IS NULL THEN NULL ELSE tp.key || '-' || t.number END,
+SELECT r.id, coalesce(r.runner_id, 0), coalesce(rn.name, r.runner_name), coalesce(r.project_id, 0),
+       coalesce(p.key, ''), coalesce(p.color, ''), coalesce(r.repo_id, 0), coalesce(rp.name, ''), r.task_id,
+       CASE WHEN t.id IS NULL THEN NULL ELSE tp.key || '-' || t.number END,
        r.kind, r.prompt, r.command, r.permission_mode, r.model, r.worktree, r.resume_run_id, r.status,
        r.cancel_requested, r.session_id, r.result, r.error, r.exit_code, r.cost_usd, r.num_turns, r.duration_ms,
-       r.created_at, r.started_at, r.finished_at, rp.path, r.resume_session, r.model_note, r.engine
+       r.created_at, r.started_at, r.finished_at, coalesce(rp.path, ''), r.resume_session, r.model_note, r.engine,
+       r.effort, r.chat_turn_id, r.usage, r.append_system
 FROM runs r
-JOIN projects p ON p.id = r.project_id
-JOIN repos rp ON rp.id = r.repo_id
+LEFT JOIN projects p ON p.id = r.project_id
+LEFT JOIN repos rp ON rp.id = r.repo_id
 LEFT JOIN runners rn ON rn.id = r.runner_id
 LEFT JOIN tasks t ON t.id = r.task_id
 LEFT JOIN projects tp ON tp.id = t.project_id`
 
 func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 	var r Run
+	var usage string
 	if err := row.Scan(&r.ID, &r.RunnerID, &r.RunnerName, &r.ProjectID, &r.ProjectKey, &r.ProjectColor,
 		&r.RepoID, &r.RepoName, &r.TaskID, &r.TaskRef, &r.Kind, &r.Prompt, &r.Command, &r.PermissionMode,
 		&r.Model, &r.Worktree, &r.ResumeRunID, &r.Status, &r.CancelRequested, &r.SessionID, &r.Result, &r.Error,
 		&r.ExitCode, &r.CostUSD, &r.NumTurns, &r.DurationMS, &r.CreatedAt, &r.StartedAt, &r.FinishedAt,
-		&r.RepoPath, &r.ResumeSession, &r.ModelNote, &r.Engine); err != nil {
+		&r.RepoPath, &r.ResumeSession, &r.ModelNote, &r.Engine, &r.Effort, &r.ChatTurnID, &usage, &r.AppendSystem); err != nil {
 		return nil, mapErr(err)
 	}
+	r.Usage = json.RawMessage(usage)
 	return &r, nil
 }
 
 // Public strips the fields only a runner needs.
 func (r Run) Public() Run {
-	r.RepoPath, r.ResumeSession = "", ""
+	r.RepoPath, r.ResumeSession, r.AppendSystem = "", "", ""
 	return r
 }
 
@@ -269,10 +273,12 @@ type RunFilter struct {
 	Statuses   []string
 	Finished   bool
 	Limit      int
+	// Assistant sessions (Claude Code turns of a chat, no repo) are left out
+	// of run lists; they show in their chat.
 }
 
 func (s *Store) ListRuns(ctx context.Context, f RunFilter) ([]Run, error) {
-	var where []string
+	where := []string{"r.repo_id IS NOT NULL"}
 	var args []any
 	arg := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
 	if f.ProjectKey != "" {
@@ -287,10 +293,7 @@ func (s *Store) ListRuns(ctx context.Context, f RunFilter) ([]Run, error) {
 	if f.Finished {
 		where = append(where, "r.finished_at IS NOT NULL")
 	}
-	q := runSelect
-	if len(where) > 0 {
-		q += " WHERE " + strings.Join(where, " AND ")
-	}
+	q := runSelect + " WHERE " + strings.Join(where, " AND ")
 	if f.Limit <= 0 || f.Limit > 500 {
 		f.Limit = 50
 	}
@@ -337,6 +340,15 @@ type RunInput struct {
 	// ModelNote says why Model was chosen, when Forge chose it (set by the
 	// server, never by the client).
 	ModelNote string `json:"-"`
+	// Effort: claude --effort for an agent run ("" = Claude Code's default).
+	Effort string `json:"effort"`
+	// ChatTurnID links a run to the Assistant turn that queued it. A run with
+	// a turn and no repo (RepoID 0) is that turn's Claude Code session, in the
+	// machine's home folder. Set by the server only.
+	ChatTurnID *int64 `json:"-"`
+	// AppendSystem is added to Claude Code's system prompt (Assistant
+	// sessions); set by the server only.
+	AppendSystem string `json:"-"`
 }
 
 // CreateRun validates a run against what its runner says it can do, then
@@ -363,7 +375,7 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 		if in.PermissionMode == "" {
 			in.PermissionMode = prev.PermissionMode
 		}
-		if in.Model == "" {
+		if in.Model == "" && in.ChatTurnID == nil { // a chat turn says its model itself ("" = default)
 			in.Model = prev.Model
 		}
 		if in.Engine == "" {
@@ -376,12 +388,21 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 	if err != nil {
 		return nil, invalid("runner_id", "no such runner")
 	}
-	repo, err := s.RepoByID(ctx, in.RepoID)
-	if err != nil {
-		return nil, invalid("repo_id", "no such repo")
-	}
-	if repo.Path == "" {
-		return nil, invalid("repo_id", "this repo has no local path to run in")
+	// An Assistant session (a chat turn on Claude Code) runs in the machine's
+	// home folder instead of a repo.
+	home := in.RepoID == 0 && in.ChatTurnID != nil
+	var repo *Repo
+	var projectID, repoID *int64
+	if !home {
+		if repo, err = s.RepoByID(ctx, in.RepoID); err != nil {
+			return nil, invalid("repo_id", "no such repo")
+		}
+		if repo.Path == "" {
+			return nil, invalid("repo_id", "this repo has no local path to run in")
+		}
+		projectID, repoID = &repo.ProjectID, &repo.ID
+	} else if in.Kind != "agent" {
+		return nil, invalid("kind", "an assistant session is an agent run")
 	}
 
 	in.Prompt = strings.TrimSpace(in.Prompt)
@@ -415,6 +436,9 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 		if !OneOf(in.Engine, Engines) {
 			return nil, invalid("engine", "must be one of %s", strings.Join(Engines, ", "))
 		}
+		if in.Effort != "" && !OneOf(in.Effort, ClaudeEfforts) {
+			return nil, invalid("effort", "must be one of %s", strings.Join(ClaudeEfforts, ", "))
+		}
 		in.Command = ""
 	case "command":
 		in.Command = strings.TrimSpace(in.Command)
@@ -433,7 +457,7 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 				return nil, invalid("confirmed", "%q needs explicit confirmation", in.Command)
 			}
 		}
-		in.PermissionMode, in.Worktree, in.Model, in.Engine = "", false, "", ""
+		in.PermissionMode, in.Worktree, in.Model, in.Engine, in.Effort = "", false, "", "", ""
 	default:
 		return nil, invalid("kind", "must be agent or command")
 	}
@@ -447,17 +471,22 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 	err = s.tx(ctx, func(tx pgxTx) error {
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO runs (runner_id, runner_name, project_id, repo_id, task_id, kind, prompt, command,
-			                  permission_mode, model, worktree, resume_run_id, resume_session, model_note, engine)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id`,
-			runner.ID, runner.Name, repo.ProjectID, repo.ID, in.TaskID, in.Kind, in.Prompt, in.Command,
-			in.PermissionMode, in.Model, in.Worktree, in.ResumeRunID, resumeSession, in.ModelNote, in.Engine).Scan(&id); err != nil {
+			                  permission_mode, model, worktree, resume_run_id, resume_session, model_note, engine, effort, chat_turn_id,
+			                  append_system)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id`,
+			runner.ID, runner.Name, projectID, repoID, in.TaskID, in.Kind, in.Prompt, in.Command,
+			in.PermissionMode, in.Model, in.Worktree, in.ResumeRunID, resumeSession, in.ModelNote, in.Engine,
+			in.Effort, in.ChatTurnID, in.AppendSystem).Scan(&id); err != nil {
 			return mapErr(err)
+		}
+		if home {
+			return nil // an assistant turn, not board activity
 		}
 		what := in.Command
 		if in.Kind == "agent" {
 			what = excerpt(in.Prompt, 80)
 		}
-		return logActivity(ctx, tx, ActivityInput{ProjectID: &repo.ProjectID, TaskID: in.TaskID, RunID: &id,
+		return logActivity(ctx, tx, ActivityInput{ProjectID: projectID, TaskID: in.TaskID, RunID: &id,
 			Kind: "run.queued", Summary: fmt.Sprintf("Run #%d on %s (%s): %s", id, repo.Name, runner.Name, what)})
 	})
 	if err != nil {
@@ -570,6 +599,8 @@ type FinishInput struct {
 	CostUSD    *float64 `json:"cost_usd"`
 	NumTurns   *int     `json:"num_turns"`
 	DurationMS *int64   `json:"duration_ms"`
+	// Usage: Claude Code's modelUsage (tokens and cost per model).
+	Usage json.RawMessage `json:"usage"`
 }
 
 func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishInput) error {
@@ -577,19 +608,25 @@ func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishI
 		return invalid("status", "must be succeeded, failed or cancelled")
 	}
 	return s.tx(ctx, func(tx pgxTx) error {
-		var projectID int64
-		var taskID *int64
+		var projectID, taskID, repoID *int64
 		var repoName string
-		var repoID int64
+		usage := "{}"
+		if len(in.Usage) > 0 && json.Valid(in.Usage) && len(in.Usage) < 64<<10 {
+			usage = string(in.Usage)
+		}
 		err := tx.QueryRow(ctx, `
 			UPDATE runs SET status = $3, exit_code = $4, session_id = CASE WHEN $5 = '' THEN session_id ELSE $5 END,
-			       result = $6, error = $7, cost_usd = $8, num_turns = $9, duration_ms = $10, finished_at = now()
+			       result = $6, error = $7, cost_usd = $8, num_turns = $9, duration_ms = $10, finished_at = now(),
+			       usage = $11
 			WHERE id = $1 AND runner_id = $2 AND status = 'running'
 			RETURNING project_id, task_id, repo_id`,
 			runID, runnerID, in.Status, in.ExitCode, truncate(in.SessionID, 200), truncate(in.Result, 200000),
-			truncate(in.Error, 5000), in.CostUSD, in.NumTurns, in.DurationMS).Scan(&projectID, &taskID, &repoID)
+			truncate(in.Error, 5000), in.CostUSD, in.NumTurns, in.DurationMS, usage).Scan(&projectID, &taskID, &repoID)
 		if err != nil {
 			return mapErr(err)
+		}
+		if repoID == nil {
+			return nil // an assistant session: its chat records it
 		}
 		if err := tx.QueryRow(ctx, `SELECT name FROM repos WHERE id = $1`, repoID).Scan(&repoName); err != nil {
 			return mapErr(err)
@@ -598,7 +635,7 @@ func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishI
 		if in.CostUSD != nil {
 			summary += fmt.Sprintf(" ($%.2f)", *in.CostUSD)
 		}
-		return logActivity(ctx, tx, ActivityInput{ProjectID: &projectID, TaskID: taskID, RunID: &runID,
+		return logActivity(ctx, tx, ActivityInput{ProjectID: projectID, TaskID: taskID, RunID: &runID,
 			Kind: "run.finished", Summary: summary})
 	})
 }

@@ -348,6 +348,16 @@ type Run struct {
 	// Engine is the backend an agent run's Claude Code talks to ("claude" or
 	// "deepseek"); empty for command runs.
 	Engine string `json:"engine"`
+	// Effort is claude --effort ("" = Claude Code's default).
+	Effort string `json:"effort"`
+	// ChatTurnID: the Assistant turn that queued this run (or whose Claude
+	// Code session it is, when the run has no repo).
+	ChatTurnID *int64 `json:"chat_turn_id"`
+	// Usage is tokens per model as Claude Code reported them:
+	// {model: {inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens, costUSD}}.
+	Usage json.RawMessage `json:"usage"`
+	// AppendSystem: only the runner needs it (Assistant sessions).
+	AppendSystem string `json:"append_system,omitempty"`
 }
 
 type RunEvent struct {
@@ -406,6 +416,7 @@ var (
 	PermissionModes = []string{"plan", "acceptEdits", "auto", "dontAsk", "bypassPermissions"}
 	RunnerRoles     = []string{"master", "ios", "worker"}
 	Engines         = []string{"deepseek", "claude"}
+	ClaudeEfforts   = []string{"low", "medium", "high", "xhigh", "max"}
 )
 
 func OneOf(v string, allowed []string) bool {

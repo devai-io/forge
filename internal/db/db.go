@@ -511,6 +511,12 @@ func Migrate(ctx context.Context, d *DB) error {
 		if err != nil {
 			return err
 		}
+		if strings.HasPrefix(string(body), fkOffDirective) {
+			if err := migrateWithoutForeignKeys(ctx, d, name, string(body)); err != nil {
+				return fmt.Errorf("migration %s: %w", name, err)
+			}
+			continue
+		}
 		err = d.InTx(ctx, func(tx *Tx) error {
 			for _, stmt := range splitStatements(string(body)) {
 				if _, err := tx.tx.ExecContext(ctx, stmt); err != nil {
@@ -525,6 +531,49 @@ func Migrate(ctx context.Context, d *DB) error {
 		}
 	}
 	return nil
+}
+
+// fkOffDirective, as a migration's first line, runs it with foreign keys
+// off: SQLite's way to rebuild a table (create new, copy, drop, rename)
+// without the drop cascading into the tables that reference it. The pragma
+// only takes effect outside a transaction, so the migration gets a
+// connection of its own; foreign_key_check must come back clean before it
+// commits.
+const fkOffDirective = "-- forge:foreign-keys-off"
+
+func migrateWithoutForeignKeys(ctx context.Context, d *DB, name, body string) error {
+	conn, err := d.sql.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return err
+	}
+	defer conn.ExecContext(context.Background(), `PRAGMA foreign_keys = ON`) //nolint:errcheck
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	for _, stmt := range splitStatements(body) {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return err
+	}
+	broken := rows.Next()
+	rows.Close()
+	if broken {
+		return errors.New("foreign key check failed after the migration")
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (name) VALUES (?)`, name); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // splitStatements cuts a migration file at the semicolons that end

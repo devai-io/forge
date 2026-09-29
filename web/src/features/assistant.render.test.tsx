@@ -15,6 +15,10 @@ const status = (over: Partial<AssistantStatus> = {}): AssistantStatus => ({
   settings: { enabled: true, base_url: "https://llm.example.com", model: "demo-model" },
   key_configured: true,
   models: [],
+  engines: {
+    deepseek: { available: true, models: ["demo-model"], efforts: ["off", "low", "high", "max"] },
+    claude: { available: true, machine: "desk", online: true, reason: "", models: ["opus", "sonnet"], efforts: ["low", "high"] },
+  },
   ...over,
 });
 
@@ -26,6 +30,10 @@ const chat = (over: Partial<Chat> = {}): Chat => ({
   usage: { input_tokens: 12_345, output_tokens: 1_100, cached_tokens: 0 },
   created_at: AT,
   updated_at: AT,
+  engine: "deepseek",
+  model: "",
+  effort: "",
+  edits: false,
   ...over,
 });
 
@@ -120,7 +128,7 @@ describe("Assistant page", () => {
     const user = userEvent.setup();
     await user.type(screen.getByRole("textbox", { name: "Message" }), "Review the open SHOP bugs{Enter}");
     expect(await screen.findByText("at /assistant/7")).toBeInTheDocument();
-    expect(created).toEqual({ content: "Review the open SHOP bugs" });
+    expect(created).toEqual({ content: "Review the open SHOP bugs", engine: "deepseek", model: "", effort: "", edits: false });
     expect(within(screen.getByRole("log")).getByText("Review the open SHOP bugs")).toBeInTheDocument();
     // The agent is on it: the composer waits.
     expect(screen.getByRole("status")).toHaveTextContent("Working…");

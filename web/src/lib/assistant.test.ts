@@ -24,6 +24,10 @@ const chat = (over: Partial<Chat>): Chat => ({
   usage: { input_tokens: 0, output_tokens: 0, cached_tokens: 0 },
   created_at: "2026-09-28T10:00:00Z",
   updated_at: "2026-09-28T10:00:00Z",
+  engine: "deepseek",
+  model: "",
+  effort: "",
+  edits: false,
   ...over,
 });
 

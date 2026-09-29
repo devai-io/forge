@@ -7,7 +7,7 @@
 // unexpected shape degrades to a plainer line instead of breaking the page.
 
 import { ApiError } from "@/api/client";
-import type { ChatMessage, ChatToolCall, ChatUsage, RunStatus } from "@/api/types";
+import type { ChatEngine, ChatMessage, ChatToolCall, ChatTurn, ChatUsage, RunStatus, UsageEntry } from "@/api/types";
 
 /** Where the Settings panel lives, for links from the page's "off" state. */
 export const ASSISTANT_SETTINGS_PATH = "/settings#settings-assistant";
@@ -238,4 +238,91 @@ export function formatTokens(n: number): string {
 export function usageLabel(usage: ChatUsage | null | undefined): string {
   if (!usage) return "";
   return `${formatTokens(usage.input_tokens)} in / ${formatTokens(usage.output_tokens)} out tokens`;
+}
+
+// ── Engines and spend ──────────────────────────────────────────────────────
+
+export const ENGINE_NAME: Record<ChatEngine, string> = { deepseek: "DeepSeek API", claude: "Claude Code" };
+
+export const EFFORT_LABEL: Record<string, string> = {
+  off: "Thinking off",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+  max: "Max",
+};
+
+const API_NAME: Record<string, string> = { deepseek: "DeepSeek API", jev: "Jev", "claude-code": "Claude Code" };
+export const apiName = (api: string) => API_NAME[api] ?? api;
+
+/** Small amounts matter here: "$0.0021", "$0.13", "$4.20". */
+export function formatSpend(usd: number | null | undefined): string {
+  if (usd === null || usd === undefined) return "—";
+  if (usd === 0) return "$0";
+  if (usd < 0.0001) return "<$0.0001";
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(2)}`;
+}
+
+export type SpendLine = {
+  key: string;
+  label: string; // "DeepSeek API · deepseek-flash", "Run #12 · DeepSeek"
+  detail: string; // calls and tokens, or the run's state
+  cost: number | null;
+  // Billed to an API account, or what a Claude subscription covered (priced at API rates).
+  kind: "billed" | "subscription";
+  approx: boolean; // an estimate (DeepSeek runs, Jev's pack price)
+  runId: number | null;
+  pending: boolean; // a run still going: its cost is not in yet
+};
+
+export type TurnSpend = { lines: SpendLine[]; billed: number; subscription: number; pending: boolean; unpriced: boolean };
+
+function entryLine(e: UsageEntry, i: number): SpendLine {
+  const calls = e.calls === 1 ? "1 call" : `${e.calls} calls`;
+  const cached = e.cached_tokens ? ` + ${formatTokens(e.cached_tokens)} cached` : "";
+  const out = e.api === "jev" ? "" : ` · ${formatTokens(e.output_tokens)} out`;
+  return {
+    key: `u${i}`,
+    label: e.model ? `${apiName(e.api)} · ${e.model}` : apiName(e.api),
+    detail: `${calls} · ${formatTokens(e.input_tokens)} in${cached}${out}`,
+    cost: e.cost_usd,
+    kind: e.api === "claude-code" ? "subscription" : "billed",
+    approx: e.api === "jev",
+    runId: null,
+    pending: false,
+  };
+}
+
+/** A turn's bill: its own API calls, then every run it queued. */
+export function turnSpend(turn: ChatTurn): TurnSpend {
+  const lines = turn.usage.map(entryLine);
+  for (const r of turn.runs) {
+    if (r.id === turn.run_id) continue; // the session itself: its tokens are the usage lines
+    const running = r.status === "queued" || r.status === "running";
+    const engine = r.kind === "command" ? "command" : r.engine === "deepseek" ? "DeepSeek" : "Claude";
+    lines.push({
+      key: `r${r.id}`,
+      label: `Run #${r.id} · ${engine}${r.model ? ` ${r.model}` : ""}`,
+      detail: `${r.repo_name} · ${r.status}`,
+      cost: r.kind === "command" ? 0 : r.cost_usd,
+      kind: r.engine === "claude" ? "subscription" : "billed",
+      approx: r.engine === "deepseek",
+      runId: r.id,
+      pending: running,
+    });
+  }
+  let billed = 0;
+  let subscription = 0;
+  let unpriced = false;
+  for (const l of lines) {
+    if (l.cost === null) {
+      unpriced = unpriced || !l.pending;
+      continue;
+    }
+    if (l.kind === "billed") billed += l.cost;
+    else subscription += l.cost;
+  }
+  return { lines, billed, subscription, pending: lines.some((l) => l.pending), unpriced };
 }

@@ -19,6 +19,7 @@ import type {
   AssistantSettings,
   AssistantStatus,
   Chat,
+  ChatSettings,
   ChatThread,
   Checkup,
   CheckupSummary,
@@ -1145,6 +1146,7 @@ function storeThread(qc: QueryClient, thread: ChatThread) {
   qc.setQueryData<ChatThread>(keys.chat(thread.chat.id), (old) => ({
     chat: thread.chat,
     messages: mergeMessages(old?.messages ?? [], thread.messages),
+    turns: thread.turns ?? old?.turns ?? [],
   }));
   qc.setQueryData<Chat[]>(keys.chats, (old) => (old ? upsertChat(old, thread.chat) : old));
 }
@@ -1167,10 +1169,15 @@ export function useChat(id: number | null) {
       const after = lastSeq(prev?.messages);
       const res = await api.get<ChatThread>(`/chats/${id}`, { after: after || undefined }, signal);
       qc.setQueryData<Chat[]>(keys.chats, (old) => (old ? upsertChat(old, res.chat) : old));
-      return { chat: res.chat, messages: mergeMessages(prev?.messages ?? [], res.messages) };
+      return { chat: res.chat, messages: mergeMessages(prev?.messages ?? [], res.messages), turns: res.turns ?? [] };
     },
     enabled: id !== null && id > 0,
-    refetchInterval: (query) => (query.state.data?.chat.busy ? 1500 : false),
+    // Busy, or a finished turn whose runs still go on (their costs land later).
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      if (d?.chat.busy) return 1500;
+      return d?.turns.some((t) => t.runs.some((r) => r.status === "queued" || r.status === "running")) ? 5000 : false;
+    },
     structuralSharing: false,
   });
 }
@@ -1184,7 +1191,8 @@ function onAssistantError(qc: QueryClient, err: unknown) {
 export function useCreateChat() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (content: string) => api.post<ChatThread>("/chats", { content }),
+    mutationFn: ({ content, settings }: { content: string; settings?: Partial<ChatSettings> }) =>
+      api.post<ChatThread>("/chats", { content, ...settings }),
     onSuccess: (thread) => {
       storeThread(qc, thread);
       void qc.invalidateQueries({ queryKey: keys.chats });
@@ -1216,6 +1224,15 @@ export function useStopChat(chatId: number) {
       // Whatever the turn wrote before it stopped.
       void qc.invalidateQueries({ queryKey: keys.chat(chatId) });
     },
+  });
+}
+
+/** Engine, model, effort, edits: they apply from the chat's next turn. */
+export function useChatSettings(chatId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: Partial<ChatSettings>) => api.patch<{ chat: Chat }>(`/chats/${chatId}`, patch).then((r) => r.chat),
+    onSuccess: (chat) => storeChat(qc, chat),
   });
 }
 

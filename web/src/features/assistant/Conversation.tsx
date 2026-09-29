@@ -7,8 +7,8 @@ import { ArrowLeft, ArrowUp, Pencil, Sparkles, Square, Trash2 } from "lucide-rea
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError } from "@/api/client";
-import { useChat, useCreateChat, useDeleteChat, useRenameChat, useSendMessage, useStopChat } from "@/api/hooks";
-import type { Chat, ChatMessage } from "@/api/types";
+import { useAssistant, useChat, useChatSettings, useCreateChat, useDeleteChat, useRenameChat, useSendMessage, useStopChat } from "@/api/hooks";
+import type { Chat, ChatMessage, ChatSettings, ChatTurn } from "@/api/types";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/Dialog";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
@@ -18,7 +18,9 @@ import { SkeletonRows } from "@/components/ui/Skeleton";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { buildChatItems, EXAMPLE_PROMPTS, usageLabel } from "@/lib/assistant";
+import { ChatSettingsBar } from "./ChatSettingsBar";
 import { ToolActivity } from "./ToolActivity";
+import { TurnSpend } from "./TurnSpend";
 
 // Fills the page below the top bar, so the composer sits at the bottom even
 // when the chat is short (the main area's own padding differs on phones).
@@ -30,11 +32,20 @@ export function NewChat() {
   const navigate = useNavigate();
   const toast = useToast();
   const [draft, setDraft] = useState("");
+  const status = useAssistant();
+  const [picked, setSettings] = useState<ChatSettings | null>(null);
+  // DeepSeek unless it has no key and Claude Code can answer.
+  const settings: ChatSettings = picked ?? {
+    engine: status.data && !status.data.key_configured && status.data.engines?.claude.available ? "claude" : "deepseek",
+    model: "",
+    effort: "",
+    edits: false,
+  };
   const input = useRef<HTMLTextAreaElement>(null);
 
   const send = (text: string) => {
     setDraft("");
-    create.mutate(text, {
+    create.mutate({ content: text, settings }, {
       onSuccess: (thread) => navigate(`/assistant/${thread.chat.id}`, { replace: true }),
       onError: (err) => {
         setDraft(text);
@@ -48,7 +59,7 @@ export function NewChat() {
       <ChatHeader title={<h2 className="truncate text-[15px] font-semibold">New chat</h2>} />
       <div className="flex-1">
         {create.isPending ? (
-          <Messages messages={[]} pendingText={create.variables} working />
+          <Messages messages={[]} turns={[]} pendingText={create.variables?.content} working />
         ) : (
           <Intro
             onPick={(prompt) => {
@@ -58,7 +69,15 @@ export function NewChat() {
           />
         )}
       </div>
-      <Composer value={draft} onChange={setDraft} onSend={send} disabled={create.isPending} textareaRef={input} autoFocus />
+      <Composer
+        value={draft}
+        onChange={setDraft}
+        onSend={send}
+        disabled={create.isPending}
+        textareaRef={input}
+        autoFocus
+        settings={<ChatSettingsBar value={settings} onChange={(p) => setSettings({ ...settings, ...p })} disabled={create.isPending} />}
+      />
     </div>
   );
 }
@@ -76,12 +95,13 @@ export function Conversation({ id }: { id: number }) {
       </div>
     );
   }
-  return <ChatView chat={thread.data.chat} messages={thread.data.messages} />;
+  return <ChatView chat={thread.data.chat} messages={thread.data.messages} turns={thread.data.turns} />;
 }
 
-function ChatView({ chat, messages }: { chat: Chat; messages: ChatMessage[] }) {
+function ChatView({ chat, messages, turns }: { chat: Chat; messages: ChatMessage[]; turns: ChatTurn[] }) {
   const send = useSendMessage(chat.id);
   const stop = useStopChat(chat.id);
+  const settings = useChatSettings(chat.id);
   const toast = useToast();
   const [draft, setDraft] = useState("");
   const pendingText = send.isPending ? send.variables : undefined;
@@ -93,6 +113,7 @@ function ChatView({ chat, messages }: { chat: Chat; messages: ChatMessage[] }) {
       <div className="flex-1">
         <Messages
           messages={messages}
+          turns={turns}
           pendingText={pendingText}
           working={busy}
           onStop={chat.busy ? () => stop.mutate(undefined, { onError: (e) => toast.error(e) }) : undefined}
@@ -104,6 +125,12 @@ function ChatView({ chat, messages }: { chat: Chat; messages: ChatMessage[] }) {
         value={draft}
         onChange={setDraft}
         disabled={busy}
+        settings={
+          <ChatSettingsBar
+            value={settings.isPending ? { ...chat, ...settings.variables } : chat}
+            onChange={(patch) => settings.mutate(patch, { onError: (e) => toast.error(e) })}
+          />
+        }
         onSend={(text) => {
           setDraft("");
           send.mutate(text, {
@@ -232,6 +259,7 @@ function DeleteChat({ chat }: { chat: Chat }) {
 
 function Messages({
   messages,
+  turns,
   pendingText,
   working,
   onStop,
@@ -239,6 +267,7 @@ function Messages({
   lastError = "",
 }: {
   messages: ChatMessage[];
+  turns: ChatTurn[];
   pendingText?: string;
   working: boolean;
   onStop?: () => void;
@@ -246,6 +275,7 @@ function Messages({
   lastError?: string;
 }) {
   const items = useMemo(() => buildChatItems(messages), [messages]);
+  const turnBySeq = useMemo(() => new Map(turns.map((t) => [t.seq, t])), [turns]);
   const bottom = useRef<HTMLDivElement>(null);
   const [follow, setFollow] = useState(true);
 
@@ -268,15 +298,7 @@ function Messages({
   return (
     <>
       <div role="log" aria-live="polite" aria-label="Conversation" className="space-y-3">
-        {items.map((item) =>
-          item.kind === "user" ? (
-            <UserBubble key={item.key} text={item.message.content} />
-          ) : item.kind === "assistant" ? (
-            <AssistantMessage key={item.key} text={item.message.content} />
-          ) : (
-            <ToolActivity key={item.key} call={item.call} result={item.result} />
-          ),
-        )}
+        {withTurnSpend(items, turnBySeq)}
         {pendingText ? <UserBubble text={pendingText} /> : null}
       </div>
       {working ? (
@@ -299,6 +321,28 @@ function Messages({
       <div ref={bottom} className="h-1" />
     </>
   );
+}
+
+/** The items, with each turn's spend after the last thing it produced. */
+function withTurnSpend(items: ReturnType<typeof buildChatItems>, turnBySeq: Map<number, ChatTurn>): ReactNode[] {
+  const out: ReactNode[] = [];
+  let turn: ChatTurn | undefined;
+  const flush = () => {
+    if (turn) out.push(<TurnSpend key={`spend${turn.id}`} turn={turn} />);
+  };
+  for (const item of items) {
+    if (item.kind === "user") {
+      flush();
+      turn = turnBySeq.get(item.message.seq);
+      out.push(<UserBubble key={item.key} text={item.message.content} />);
+    } else if (item.kind === "assistant") {
+      out.push(<AssistantMessage key={item.key} text={item.message.content} />);
+    } else {
+      out.push(<ToolActivity key={item.key} call={item.call} result={item.result} />);
+    }
+  }
+  flush();
+  return out;
 }
 
 function UserBubble({ text }: { text: string }) {
@@ -359,6 +403,7 @@ function Composer({
   disabled,
   textareaRef,
   autoFocus,
+  settings,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -366,6 +411,7 @@ function Composer({
   disabled: boolean;
   textareaRef?: RefObject<HTMLTextAreaElement | null>;
   autoFocus?: boolean;
+  settings?: ReactNode;
 }) {
   const own = useRef<HTMLTextAreaElement>(null);
   const ref = textareaRef ?? own;
@@ -400,6 +446,7 @@ function Composer({
       }}
       className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-10 mt-4 bg-bg pt-1 pb-3 md:bottom-0"
     >
+      {settings}
       <div className="flex items-end gap-2 rounded-xl border border-line-strong bg-surface p-1.5 transition-colors focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/25">
         <textarea
           ref={ref}

@@ -31,8 +31,18 @@ type claimedRun struct {
 	TaskRef        *string `json:"task_ref"`
 	ResumeSession  string  `json:"resume_session"`
 	Engine         string  `json:"engine"`
-	// Setup comes alongside the run in the claim answer (never stored).
-	Setup *engineSetup `json:"-"`
+	Effort         string  `json:"effort"`
+	ChatTurnID     *int64  `json:"chat_turn_id"`
+	// Setup and Assistant come alongside the run in the claim answer.
+	Setup     *engineSetup    `json:"-"`
+	Assistant *assistantSetup `json:"-"`
+}
+
+// assistantSetup marks a run as an Assistant turn on Claude Code: it runs in
+// this machine's home folder (the first allowed root) and may use Forge's
+// own MCP tools; the server adds its instructions to the system prompt.
+type assistantSetup struct {
+	AppendSystem string `json:"append_system"`
 }
 
 type event struct {
@@ -54,6 +64,8 @@ type finishReport struct {
 	CostUSD    *float64 `json:"cost_usd"`
 	NumTurns   *int     `json:"num_turns"`
 	DurationMS *int64   `json:"duration_ms"`
+	// Usage is Claude Code's modelUsage, passed through.
+	Usage json.RawMessage `json:"usage,omitempty"`
 }
 
 // shipper batches a run's events to the server: every 400 ms or 100 events,
@@ -128,6 +140,9 @@ func (r *Runner) execute(ctx context.Context, run claimedRun) finishReport {
 	defer ship.close()
 
 	dir, ok := r.cfg.Allowed(run.RepoPath)
+	if run.Assistant != nil && run.RepoPath == "" && run.Kind == "agent" && len(r.cfg.AllowedRoots) > 0 {
+		dir, ok = r.cfg.AllowedRoots[0], true
+	}
 	if !ok {
 		msg := fmt.Sprintf("refused: %s is not inside this runner's allowed_roots or does not exist here", run.RepoPath)
 		ship.send(textEvent("system", msg))
@@ -162,6 +177,17 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 	if run.Worktree {
 		args = append(args, "--worktree", fmt.Sprintf("forge-run-%d", run.ID))
 	}
+	if contains(claudeEfforts, run.Effort) {
+		args = append(args, "--effort", run.Effort)
+	}
+	if run.Assistant != nil {
+		// Forge's own tools only: everything else stays under this machine's
+		// permission modes, whatever the server asks.
+		args = append(args, "--allowedTools", "mcp__forge")
+		if run.Assistant.AppendSystem != "" {
+			args = append(args, "--append-system-prompt", run.Assistant.AppendSystem)
+		}
+	}
 	args = append(args, r.cfg.ExtraArgs...)
 
 	var env []string
@@ -178,8 +204,20 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 	cmd := exec.Command(r.cfg.ClaudePath, args...)
 	cmd.Env = env                             // stream adds the rest; engineEnv entries win
 	cmd.Stdin = strings.NewReader(run.Prompt) // stdin, not argv: no length limit, not in `ps`
-	ship.send(textEvent("system", fmt.Sprintf("%s on %s: claude %s in %s",
-		r.hostname, run.ProjectKey, strings.Join(args, " "), dir)))
+	// The log line leaves the Assistant's instructions out: long, and not news.
+	shown := make([]string, len(args))
+	copy(shown, args)
+	for i := 1; i < len(shown); i++ {
+		if shown[i-1] == "--append-system-prompt" {
+			shown[i] = "…"
+		}
+	}
+	where := run.ProjectKey
+	if where == "" {
+		where = "the Assistant"
+	}
+	ship.send(textEvent("system", fmt.Sprintf("%s for %s: claude %s in %s",
+		r.hostname, where, strings.Join(shown, " "), dir)))
 
 	var res claudeResult
 	code, runErr := r.stream(ctx, cmd, dir, run, ship, func(line []byte) event {
@@ -188,7 +226,7 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 	}, nil)
 
 	rep := finishReport{ExitCode: code, SessionID: res.SessionID, Result: res.Result,
-		CostUSD: res.CostUSD, NumTurns: res.NumTurns, DurationMS: res.DurationMS}
+		CostUSD: res.CostUSD, NumTurns: res.NumTurns, DurationMS: res.DurationMS, Usage: res.RawUsage}
 	if run.Engine == "deepseek" {
 		// Claude Code prices tokens at Anthropic's rates; DeepSeek's are not.
 		rep.CostUSD = res.deepseekCost(time.Now())
@@ -357,19 +395,20 @@ type claudeResult struct {
 	NumTurns   *int
 	DurationMS *int64
 	Usage      map[string]modelUsage
+	RawUsage   json.RawMessage
 }
 
 func (c *claudeResult) observe(line []byte) {
 	var m struct {
-		Type         string                `json:"type"`
-		Subtype      string                `json:"subtype"`
-		SessionID    string                `json:"session_id"`
-		Result       string                `json:"result"`
-		IsError      bool                  `json:"is_error"`
-		TotalCostUSD *float64              `json:"total_cost_usd"`
-		NumTurns     *int                  `json:"num_turns"`
-		DurationMS   *int64                `json:"duration_ms"`
-		ModelUsage   map[string]modelUsage `json:"modelUsage"`
+		Type         string          `json:"type"`
+		Subtype      string          `json:"subtype"`
+		SessionID    string          `json:"session_id"`
+		Result       string          `json:"result"`
+		IsError      bool            `json:"is_error"`
+		TotalCostUSD *float64        `json:"total_cost_usd"`
+		NumTurns     *int            `json:"num_turns"`
+		DurationMS   *int64          `json:"duration_ms"`
+		ModelUsage   json.RawMessage `json:"modelUsage"`
 	}
 	if json.Unmarshal(line, &m) != nil {
 		return
@@ -380,7 +419,10 @@ func (c *claudeResult) observe(line []byte) {
 	if m.Type == "result" {
 		c.Result, c.Subtype, c.IsError = m.Result, m.Subtype, m.IsError
 		c.CostUSD, c.NumTurns, c.DurationMS = m.TotalCostUSD, m.NumTurns, m.DurationMS
-		c.Usage = m.ModelUsage
+		c.Usage, c.RawUsage = nil, nil
+		if len(m.ModelUsage) > 0 && json.Unmarshal(m.ModelUsage, &c.Usage) == nil {
+			c.RawUsage = m.ModelUsage
+		}
 		if c.Subtype == "success" {
 			c.Subtype = ""
 		}
@@ -441,6 +483,8 @@ func (t *tailBuffer) add(s string) {
 }
 
 func (t *tailBuffer) String() string { return strings.Join(t.lines, "\n") }
+
+var claudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 
 func contains(list []string, v string) bool {
 	for _, x := range list {

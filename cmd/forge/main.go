@@ -54,6 +54,8 @@ Server (workspace: FORGE_HOME, default ~/.config/forge):
   forge assistant status | on | off      the Assistant (LLM chat that delegates to Claude Code)
   forge assistant set-key < key.txt      store its provider API key in the vault
   forge assistant model <id> [base-url]  pick the model (and provider URL)
+  forge assistant ask [-engine claude] [-model M] [-effort E] <message>
+                                         one turn from the shell: the answer and what it spent
   forge engine status | deepseek | claude  default engine for agent runs
   forge engine set-key < key.txt         store the DeepSeek API key agent runs use
   forge engine model <id> [heavy-id]     DeepSeek models (default / heavy tasks)
@@ -451,7 +453,10 @@ func jevCommand(ctx context.Context, cfg config.Config, st *store.Store, args []
 // assistantCommand is Settings → Assistant, for a server without a browser.
 func assistantCommand(ctx context.Context, cfg config.Config, st *store.Store, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: forge assistant status | on | off | set-key (key on stdin) | model <id> [base-url]")
+		return errors.New("usage: forge assistant status | on | off | set-key (key on stdin) | model <id> [base-url] | ask [flags] <message>")
+	}
+	if args[0] == "ask" {
+		return assistantAsk(ctx, cfg, st, args[1:])
 	}
 	set, err := st.AssistantSettings(ctx)
 	if err != nil {
@@ -560,5 +565,78 @@ func engineCommand(ctx context.Context, cfg config.Config, st *store.Store, args
 		}
 	}
 	fmt.Printf("engine: default=%s model=%s heavy_model=%s deepseek_key=%s\n", set.Default, set.Model, set.HeavyModel, key)
+	return nil
+}
+
+// assistantAsk runs one Assistant turn from the command line and prints the
+// answer and what the turn spent.
+func assistantAsk(ctx context.Context, cfg config.Config, st *store.Store, args []string) error {
+	fs := flag.NewFlagSet("forge assistant ask", flag.ContinueOnError)
+	user := fs.String("user", "", "account to ask as (default: the first one)")
+	engine := fs.String("engine", "", "deepseek | claude (default deepseek)")
+	model := fs.String("model", "", "model (default: the engine's)")
+	effort := fs.String("effort", "", "deepseek: off|low|high|max; claude: low|medium|high|xhigh|max")
+	edits := fs.Bool("edits", false, "claude: may edit files")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	content := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	if content == "" {
+		return errors.New("usage: forge assistant ask [-engine claude] [-model M] [-effort E] [-edits] <message>")
+	}
+	box, err := vault.Load(cfg.Home)
+	if err != nil {
+		return err
+	}
+	if *user == "" {
+		if err := st.DB.QueryRow(ctx, `SELECT username FROM users ORDER BY id LIMIT 1`).Scan(user); err != nil {
+			return errors.New("no account yet")
+		}
+	}
+	srv := api.New(cfg, st, nil, nil, api.Deps{Box: box})
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	defer cancel()
+	chat, err := srv.Ask(ctx, *user, content, store.ChatSettings{Engine: *engine, Model: *model, Effort: *effort, Edits: *edits})
+	if err != nil {
+		return err
+	}
+	msgs, err := st.ChatMessages(ctx, chat.ID, 0)
+	if err != nil {
+		return err
+	}
+	for _, m := range msgs[1:] {
+		switch {
+		case m.Role == "assistant" && m.Content != "":
+			fmt.Printf("\n%s\n", m.Content)
+		case m.Role == "tool":
+			fmt.Printf("  [%s] %s\n", m.ToolName, m.Content)
+		}
+	}
+	if chat.LastError != "" {
+		fmt.Printf("\nturn failed: %s\n", chat.LastError)
+	}
+	turns, err := st.ChatTurns(ctx, chat.ID)
+	if err != nil || len(turns) == 0 {
+		return err
+	}
+	t := turns[0]
+	fmt.Printf("\nchat #%d · %s %s %s · %s\n", chat.ID, t.Engine, t.Model, t.Effort, t.Status)
+	for _, e := range t.Usage {
+		cost := "?"
+		if e.CostUSD != nil {
+			cost = fmt.Sprintf("$%.5f", *e.CostUSD)
+		}
+		fmt.Printf("  %-12s %-24s %3d calls  %8d in  %8d cached  %7d out  %s\n", e.API, e.Model, e.Calls, e.InputTokens, e.CachedTokens, e.OutputTokens, cost)
+	}
+	for _, r := range t.Runs {
+		if t.RunID != nil && r.ID == *t.RunID {
+			continue
+		}
+		cost := "…"
+		if r.CostUSD != nil {
+			cost = fmt.Sprintf("$%.5f", *r.CostUSD)
+		}
+		fmt.Printf("  run #%d %s %s %s (%s) %s\n", r.ID, r.Engine, r.Model, r.RepoName, r.Status, cost)
+	}
 	return nil
 }

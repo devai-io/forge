@@ -41,6 +41,11 @@ vulnerability) on this repository. Do not open a public issue.
   read (projects, tasks, run results), to the LLM provider you configure. It
   queues runs with the same rules as the web app and cannot use
   `bypassPermissions` or confirm-only commands.
+- An Assistant chat on Claude Code is a Claude Code session on the master
+  machine, started in its first allowed root, under the same permission modes
+  as any run (read-only `plan` unless the chat allows edits, then
+  `acceptEdits`); it may use Forge's own MCP tools and nothing else beyond
+  what that machine already allows.
 - Agent runs on DeepSeek (the default engine when a DeepSeek key is stored)
   send the run's prompt and everything Claude Code reads in the repo to
   DeepSeek instead of Anthropic. The machine receives the DeepSeek key with

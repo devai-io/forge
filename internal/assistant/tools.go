@@ -399,7 +399,7 @@ func (a *Assistant) call(ctx context.Context, user *store.User, name string, raw
 			return nil, "", fmt.Errorf("engine must be deepseek or claude, not %q", in.Engine)
 		}
 		ri := store.RunInput{RunnerID: rn.ID, RepoID: repo.ID, Kind: "agent", Prompt: in.Prompt,
-			PermissionMode: mode, Model: in.Model, Worktree: in.Worktree, Engine: in.Engine}
+			PermissionMode: mode, Model: in.Model, Worktree: in.Worktree, Engine: in.Engine, ChatTurnID: turnOf(ctx)}
 		if in.TaskRef != "" {
 			t, err := a.store.TaskByRef(ctx, in.TaskRef)
 			if err != nil {
@@ -436,7 +436,8 @@ func (a *Assistant) call(ctx context.Context, user *store.User, name string, raw
 		if d, ok := rn.Capabilities.Command(in.Command); ok && d.Confirm {
 			return nil, "", fmt.Errorf("%q needs the user's confirmation: they can run it from the Agents page", in.Command)
 		}
-		run, err := a.store.CreateRun(ctx, store.RunInput{RunnerID: rn.ID, RepoID: repo.ID, Kind: "command", Command: in.Command})
+		run, err := a.store.CreateRun(ctx, store.RunInput{RunnerID: rn.ID, RepoID: repo.ID, Kind: "command", Command: in.Command,
+			ChatTurnID: turnOf(ctx)})
 		if err != nil {
 			return nil, "", err
 		}
@@ -618,4 +619,12 @@ func clip(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// turnOf is the chat turn a tool call belongs to, for linking the runs it queues.
+func turnOf(ctx context.Context) *int64 {
+	if id, ok := ctx.Value(turnKey{}).(int64); ok {
+		return &id
+	}
+	return nil
 }

@@ -16,6 +16,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/devai-io/forge/internal/usage"
 )
 
 // URL is TypeSafe's System One endpoint.
@@ -141,6 +143,8 @@ func (c *Client) ask(ctx context.Context, state any, questions map[string]Questi
 	c.stats.InputTokens += out.Usage.InputTokens
 	c.stats.LastModel = out.Model
 	c.mu.Unlock()
+	usage.From(ctx).Add(usage.Entry{API: "jev", Model: out.Model, Calls: 1, InputTokens: int64(out.Usage.InputTokens),
+		CostUSD: usage.JevCost(int64(out.Usage.InputTokens))})
 	for name := range questions {
 		if _, ok := out.Answers[name]; !ok {
 			return nil, fmt.Errorf("jev: no answer for %q", name)

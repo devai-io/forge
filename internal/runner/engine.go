@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/devai-io/forge/internal/usage"
 )
 
 // engineSetup is how the server asks for a run on another backend than
@@ -80,30 +82,16 @@ type modelUsage struct {
 }
 
 // deepseekCost estimates a run's cost from its token counts at DeepSeek's
-// list prices (USD per million tokens, off-peak), doubled in DeepSeek's peak
-// hours (01-04 and 06-10 UTC on weekdays). Nil when there is no usage.
+// list prices (see usage.DeepSeekCost). Nil when there is no usage.
 func (c *claudeResult) deepseekCost(at time.Time) *float64 {
 	if len(c.Usage) == 0 {
 		return nil
 	}
-	type price struct{ hit, miss, out float64 }
-	flash, pro := price{0.003, 0.15, 0.6}, price{0.022, 0.66, 1.98}
-	at = at.UTC()
-	mult := 1.0
-	if h := at.Hour(); at.Weekday() != time.Saturday && at.Weekday() != time.Sunday &&
-		((h >= 1 && h < 4) || (h >= 6 && h < 10)) {
-		mult = 2
-	}
 	total := 0.0
 	for model, u := range c.Usage {
-		p := flash
-		if strings.Contains(model, "pro") {
-			p = pro
+		if p := usage.DeepSeekCost(model, u.InputTokens+u.CacheCreationInputTokens, u.CacheReadInputTokens, u.OutputTokens, at); p != nil {
+			total += *p
 		}
-		total += (float64(u.CacheReadInputTokens)*p.hit +
-			float64(u.InputTokens+u.CacheCreationInputTokens)*p.miss +
-			float64(u.OutputTokens)*p.out) / 1e6
 	}
-	total *= mult
 	return &total
 }

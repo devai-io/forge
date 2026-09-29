@@ -29,9 +29,11 @@ One binary, one SQLite file, one folder. MIT licensed.
   VictoriaMetrics, Grafana alerts and Nomad jobs, turned into a daily action list.
 - **Vault** — keys, keystores and service accounts, encrypted with a key kept
   outside the database; revealing needs your password again; everything audited.
-- **Assistant (optional)** — a chat backed by any OpenAI-compatible model
-  (DeepSeek by default) that reads and updates your projects and tasks and
-  delegates real work to Claude Code on your machines, then reports back.
+- **Assistant (optional)** — a chat that reads and updates your projects and
+  tasks: answered by an OpenAI-compatible model (DeepSeek by default, delegating
+  real work to Claude Code on your machines) or by a Claude Code session on your
+  main machine — engine, model and effort per chat, and what each turn spent,
+  per API.
 - **Agent engine** — agent runs drive Claude Code against DeepSeek's
   Anthropic-compatible API by default (with a DeepSeek key), at a fraction of the
   price; pick Claude per run, or make it the default.

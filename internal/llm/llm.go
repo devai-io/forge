@@ -25,10 +25,13 @@ const (
 var ErrNoKey = errors.New("no API key configured")
 
 type Message struct {
-	Role       string     `json:"role"` // system | user | assistant | tool
-	Content    string     `json:"content"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Role    string `json:"role"` // system | user | assistant | tool
+	Content string `json:"content"`
+	// ReasoningContent is DeepSeek's thinking; with tools it must be sent
+	// back on every earlier assistant message.
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string     `json:"tool_call_id,omitempty"`
 }
 
 type ToolCall struct {
@@ -114,9 +117,21 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	return json.Unmarshal(raw, out)
 }
 
+// Efforts are the thinking settings DeepSeek takes: "off" disables thinking,
+// the others set reasoning_effort; "" leaves the provider's default.
+var Efforts = []string{"off", "low", "high", "max"}
+
 // Chat sends the conversation and returns the model's next message.
-func (c *Client) Chat(ctx context.Context, model string, messages []Message, tools []Tool) (Message, Usage, error) {
+func (c *Client) Chat(ctx context.Context, model, effort string, messages []Message, tools []Tool) (Message, Usage, error) {
 	body := map[string]any{"model": model, "messages": messages}
+	switch effort {
+	case "":
+	case "off":
+		body["thinking"] = map[string]string{"type": "disabled"}
+	default:
+		body["thinking"] = map[string]string{"type": "enabled"}
+		body["reasoning_effort"] = effort
+	}
 	if len(tools) > 0 {
 		ts := make([]map[string]any, len(tools))
 		for i, t := range tools {

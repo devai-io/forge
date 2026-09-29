@@ -3,13 +3,16 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/devai-io/forge/internal/assistant"
+	"github.com/devai-io/forge/internal/llm"
 	"github.com/devai-io/forge/internal/store"
 )
 
@@ -59,7 +62,63 @@ func (s *Server) assistantStatus(ctx context.Context) (map[string]any, error) {
 			c.mu.Unlock()
 		}
 	}
-	return map[string]any{"settings": set, "key_configured": k != "", "models": models}, nil
+	claude := map[string]any{"available": false, "machine": "", "reason": ""}
+	if rn, err := s.store.MasterRunner(ctx); err != nil {
+		claude["reason"] = "no master machine"
+	} else if rn.LastSeenAt != nil && !rn.Capabilities.Claude {
+		claude["machine"], claude["reason"] = rn.Name, rn.Name+" has no Claude Code"
+	} else {
+		claude["available"], claude["machine"], claude["online"] = true, rn.Name, rn.Online
+	}
+	return map[string]any{"settings": set, "key_configured": k != "", "models": models,
+		"engines": map[string]any{
+			"deepseek": map[string]any{"available": k != "", "models": models, "efforts": llm.Efforts},
+			"claude": map[string]any{"available": claude["available"], "machine": claude["machine"], "online": claude["online"],
+				"reason": claude["reason"], "models": claudeModels, "efforts": store.ClaudeEfforts},
+		}}, nil
+}
+
+// claudeModels are Claude Code's model aliases (the chat can also name a full id).
+var claudeModels = []string{"opus", "sonnet", "haiku", "fable"}
+
+var modelNameRe = regexp.MustCompile(`^[A-Za-z0-9._:/\[\]-]{1,100}$`)
+
+// chatSettings validates what a request asks for, on top of cur.
+func chatSettings(cur store.ChatSettings, engine, model, effort *string, edits *bool) (store.ChatSettings, error) {
+	set := cur
+	if engine != nil && *engine != set.Engine {
+		if !store.OneOf(*engine, store.Engines) {
+			return set, &store.ValidationError{Field: "engine", Message: "must be deepseek or claude"}
+		}
+		set.Engine, set.Model, set.Effort = *engine, "", "" // another engine's model and effort mean nothing here
+	}
+	if model != nil {
+		set.Model = strings.TrimSpace(*model)
+	}
+	if effort != nil {
+		set.Effort = *effort
+	}
+	if edits != nil {
+		set.Edits = *edits
+	}
+	if set.Model != "" && !modelNameRe.MatchString(set.Model) {
+		return set, &store.ValidationError{Field: "model", Message: "not a model name"}
+	}
+	efforts := llm.Efforts
+	if set.Engine == "claude" {
+		efforts = store.ClaudeEfforts
+	}
+	if set.Effort != "" && !store.OneOf(set.Effort, efforts) {
+		return set, &store.ValidationError{Field: "effort", Message: "must be one of " + strings.Join(efforts, ", ")}
+	}
+	return set, nil
+}
+
+type chatSettingsInput struct {
+	Engine *string `json:"engine"`
+	Model  *string `json:"model"`
+	Effort *string `json:"effort"`
+	Edits  *bool   `json:"edits"`
 }
 
 func (s *Server) getAssistant(w http.ResponseWriter, r *http.Request, u *store.User) {
@@ -138,6 +197,10 @@ func (s *Server) setAssistantKey(w http.ResponseWriter, r *http.Request, u *stor
 // ── Chats ─────────────────────────────────────────────────────────────────
 
 func (s *Server) assistantErr(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, assistant.ErrNoMachine) {
+		writeError(w, http.StatusServiceUnavailable, "no_machine", err.Error())
+		return
+	}
 	if errors.Is(err, assistant.ErrOff) {
 		writeError(w, http.StatusServiceUnavailable, "assistant_off", err.Error())
 		return
@@ -158,31 +221,40 @@ func (s *Server) listChats(w http.ResponseWriter, r *http.Request, u *store.User
 	writeJSON(w, http.StatusOK, map[string]any{"chats": chats})
 }
 
-func decodeContent(w http.ResponseWriter, r *http.Request) (string, bool) {
-	var in struct {
-		Content string `json:"content"`
-	}
+type messageInput struct {
+	Content string `json:"content"`
+	chatSettingsInput
+}
+
+func decodeContent(w http.ResponseWriter, r *http.Request) (messageInput, bool) {
+	var in messageInput
 	if !decode(w, r, &in) {
-		return "", false
+		return in, false
 	}
 	in.Content = strings.TrimSpace(in.Content)
 	if in.Content == "" || len(in.Content) > 50000 {
 		writeErr(w, r, &store.ValidationError{Field: "content", Message: "write a message (at most 50,000 characters)"})
-		return "", false
+		return in, false
 	}
-	return in.Content, true
+	return in, true
 }
 
 func (s *Server) createChat(w http.ResponseWriter, r *http.Request, u *store.User) {
-	content, ok := decodeContent(w, r)
+	in, ok := decodeContent(w, r)
 	if !ok {
 		return
 	}
-	if err := s.assistant.Ready(r.Context()); err != nil {
+	set, err := chatSettings(s.assistant.DefaultSettings(r.Context()), in.Engine, in.Model, in.Effort, in.Edits)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if err := s.assistant.Ready(r.Context(), set.Engine); err != nil {
 		s.assistantErr(w, r, err)
 		return
 	}
-	chat, err := s.store.CreateChat(r.Context(), content)
+	content := in.Content
+	chat, err := s.store.CreateChat(r.Context(), content, set)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -195,7 +267,7 @@ func (s *Server) sendChatMessage(w http.ResponseWriter, r *http.Request, u *stor
 	if !ok {
 		return
 	}
-	content, ok := decodeContent(w, r)
+	in, ok := decodeContent(w, r)
 	if !ok {
 		return
 	}
@@ -208,11 +280,22 @@ func (s *Server) sendChatMessage(w http.ResponseWriter, r *http.Request, u *stor
 		s.assistantErr(w, r, store.ErrConflict)
 		return
 	}
-	if err := s.assistant.Ready(r.Context()); err != nil {
+	set, err := chatSettings(chat.ChatSettings, in.Engine, in.Model, in.Effort, in.Edits)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if err := s.assistant.Ready(r.Context(), set.Engine); err != nil {
 		s.assistantErr(w, r, err)
 		return
 	}
-	s.startTurn(w, r, u, id, content, http.StatusOK)
+	if set != chat.ChatSettings {
+		if _, err := s.store.SetChatSettings(r.Context(), id, set); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
+	s.startTurn(w, r, u, id, in.Content, http.StatusOK)
 }
 
 // startTurn appends the user's message and sets the agent going.
@@ -231,7 +314,12 @@ func (s *Server) startTurn(w http.ResponseWriter, r *http.Request, u *store.User
 		writeErr(w, r, err)
 		return
 	}
-	writeJSON(w, status, map[string]any{"chat": chat, "messages": []store.ChatMessage{*m}})
+	turns, err := s.store.ChatTurns(r.Context(), chatID)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, status, map[string]any{"chat": chat, "messages": []store.ChatMessage{*m}, "turns": turns})
 }
 
 func (s *Server) getChat(w http.ResponseWriter, r *http.Request, u *store.User) {
@@ -244,12 +332,24 @@ func (s *Server) getChat(w http.ResponseWriter, r *http.Request, u *store.User) 
 		writeErr(w, r, err)
 		return
 	}
+	if chat.Busy {
+		s.assistant.Reconcile(r.Context(), id)
+		if chat, err = s.store.ChatByID(r.Context(), id); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
 	msgs, err := s.store.ChatMessages(r.Context(), id, queryInt(r, "after", 0))
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"chat": chat, "messages": msgs})
+	turns, err := s.store.ChatTurns(r.Context(), id)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"chat": chat, "messages": msgs, "turns": turns})
 }
 
 func (s *Server) stopChat(w http.ResponseWriter, r *http.Request, u *store.User) {
@@ -257,7 +357,7 @@ func (s *Server) stopChat(w http.ResponseWriter, r *http.Request, u *store.User)
 	if !ok {
 		return
 	}
-	s.assistant.Stop(id)
+	s.assistant.Stop(r.Context(), id)
 	// The turn releases the chat as it unwinds; give it a moment so the
 	// answer already says busy: false.
 	for i := 0; i < 20; i++ {
@@ -280,15 +380,33 @@ func (s *Server) renameChat(w http.ResponseWriter, r *http.Request, u *store.Use
 		return
 	}
 	var in struct {
-		Title string `json:"title"`
+		Title *string `json:"title"`
+		chatSettingsInput
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	chat, err := s.store.RenameChat(r.Context(), id, in.Title)
+	chat, err := s.store.ChatByID(r.Context(), id)
 	if err != nil {
 		writeErr(w, r, err)
 		return
+	}
+	if in.Title != nil {
+		if chat, err = s.store.RenameChat(r.Context(), id, *in.Title); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
+	set, err := chatSettings(chat.ChatSettings, in.Engine, in.Model, in.Effort, in.Edits)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if set != chat.ChatSettings { // applies from the next turn
+		if chat, err = s.store.SetChatSettings(r.Context(), id, set); err != nil {
+			writeErr(w, r, err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"chat": chat})
 }
@@ -298,10 +416,55 @@ func (s *Server) deleteChat(w http.ResponseWriter, r *http.Request, u *store.Use
 	if !ok {
 		return
 	}
-	s.assistant.Stop(id)
+	s.assistant.Stop(r.Context(), id)
 	if err := s.store.DeleteChat(r.Context(), id); err != nil {
 		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Ask runs one Assistant turn outside the web app (forge assistant ask): a
+// new chat for the given account, waited on until it ends. A Claude Code
+// turn is answered by the running server's machine, like any other.
+func (s *Server) Ask(ctx context.Context, login, content string, set store.ChatSettings) (*store.Chat, error) {
+	u, err := s.store.UserByLogin(ctx, login)
+	if err != nil {
+		return nil, fmt.Errorf("no account %q", login)
+	}
+	opt := func(v string) *string {
+		if v == "" {
+			return nil
+		}
+		return &v
+	}
+	set, err = chatSettings(s.assistant.DefaultSettings(ctx), opt(set.Engine), opt(set.Model), opt(set.Effort), &set.Edits)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.assistant.Ready(ctx, set.Engine); err != nil {
+		return nil, err
+	}
+	chat, err := s.store.CreateChat(ctx, content, set)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.store.AppendChatMessage(ctx, chat.ID, store.ChatMessage{Role: "user", Content: content}); err != nil {
+		return nil, err
+	}
+	if err := s.assistant.Start(ctx, chat.ID, u); err != nil {
+		return nil, err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			s.assistant.Stop(context.Background(), chat.ID)
+			return chat, ctx.Err()
+		case <-time.After(time.Second):
+		}
+		s.assistant.Reconcile(ctx, chat.ID)
+		if chat, err = s.store.ChatByID(ctx, chat.ID); err != nil || !chat.Busy {
+			return chat, err
+		}
+	}
 }

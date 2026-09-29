@@ -20,7 +20,9 @@ export function AssistantPage() {
   const chats = useChats();
 
   const off =
-    (status.data && (!status.data.settings.enabled || !status.data.key_configured)) ||
+    // On without a provider key still works when Claude Code can answer.
+    (status.data &&
+      (!status.data.settings.enabled || (!status.data.key_configured && !status.data.engines?.claude.available))) ||
     isAssistantOff(chats.error) ||
     isAssistantOff(status.error);
   if (off) return <AssistantOff keyConfigured={!!status.data?.key_configured} />;

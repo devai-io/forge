@@ -783,6 +783,49 @@ export type AssistantStatus = {
   settings: AssistantSettings;
   key_configured: boolean; // the key itself is never returned
   models: string[]; // what the provider lists for this key ([] if unknown/unreachable)
+  engines: {
+    deepseek: { available: boolean; models: string[]; efforts: string[] };
+    // Claude Code sessions on the master machine (its own login, no API key).
+    claude: { available: boolean; machine: string; online: boolean | null; reason: string; models: string[]; efforts: string[] };
+  };
+};
+
+/** What answers a chat: the DeepSeek API loop on the server, or a Claude Code session on the master machine. */
+export type ChatEngine = "deepseek" | "claude";
+export type ChatSettings = {
+  engine: ChatEngine;
+  model: string; // "" = the default (the Assistant's model / Claude Code's)
+  effort: string; // "" = the default; deepseek: off|low|high|max, claude: low|medium|high|xhigh|max
+  edits: boolean; // Claude Code may edit files (acceptEdits instead of plan)
+};
+
+/** One line of a turn's bill. */
+export type UsageEntry = {
+  api: string; // "deepseek" | "jev" | "claude-code" | a provider host
+  model: string;
+  calls: number;
+  input_tokens: number; // not from cache
+  cached_tokens: number;
+  output_tokens: number;
+  cost_usd: number | null; // null = no public price
+  note?: string;
+};
+
+/** One user message's processing: which engine answered and what it spent. */
+export type ChatTurn = {
+  id: number;
+  chat_id: number;
+  seq: number; // the user message that started it
+  engine: ChatEngine;
+  model: string;
+  effort: string;
+  status: "running" | "done" | "failed" | "stopped";
+  error: string;
+  usage: UsageEntry[];
+  run_id: number | null; // the Claude Code session run
+  started_at: string;
+  finished_at: string | null;
+  runs: Run[]; // runs it queued (and its own session run)
 };
 
 export type ChatUsage = { input_tokens: number; output_tokens: number; cached_tokens: number };
@@ -795,7 +838,7 @@ export type Chat = {
   usage: ChatUsage; // totals for the chat
   created_at: string;
   updated_at: string;
-};
+} & ChatSettings;
 
 export type ChatToolCall = { id: string; name: string; arguments: Record<string, unknown> };
 
@@ -812,4 +855,4 @@ export type ChatMessage = {
 };
 
 /** GET /api/chats/{id}, POST /api/chats and POST /api/chats/{id}/messages. */
-export type ChatThread = { chat: Chat; messages: ChatMessage[] };
+export type ChatThread = { chat: Chat; messages: ChatMessage[]; turns: ChatTurn[] };

@@ -83,10 +83,18 @@ function RunView({ run, events, loadingEvents }: { run: Run; events: RunEvent[] 
             <h1 className="text-lg leading-snug font-semibold break-words">{runTitle(run)}</h1>
             <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[12.5px] text-fg-3">
               <span className="font-mono">#{run.id}</span>
-              <Link to={`/p/${run.project_key}`} className="inline-flex items-center gap-1 hover:text-fg-2">
-                <ColorDot color={run.project_color} className="size-2" /> {run.project_key}
-              </Link>
-              <span>· {run.repo_name}</span>
+              {run.project_key ? (
+                <>
+                  <Link to={`/p/${run.project_key}`} className="inline-flex items-center gap-1 hover:text-fg-2">
+                    <ColorDot color={run.project_color} className="size-2" /> {run.project_key}
+                  </Link>
+                  <span>· {run.repo_name}</span>
+                </>
+              ) : (
+                <Link to="/assistant" className="hover:text-fg-2">
+                  Assistant session
+                </Link>
+              )}
               <span>· {run.runner_name}</span>
               {run.task_id && run.task_ref ? (
                 <button type="button" className="font-mono hover:text-accent" onClick={() => openTask(run.task_id!)}>

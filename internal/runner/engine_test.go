@@ -1,7 +1,11 @@
 package runner
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -72,5 +76,41 @@ func TestSetupHooksReplaceOnlyForgeOnes(t *testing.T) {
 	if strings.Count(s, "match --hook") != 1 || strings.Count(s, "context --hook") != 1 || !strings.Contains(s, "other-tool") ||
 		strings.Contains(s, "/old/forge") || !strings.Contains(s, `"model": "opus"`) {
 		t.Fatalf("settings = %s", s)
+	}
+}
+
+func TestAssistantSessionRun(t *testing.T) {
+	root := t.TempDir()
+	root, _ = filepath.EvalSymlinks(root)
+	record := filepath.Join(t.TempDir(), "args")
+	script := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(script, []byte(`#!/bin/sh
+pwd > "`+record+`"
+for a in "$@"; do echo "$a" >> "`+record+`"; done
+echo '{"type":"system","subtype":"init","session_id":"s9"}'
+echo '{"type":"result","subtype":"success","result":"ok","total_cost_usd":0.03,"modelUsage":{"claude-sonnet-5-5":{"inputTokens":5,"outputTokens":7,"cacheReadInputTokens":90,"costUSD":0.03}}}'
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	t.Cleanup(srv.Close)
+	r := New(&Config{APIURL: srv.URL, Token: "t", ClaudePath: script, AllowedRoots: []string{root},
+		PermissionModes: []string{"plan"}, MaxRunMinutes: 1, MaxConcurrent: 1, ExtraArgs: []string{"--verbose-extra"}})
+	turn := int64(4)
+	rep := r.execute(context.Background(), claimedRun{ID: 1, Kind: "agent", Prompt: "hi", PermissionMode: "plan",
+		Effort: "high", Model: "sonnet", ChatTurnID: &turn, Assistant: &assistantSetup{AppendSystem: "be brief"}})
+	if rep.Status != "succeeded" || rep.SessionID != "s9" || !strings.Contains(string(rep.Usage), "claude-sonnet-5-5") {
+		t.Fatalf("report = %+v", rep)
+	}
+	raw, _ := os.ReadFile(record)
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	got := strings.Join(lines[1:], " ")
+	if lines[0] != root || !strings.Contains(got, "--effort high") || !strings.Contains(got, "--allowedTools mcp__forge") ||
+		!strings.Contains(got, "--append-system-prompt be brief") || !strings.Contains(got, "--model sonnet") {
+		t.Fatalf("cwd %s, args %s", lines[0], got)
+	}
+	// An ordinary run with no repo path is still refused.
+	if rep := r.execute(context.Background(), claimedRun{ID: 2, Kind: "agent", Prompt: "hi", PermissionMode: "plan"}); rep.Status != "failed" {
+		t.Fatalf("no repo, no assistant: %+v", rep)
 	}
 }

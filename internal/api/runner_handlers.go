@@ -50,7 +50,11 @@ func (s *Server) runnerClaim(w http.ResponseWriter, r *http.Request, rn *store.R
 	for {
 		run, err := s.store.ClaimRun(r.Context(), rn.ID)
 		if err == nil {
-			writeJSON(w, http.StatusOK, map[string]any{"run": run, "engine": s.runnerEngine(r.Context(), run)})
+			out := map[string]any{"run": run, "engine": s.runnerEngine(r.Context(), run)}
+			if run.RepoID == 0 && run.ChatTurnID != nil {
+				out["assistant"] = map[string]string{"append_system": run.AppendSystem}
+			}
+			writeJSON(w, http.StatusOK, out)
 			return
 		}
 		if !errors.Is(err, store.ErrNotFound) {
@@ -99,6 +103,9 @@ func (s *Server) runnerFinish(w http.ResponseWriter, r *http.Request, rn *store.
 	if err := s.store.FinishRun(r.Context(), id, rn.ID, in); err != nil {
 		writeErr(w, r, err)
 		return
+	}
+	if run, err := s.store.RunByID(r.Context(), id); err == nil && run.ChatTurnID != nil {
+		s.assistant.FinishSession(r.Context(), run) // an Assistant turn on Claude Code
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

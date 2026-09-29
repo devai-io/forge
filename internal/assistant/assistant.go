@@ -14,11 +14,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/devai-io/forge/internal/llm"
 	"github.com/devai-io/forge/internal/store"
+	"github.com/devai-io/forge/internal/usage"
 )
 
 const (
@@ -29,6 +32,9 @@ const (
 )
 
 var ErrOff = errors.New("the assistant is not set up: add an API key and turn it on in Settings → Assistant")
+
+// ErrNoMachine: a Claude Code turn needs a machine that runs claude.
+var ErrNoMachine = errors.New("no machine can run Claude Code for the assistant: pair one (the master) and install Claude Code there")
 
 // Hooks are what the assistant needs from the API layer.
 type Hooks struct {
@@ -68,10 +74,33 @@ func (a *Assistant) client(ctx context.Context) (*llm.Client, store.AssistantSet
 	return llm.New(set.BaseURL, a.hooks.Key), set, nil
 }
 
-// Ready says whether a turn could start now.
-func (a *Assistant) Ready(ctx context.Context) error {
+// Ready says whether a turn on this engine could start now.
+func (a *Assistant) Ready(ctx context.Context, engine string) error {
+	if engine == "claude" {
+		set, err := a.store.AssistantSettings(ctx)
+		if err != nil {
+			return err
+		}
+		if !set.Enabled {
+			return ErrOff
+		}
+		_, err = a.sessionMachine(ctx)
+		return err
+	}
 	_, _, err := a.client(ctx)
 	return err
+}
+
+// sessionMachine is where Claude Code turns run: the master machine.
+func (a *Assistant) sessionMachine(ctx context.Context) (*store.Runner, error) {
+	rn, err := a.store.MasterRunner(ctx)
+	if err != nil {
+		return nil, ErrNoMachine
+	}
+	if rn.LastSeenAt != nil && !rn.Capabilities.Claude {
+		return nil, ErrNoMachine
+	}
+	return rn, nil
 }
 
 // Models lists the provider's models for the configured key.
@@ -89,11 +118,34 @@ func (a *Assistant) Models(ctx context.Context) []string {
 	return ids
 }
 
-// Start runs a turn for the chat in the background. It fails with
+// DefaultSettings are what a new chat starts with: the configured provider
+// model on DeepSeek.
+func (a *Assistant) DefaultSettings(ctx context.Context) store.ChatSettings {
+	set, _ := a.store.AssistantSettings(ctx)
+	return store.ChatSettings{Engine: "deepseek", Model: set.Model}
+}
+
+// Start runs a turn for the chat's newest user message. On DeepSeek the
+// server runs it in the background; on Claude Code it is a run on the
+// master machine and ends when that run does (FinishSession). It fails with
 // ErrConflict when a turn is already running.
 func (a *Assistant) Start(ctx context.Context, chatID int64, user *store.User) error {
-	if err := a.Ready(ctx); err != nil {
+	chat, err := a.store.ChatByID(ctx, chatID)
+	if err != nil {
 		return err
+	}
+	if err := a.Ready(ctx, chat.Engine); err != nil {
+		return err
+	}
+	msgs, err := a.store.ChatMessages(ctx, chatID, 0)
+	if err != nil {
+		return err
+	}
+	seq := 0
+	for _, m := range msgs {
+		if m.Role == "user" {
+			seq = m.Seq
+		}
 	}
 	ok, err := a.store.ClaimChat(ctx, chatID)
 	if err != nil {
@@ -102,6 +154,19 @@ func (a *Assistant) Start(ctx context.Context, chatID int64, user *store.User) e
 	if !ok {
 		return fmt.Errorf("%w: the assistant is still working on this chat", store.ErrConflict)
 	}
+	turn, err := a.store.CreateChatTurn(ctx, chatID, seq, chat.ChatSettings)
+	if err != nil {
+		_ = a.store.ReleaseChat(ctx, chatID, err.Error())
+		return err
+	}
+	if chat.Engine == "claude" {
+		if err := a.startSession(ctx, chat, turn, msgs, user); err != nil {
+			a.end(chatID, turn.ID, err)
+			return err
+		}
+		return nil
+	}
+
 	tctx, cancel := context.WithTimeout(context.Background(), turnTimeout)
 	a.mu.Lock()
 	a.cancels[chatID] = cancel
@@ -113,54 +178,88 @@ func (a *Assistant) Start(ctx context.Context, chatID int64, user *store.User) e
 			a.mu.Unlock()
 			cancel()
 		}()
-		err := a.turn(tctx, chatID, user)
-		msg := ""
-		switch {
-		case err == nil:
-		case errors.Is(err, context.Canceled):
-			msg = "stopped"
-		case errors.Is(err, context.DeadlineExceeded):
-			msg = "the turn took too long and was stopped"
-		default:
-			msg = err.Error()
-			slog.Warn("assistant turn failed", "chat", chatID, "err", err)
-		}
-		if err := a.store.ReleaseChat(context.Background(), chatID, msg); err != nil {
-			slog.Error("assistant: release chat", "chat", chatID, "err", err)
-		}
+		a.end(chatID, turn.ID, a.turn(tctx, chat, turn, user))
 	}()
 	return nil
 }
 
-// Stop cancels a running turn (a no-op when none runs).
-func (a *Assistant) Stop(chatID int64) {
+// end records how a turn ended and frees the chat.
+func (a *Assistant) end(chatID, turnID int64, err error) {
+	ctx := context.Background()
+	status, msg := "done", ""
+	switch {
+	case err == nil:
+	case errors.Is(err, context.Canceled):
+		status, msg = "stopped", "stopped"
+	case errors.Is(err, context.DeadlineExceeded):
+		status, msg = "failed", "the turn took too long and was stopped"
+	default:
+		status, msg = "failed", err.Error()
+		slog.Warn("assistant turn failed", "chat", chatID, "err", err)
+	}
+	if _, err := a.store.FinishChatTurn(ctx, turnID, status, msg); err != nil {
+		slog.Error("assistant: finish turn", "chat", chatID, "err", err)
+	}
+	if err := a.store.ReleaseChat(ctx, chatID, msg); err != nil {
+		slog.Error("assistant: release chat", "chat", chatID, "err", err)
+	}
+}
+
+// Stop cancels a running turn (a no-op when none runs). A Claude Code
+// turn's run is cancelled; the turn ends when the machine says it stopped.
+func (a *Assistant) Stop(ctx context.Context, chatID int64) {
 	a.mu.Lock()
 	cancel := a.cancels[chatID]
 	a.mu.Unlock()
 	if cancel != nil {
 		cancel()
+		return
+	}
+	turn, err := a.store.RunningChatTurn(ctx, chatID)
+	if err != nil || turn.RunID == nil {
+		return
+	}
+	if run, err := a.store.CancelRun(ctx, *turn.RunID); err == nil && run.Status == "cancelled" {
+		a.FinishSession(ctx, run) // it never started: nothing will report back
 	}
 }
 
-func (a *Assistant) turn(ctx context.Context, chatID int64, user *store.User) error {
+type turnKey struct{}
+
+// turn is one DeepSeek-engine turn: call the model, run the tools it asks
+// for, repeat until it answers. Every API call it makes (the model's, and
+// Jev's when a delegated run is routed) is metered into the turn's usage.
+func (a *Assistant) turn(ctx context.Context, chat *store.Chat, turn *store.ChatTurn, user *store.User) error {
 	client, set, err := a.client(ctx)
 	if err != nil {
 		return err
 	}
+	model := turn.Model
+	if model == "" {
+		model = set.Model
+	}
+	meter := usage.NewMeter()
+	ctx = usage.WithMeter(context.WithValue(ctx, turnKey{}, turn.ID), meter)
+	defer func() { _ = a.store.SetChatTurnUsage(context.Background(), turn.ID, meter.Entries()) }()
+	api := apiName(set.BaseURL)
 	tools := toolDefs()
 	for step := 0; step < maxSteps; step++ {
-		history, err := a.store.ChatMessages(ctx, chatID, 0)
+		history, err := a.store.ChatMessages(ctx, chat.ID, 0)
 		if err != nil {
 			return err
 		}
-		msg, usage, err := client.Chat(ctx, set.Model, a.conversation(user, history), tools)
+		msg, u, err := client.Chat(ctx, model, turn.Effort, a.conversation(user, history), tools)
 		if err != nil {
 			return err
 		}
-		_ = a.store.AddChatUsage(ctx, chatID, store.ChatUsage{InputTokens: usage.InputTokens,
-			OutputTokens: usage.OutputTokens, CachedTokens: usage.CachedTokens})
+		miss := int64(u.InputTokens - u.CachedTokens)
+		meter.Add(usage.Entry{API: api, Model: model, Calls: 1, InputTokens: miss, CachedTokens: int64(u.CachedTokens),
+			OutputTokens: int64(u.OutputTokens), CostUSD: usage.DeepSeekCost(model, miss, int64(u.CachedTokens), int64(u.OutputTokens), time.Now())})
+		_ = a.store.SetChatTurnUsage(ctx, turn.ID, meter.Entries())
+		_ = a.store.AddChatUsage(ctx, chat.ID, store.ChatUsage{InputTokens: u.InputTokens,
+			OutputTokens: u.OutputTokens, CachedTokens: u.CachedTokens})
 
-		stored := store.ChatMessage{Role: "assistant", Content: msg.Content}
+		stored := store.ChatMessage{Role: "assistant", Content: msg.Content, Reasoning: msg.ReasoningContent}
 		for _, tc := range msg.ToolCalls {
 			args := json.RawMessage(tc.Function.Arguments)
 			if !json.Valid(args) {
@@ -168,7 +267,7 @@ func (a *Assistant) turn(ctx context.Context, chatID int64, user *store.User) er
 			}
 			stored.ToolCalls = append(stored.ToolCalls, store.ChatToolCall{ID: tc.ID, Name: tc.Function.Name, Arguments: args})
 		}
-		if _, err := a.store.AppendChatMessage(ctx, chatID, stored); err != nil {
+		if _, err := a.store.AppendChatMessage(ctx, chat.ID, stored); err != nil {
 			return err
 		}
 		if len(msg.ToolCalls) == 0 {
@@ -187,7 +286,7 @@ func (a *Assistant) turn(ctx context.Context, chatID int64, user *store.User) er
 			}
 			raw, _ := json.Marshal(result)
 			out.Result = raw
-			if _, err := a.store.AppendChatMessage(ctx, chatID, out); err != nil {
+			if _, err := a.store.AppendChatMessage(ctx, chat.ID, out); err != nil {
 				return err
 			}
 		}
@@ -195,9 +294,22 @@ func (a *Assistant) turn(ctx context.Context, chatID int64, user *store.User) er
 	return fmt.Errorf("stopped after %d steps without a final answer", maxSteps)
 }
 
+// apiName names a provider for the bill: "deepseek" for DeepSeek, else its host.
+func apiName(baseURL string) string {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Hostname() == "" {
+		return "llm"
+	}
+	if strings.HasSuffix(u.Hostname(), "deepseek.com") {
+		return "deepseek"
+	}
+	return u.Hostname()
+}
+
 // conversation is what the model sees: the system prompt and the stored
 // chat, with older tool results cut short (the recent ones matter; the old
-// ones mostly cost tokens).
+// ones mostly cost tokens). DeepSeek's reasoning goes back with each of its
+// messages, as its thinking mode requires.
 func (a *Assistant) conversation(user *store.User, history []store.ChatMessage) []llm.Message {
 	out := []llm.Message{{Role: "system", Content: systemPrompt(user, a.store.PublicURL)}}
 	recentFrom := len(history) - 8
@@ -206,7 +318,7 @@ func (a *Assistant) conversation(user *store.User, history []store.ChatMessage) 
 		case "user":
 			out = append(out, llm.Message{Role: "user", Content: m.Content})
 		case "assistant":
-			msg := llm.Message{Role: "assistant", Content: m.Content}
+			msg := llm.Message{Role: "assistant", Content: m.Content, ReasoningContent: m.Reasoning}
 			for _, tc := range m.ToolCalls {
 				var c llm.ToolCall
 				c.ID, c.Type = tc.ID, "function"

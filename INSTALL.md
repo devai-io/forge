@@ -219,7 +219,15 @@ or on the server:
 forge assistant set-key < key.txt            # stored sealed in the vault
 forge assistant model deepseek-flash          # optional: model [base-url]
 forge assistant on
+forge assistant ask "What needs my attention today?"   # one turn from the shell, with what it spent
 ```
+
+Each chat picks its engine above the message box: **DeepSeek API** (the agent
+loop on the server, with a model and thinking effort) or **Claude Code** (a
+session on the master machine, on that machine's Claude login, with a model
+and effort; read-only unless "Can edit files" is on). Under every answer, the
+turn's spend: the chat model's calls, Jev's, the Claude Code session's tokens
+(at API prices), and each run it queued.
 
 ### 2d′. Claude Code and your tasks
 

@@ -306,7 +306,7 @@ capabilities. The repo must have a `path`.
 | POST | /api/runner/heartbeat | `{hostname, os, version, capabilities: RunnerCapabilities, running: number[]}` | `{runner_id, cancel: number[] /* run ids to kill */, repos: [{id, project_key, name, path, default_branch}]}` |
 | POST | /api/runner/claim | – | long-poll up to 25 s: `200 {run: Run, engine}` (now `running`; see *Agent engine*) or `204` |
 | POST | /api/runner/runs/{id}/events | `{events: [{kind, data}]}` | `204` (seq assigned server-side, in order) |
-| POST | /api/runner/runs/{id}/finish | `{status: "succeeded"|"failed"|"cancelled", exit_code?, session_id?, result?, error?, cost_usd?, num_turns?, duration_ms?}` | `204` |
+| POST | /api/runner/runs/{id}/finish | `{status: "succeeded"|"failed"|"cancelled", exit_code?, session_id?, result?, error?, cost_usd?, num_turns?, duration_ms?, usage?}` | `204` — `usage`: Claude Code's `modelUsage`, stored on the run |
 | POST | /api/runner/repos | `{repos: [{repo_id, branch, dirty, ahead, behind, head, commits_7d, last_commit_at, error}]}` | `204` |
 
 A runner only ever sees runs addressed to it. Runs stuck `running` on a runner
@@ -765,7 +765,10 @@ type Engine = "deepseek" | "claude";
 type EngineSettings = { default: Engine; model: string; heavy_model: string };
 // defaults: "deepseek", "deepseek-flash", "deepseek-v4-pro"
 type EngineStatus = { settings: EngineSettings; deepseek_key: boolean };
-type Run = { /* … */ engine: Engine | "" };   // "" for command runs
+type Run = { /* … */ engine: Engine | "";     // "" for command runs
+              effort: string;                // claude --effort, "" = default
+              chat_turn_id: number | null;   // the Assistant turn that queued it
+              usage: Record<string, unknown> }; // Claude Code's modelUsage
 type RunInput = { /* … */ engine?: Engine };  // omitted = settings.default
 ```
 
@@ -874,6 +877,39 @@ type AssistantStatus = {
   settings: AssistantSettings;
   key_configured: boolean;       // the key itself is never returned
   models: string[];              // models the provider lists for this key ([] if unknown/unreachable)
+  engines: {
+    deepseek: { available: boolean; models: string[]; efforts: string[] };  // efforts: off|low|high|max
+    claude: { available: boolean; machine: string; online: boolean | null; reason: string;
+              models: string[]; efforts: string[] };                        // efforts: low|medium|high|xhigh|max
+  };
+};
+// What answers a chat, per chat (changeable any time; applies from the next turn).
+type ChatSettings = {
+  engine: "deepseek" | "claude"; // the DeepSeek API loop on the server | a Claude Code session on the master
+  model: string;                 // "" = default (AssistantSettings.model | Claude Code's own)
+  effort: string;                // "" = default; deepseek: off|low|high|max (thinking off / reasoning_effort)
+  edits: boolean;                // claude: acceptEdits instead of plan
+};
+type UsageEntry = {                // one line of a turn's bill
+  api: string;                     // "deepseek" | "jev" | "claude-code" | the provider's host
+  model: string; calls: number;
+  input_tokens: number;            // not from cache
+  cached_tokens: number; output_tokens: number;
+  cost_usd: number | null;         // null: no public price. DeepSeek: list price (peak hours ×2);
+                                   // Jev: $0.42/M input (smallest pack); claude-code: Claude Code's figure at API
+                                   // prices (the session runs on the machine's Claude login)
+  note?: string;
+};
+type ChatTurn = {                  // one user message's processing
+  id: number; chat_id: number;
+  seq: number;                     // the user message that started it
+  engine: string; model: string; effort: string;
+  status: "running" | "done" | "failed" | "stopped";
+  error: string;
+  usage: UsageEntry[];             // its own API calls (the chat model's, Jev's), live while running
+  run_id: number | null;           // claude: the session run
+  started_at: string; finished_at: string | null;
+  runs: Run[];                     // runs it queued (their cost_usd arrives as they finish) + its session run
 };
 type ChatUsage = { input_tokens: number; output_tokens: number; cached_tokens: number };
 type Chat = {
@@ -884,7 +920,7 @@ type Chat = {
   usage: ChatUsage;       // totals for the chat
   created_at: string;
   updated_at: string;
-};
+} & ChatSettings;
 type ChatToolCall = { id: string; name: string; arguments: Record<string, unknown> };
 type ChatMessage = {
   seq: number;                              // increasing per chat, starts at 1
@@ -905,14 +941,29 @@ type ChatMessage = {
 | PATCH | /api/assistant | `Partial<AssistantSettings>` | `AssistantStatus` |
 | PUT | /api/assistant/key | `{api_key}` | `AssistantStatus` (elevation; creates/updates the vault item) |
 | GET | /api/chats | – | `{chats: Chat[]}`, newest first |
-| POST | /api/chats | `{content}` | `201 {chat, messages}` — the chat with its first user message; the agent starts (`busy: true`) |
-| GET | /api/chats/{id}?after=N | – | `{chat, messages}` — only messages with `seq > N` (no `after` → all) |
-| POST | /api/chats/{id}/messages | `{content}` | `{chat, messages}` (the new user message); `409 busy` while the agent is still on this chat |
-| POST | /api/chats/{id}/stop | – | `{chat}` — cancels the running turn |
-| PATCH | /api/chats/{id} | `{title}` | `{chat}` |
+| POST | /api/chats | `{content, ...Partial<ChatSettings>}` | `201 {chat, messages, turns}` — the chat with its first user message; the agent starts (`busy: true`) |
+| GET | /api/chats/{id}?after=N | – | `{chat, messages, turns}` — only messages with `seq > N` (no `after` → all); `turns` always whole |
+| POST | /api/chats/{id}/messages | `{content, ...Partial<ChatSettings>}` | `{chat, messages, turns}` (the new user message); `409 busy` while the agent is still on this chat |
+| POST | /api/chats/{id}/stop | – | `{chat}` — cancels the running turn (claude: cancels its run) |
+| PATCH | /api/chats/{id} | `{title?, ...Partial<ChatSettings>}` | `{chat}` — changing `engine` resets `model` and `effort` |
 | DELETE | /api/chats/{id} | – | `204` |
 
-- `503 assistant_off` when the assistant is not enabled or has no key.
+- `503 assistant_off` when the assistant is not enabled, or (deepseek) has no key;
+  `503 no_machine` (claude) without a master machine that has Claude Code. A
+  bad engine/model/effort → `422`.
+- **Claude Code turns** (`engine: "claude"`): each turn is an agent run on the
+  master machine, with no repo (`repo_id` 0, not listed by `GET /api/runs`), in
+  the machine's first allowed root, `chat_turn_id` set. The first turn starts a
+  session; later ones resume the chat's latest session run (`resume_run_id`),
+  and turns another engine answered in between are handed over as a transcript.
+  The claim answer carries `assistant: {append_system}` (the chat's
+  instructions); the agent adds `--append-system-prompt` and
+  `--allowedTools mcp__forge` (Forge's MCP tools; nothing else is widened). When
+  the run finishes (or is found finished on a poll), its `result` becomes the
+  assistant message and its `usage` (Claude Code's `modelUsage`) the turn's.
+  A server restart does not end a Claude Code turn; it does end a DeepSeek one.
+- DeepSeek turns send `reasoning_content` back on every earlier assistant
+  message (required by its thinking mode with tools).
 - The web app polls `GET /api/chats/{id}?after=<last seq it holds>` every 1.5 s
   while `chat.busy` and stops when it is false — so every message of a turn
   must be stored before `busy` flips to false. Messages are not expected to
