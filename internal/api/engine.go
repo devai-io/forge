@@ -96,7 +96,15 @@ func (s *Server) engineStatus(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	k, _ := s.deepseekKey(ctx)
-	return map[string]any{"settings": set, "deepseek_key": k != ""}, nil
+	deepseek := []string{}
+	for _, m := range append([]string{set.Model, set.HeavyModel}, store.DeepSeekModels...) {
+		if m != "" && !store.OneOf(m, deepseek) {
+			deepseek = append(deepseek, m)
+		}
+	}
+	return map[string]any{"settings": set, "deepseek_key": k != "",
+		"models":  map[string]any{"deepseek": deepseek, "claude": store.ClaudeModels},
+		"efforts": store.ClaudeEfforts}, nil
 }
 
 func (s *Server) getEngine(w http.ResponseWriter, r *http.Request, u *store.User) {

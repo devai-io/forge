@@ -177,6 +177,49 @@ describe("NewRunDialog confirm-commands", () => {
     await waitFor(() => expect(posted).toHaveLength(1));
     expect(posted[0]).toMatchObject({ kind: "command", command: "publish-android", repo_id: 11, runner_id: 1, confirmed: true });
   });
+
+  it("offers each engine's models and the effort levels for an agent run", async () => {
+    const posted: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      routeFetch({
+        "POST /runs": (init) => {
+          posted.push(JSON.parse(String(init.body)));
+          return jsonResponse(201, { id: 99, runner_name: "desktop" });
+        },
+      }),
+    );
+    const qc = testClient();
+    qc.setQueryData(["runners"], [runner]);
+    qc.setQueryData(["projects", { includeArchived: false }], [project]);
+    qc.setQueryData(["project", "SHOP"], detail);
+    qc.setQueryData(["tasks", { project: "SHOP", open: true }], []);
+    qc.setQueryData(["engine"], {
+      settings: { default: "deepseek", model: "deepseek-flash", heavy_model: "deepseek-v4-pro" },
+      deepseek_key: true,
+      models: { deepseek: ["deepseek-flash", "deepseek-v4-pro"], claude: ["claude-opus-5-5", "claude-sonnet-5-5"] },
+      efforts: ["low", "medium", "high", "xhigh", "max"],
+    });
+    renderWithProviders(<NewRunDialog prefill={{ project_key: "SHOP" }} onClose={() => {}} />, { qc });
+    const user = userEvent.setup();
+    const values = (label: string) => Array.from((screen.getByLabelText(label) as HTMLSelectElement).options).map((o) => o.value);
+
+    expect(values("Model")).toEqual(["", "deepseek-flash", "deepseek-v4-pro", "__custom__"]);
+    await user.selectOptions(screen.getByLabelText("Engine"), "claude");
+    expect(values("Model")).toEqual(["", "claude-opus-5-5", "claude-sonnet-5-5", "__custom__"]);
+    expect(values("Effort")).toEqual(["", "low", "medium", "high", "xhigh", "max"]);
+    await user.selectOptions(screen.getByLabelText("Model"), "claude-opus-5-5");
+    await user.selectOptions(screen.getByLabelText("Effort"), "xhigh");
+    await user.type(screen.getByLabelText("Prompt"), "Fix the flaky test");
+    await user.click(screen.getByRole("button", { name: "Queue run" }));
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0]).toMatchObject({ kind: "agent", engine: "claude", model: "claude-opus-5-5", effort: "xhigh" });
+
+    // "Other…" takes a typed id.
+    await user.selectOptions(screen.getByLabelText("Model"), "__custom__");
+    await user.type(screen.getByLabelText("Model id"), "claude-opus-4-1");
+    expect(screen.getByLabelText("Model id")).toHaveValue("claude-opus-4-1");
+  });
 });
 
 describe("Two-factor setup", () => {

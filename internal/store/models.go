@@ -417,6 +417,12 @@ var (
 	RunnerRoles     = []string{"master", "ios", "worker"}
 	Engines         = []string{"deepseek", "claude"}
 	ClaudeEfforts   = []string{"low", "medium", "high", "xhigh", "max"}
+	// ClaudeModels are the models the web app offers for a Claude run (any
+	// other id Claude Code accepts can still be sent).
+	ClaudeModels = []string{"claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"}
+	// DeepSeekModels are the ones offered for a DeepSeek run, next to the
+	// engine settings' own model and heavy model.
+	DeepSeekModels = []string{"deepseek-flash", "deepseek-v4-pro"}
 )
 
 func OneOf(v string, allowed []string) bool {

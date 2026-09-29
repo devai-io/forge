@@ -133,7 +133,12 @@ function RunView({ run, events, loadingEvents }: { run: Run; events: RunEvent[] 
             ["Mode", run.kind === "agent" ? run.permission_mode || "—" : "command"],
             [
               "Model",
-              [run.engine ? ENGINE_LABEL[run.engine] : "", run.model || "default", run.model_note].filter(Boolean).join(" · "),
+              [
+                run.engine ? ENGINE_LABEL[run.engine] : "",
+                run.model || "default",
+                run.effort ? `${run.effort} effort` : "",
+                run.model_note,
+              ].filter(Boolean).join(" · "),
             ],
             ["Worktree", run.worktree ? "yes" : "no"],
             // DeepSeek runs are priced by the machine from token counts: an estimate.

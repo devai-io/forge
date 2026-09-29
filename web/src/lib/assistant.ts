@@ -244,14 +244,7 @@ export function usageLabel(usage: ChatUsage | null | undefined): string {
 
 export const ENGINE_NAME: Record<ChatEngine, string> = { deepseek: "DeepSeek API", claude: "Claude Code" };
 
-export const EFFORT_LABEL: Record<string, string> = {
-  off: "Thinking off",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "Extra high",
-  max: "Max",
-};
+export { EFFORT_LABEL } from "@/lib/agents";
 
 const API_NAME: Record<string, string> = { deepseek: "DeepSeek API", jev: "Jev", "claude-code": "Claude Code" };
 export const apiName = (api: string) => API_NAME[api] ?? api;

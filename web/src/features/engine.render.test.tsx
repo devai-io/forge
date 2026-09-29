@@ -9,6 +9,8 @@ afterEach(() => vi.unstubAllGlobals());
 const status = (over: Partial<EngineStatus> = {}): EngineStatus => ({
   settings: { default: "deepseek", model: "deepseek-flash", heavy_model: "deepseek-v4-pro" },
   deepseek_key: false,
+  models: { deepseek: ["deepseek-flash", "deepseek-v4-pro"], claude: ["claude-opus-5-5"] },
+  efforts: ["low", "medium", "high", "xhigh", "max"],
   ...over,
 });
 

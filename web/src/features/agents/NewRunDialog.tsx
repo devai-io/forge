@@ -1,7 +1,9 @@
 // Queue an agent (Claude Code) or a named command on a runner.
 //
 // An agent run uses the server's default engine (normally DeepSeek) unless
-// Claude is picked here explicitly; a continued run keeps its engine.
+// Claude is picked here explicitly; a continued run keeps its engine. Model
+// and effort come from what the server offers for that engine (or a model id
+// typed in by hand).
 //
 // The runner decides what it will accept: permission modes and commands come
 // from its advertised capabilities, so this form can only offer what the
@@ -19,7 +21,9 @@ import { Field, Input, Select, Switch, Textarea } from "@/components/ui/Input";
 import { Segmented } from "@/components/ui/Tabs";
 import { useToast } from "@/components/ui/Toast";
 import type { NewRunPrefill } from "@/features/shell/context";
-import { commandOptions, defaultRunner, ENGINE_LABEL, PERMISSION_MODE_HELP, runnerForCommand } from "@/lib/agents";
+import { commandOptions, defaultRunner, EFFORT_LABEL, ENGINE_LABEL, PERMISSION_MODE_HELP, runnerForCommand } from "@/lib/agents";
+
+const CUSTOM_MODEL = "__custom__"; // the model select's "Other…": type an id
 
 export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onClose: () => void }) {
   const toast = useToast();
@@ -41,9 +45,15 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   const [mode, setMode] = useState(resume?.permission_mode || "plan");
   const [worktree, setWorktree] = useState(resume?.worktree ?? false);
   const [model, setModel] = useState(resume?.model ?? "");
+  const [customModel, setCustomModel] = useState(false);
+  const [effort, setEffort] = useState(resume?.effort ?? "");
   // "" = the server's default engine.
   const [engine, setEngine] = useState<Engine | "">("");
   const defaultEngine = engineStatus.data?.settings.default ?? "deepseek";
+  const runEngine: Engine = resume ? resume.engine || "claude" : engine || defaultEngine;
+  const models = [...(engineStatus.data?.models?.[runEngine] ?? [])];
+  if (model && !customModel && !models.includes(model)) models.unshift(model);
+  const efforts = engineStatus.data?.efforts ?? [];
   const [confirmText, setConfirmText] = useState("");
   const [taskId, setTaskId] = useState<string>(
     resume?.task_id ? String(resume.task_id) : prefill.task_id ? String(prefill.task_id) : "",
@@ -96,6 +106,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
         permission_mode: kind === "agent" || resume ? effectiveMode : undefined,
         model: model.trim() || undefined,
         engine: kind === "agent" && !resume && engine ? engine : undefined,
+        effort: kind === "agent" || resume ? effort || undefined : undefined,
         worktree: kind === "agent" ? worktree : false,
         task_id: taskId ? Number(taskId) : null,
         resume_run_id: resume?.id ?? null,
@@ -222,7 +233,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                 />
               )}
             </Field>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field
                 label="Engine"
                 hint={
@@ -242,6 +253,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                     onChange={(e) => {
                       setEngine(e.target.value as Engine | "");
                       setModel("");
+                      setCustomModel(false);
                     }}
                   >
                     {resume ? (
@@ -267,9 +279,51 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                   </Select>
                 )}
               </Field>
-              <Field label="Model" hint="Empty = Forge picks (Jev) or the default">
+              <Field label="Model" hint="Default = Forge picks (Jev) or the engine's default.">
                 {(id, desc) => (
-                  <Input id={id} aria-describedby={desc} value={model} onChange={(e) => setModel(e.target.value)} placeholder="default" />
+                  <div className="space-y-2">
+                    <Select
+                      id={id}
+                      aria-describedby={desc}
+                      value={customModel ? CUSTOM_MODEL : model}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setCustomModel(v === CUSTOM_MODEL);
+                        setModel(v === CUSTOM_MODEL ? "" : v);
+                      }}
+                    >
+                      <option value="">Default</option>
+                      {models.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                      <option value={CUSTOM_MODEL}>Other…</option>
+                    </Select>
+                    {customModel ? (
+                      <Input
+                        aria-label="Model id"
+                        value={model}
+                        onChange={(e) => setModel(e.target.value)}
+                        placeholder="model id"
+                        autoComplete="off"
+                        spellCheck={false}
+                        className="font-mono"
+                      />
+                    ) : null}
+                  </div>
+                )}
+              </Field>
+              <Field label="Effort" hint="How hard it thinks (claude --effort).">
+                {(id, desc) => (
+                  <Select id={id} aria-describedby={desc} value={effort} onChange={(e) => setEffort(e.target.value)}>
+                    <option value="">Default</option>
+                    {efforts.map((e) => (
+                      <option key={e} value={e}>
+                        {EFFORT_LABEL[e] ?? e}
+                      </option>
+                    ))}
+                  </Select>
                 )}
               </Field>
             </div>

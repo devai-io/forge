@@ -302,6 +302,7 @@ export type Run = {
   model: string;
   model_note: string; // why Forge chose the model ("Jev: …"), else ""
   engine: Engine | ""; // agent runs: the backend Claude Code talks to; "" for commands
+  effort: string; // claude --effort, "" = default
   worktree: boolean;
   resume_run_id: number | null;
   status: RunStatus;
@@ -568,6 +569,7 @@ export type RunInput = {
   resume_run_id?: number | null;
   confirmed?: boolean;
   engine?: Engine; // omitted = the server's default (Settings → Agent engine)
+  effort?: string; // claude --effort, one of EngineStatus.efforts; omitted = default
 };
 
 export type TaskFilters = {
@@ -746,7 +748,12 @@ export type EngineSettings = {
   heavy_model: string; // DeepSeek model when Jev judges a task heavy
 };
 
-export type EngineStatus = { settings: EngineSettings; deepseek_key: boolean };
+export type EngineStatus = {
+  settings: EngineSettings;
+  deepseek_key: boolean;
+  models: Record<Engine, string[]>; // what the run form offers per engine
+  efforts: string[]; // claude --effort values
+};
 
 // ── Jev (token saving) ────────────────────────────────────────────────────
 

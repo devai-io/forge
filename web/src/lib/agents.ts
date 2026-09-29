@@ -29,6 +29,16 @@ export function runnerConfigSnippet(origin: string, token: string): string {
 
 export const ENGINE_LABEL: Record<Engine, string> = { deepseek: "DeepSeek", claude: "Claude" };
 
+/** Effort levels (claude --effort; the Assistant's DeepSeek loop adds "off"). */
+export const EFFORT_LABEL: Record<string, string> = {
+  off: "Thinking off",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+  max: "Max",
+};
+
 export const PERMISSION_MODE_HELP: Record<string, string> = {
   plan: "Read-only: explores and proposes a plan, changes nothing.",
   acceptEdits: "May edit files; shell commands that need approval are denied.",

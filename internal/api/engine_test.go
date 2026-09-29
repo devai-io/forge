@@ -51,6 +51,26 @@ func TestAgentRunsDefaultToDeepSeek(t *testing.T) {
 	}
 	expect(t, "unknown engine", h.do("POST", "/api/runs", map[string]any{"runner_id": created.Runner.ID, "repo_id": repoID,
 		"kind": "agent", "prompt": "hi", "engine": "gpt"}, nil), 422)
+	// A picked model and effort are kept, on either engine.
+	if run := queue(map[string]any{"engine": "claude", "model": "claude-opus-5-5", "effort": "xhigh"}); run.Model != "claude-opus-5-5" || run.Effort != "xhigh" {
+		t.Fatalf("claude model+effort: %+v", run)
+	}
+	if run := queue(map[string]any{"engine": "deepseek", "model": "deepseek-v4-pro", "effort": "high"}); run.Model != "deepseek-v4-pro" || run.Effort != "high" {
+		t.Fatalf("deepseek model+effort: %+v", run)
+	}
+	expect(t, "bad effort", h.do("POST", "/api/runs", map[string]any{"runner_id": created.Runner.ID, "repo_id": repoID,
+		"kind": "agent", "prompt": "hi", "effort": "extreme"}, nil), 422)
+
+	// The run form's choices: each engine's models, and the efforts.
+	var offered struct {
+		Models  map[string][]string
+		Efforts []string
+	}
+	expect(t, "engine status", h.do("GET", "/api/engine", nil, &offered), 200)
+	if !store.OneOf("claude-opus-5-5", offered.Models["claude"]) || strings.Join(offered.Models["deepseek"], ",") != "deepseek-flash,deepseek-v4-pro" ||
+		!store.OneOf("max", offered.Efforts) {
+		t.Fatalf("offered = %+v", offered)
+	}
 
 	// A heavy task (Jev, confident) moves up to the heavy DeepSeek model.
 	srv, _ := fakeJev(t, "heavy", 0.9, 0.5, nil)

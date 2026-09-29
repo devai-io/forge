@@ -764,12 +764,15 @@ Anthropic-compatible API (`deepseek`). The DeepSeek key is the vault item tagged
 type Engine = "deepseek" | "claude";
 type EngineSettings = { default: Engine; model: string; heavy_model: string };
 // defaults: "deepseek", "deepseek-flash", "deepseek-v4-pro"
-type EngineStatus = { settings: EngineSettings; deepseek_key: boolean };
+type EngineStatus = { settings: EngineSettings; deepseek_key: boolean;
+  models: Record<Engine, string[]>;  // the run form's choices (any id Claude Code accepts may be sent)
+  efforts: string[] };               // claude --effort: low|medium|high|xhigh|max
 type Run = { /* … */ engine: Engine | "";     // "" for command runs
               effort: string;                // claude --effort, "" = default
               chat_turn_id: number | null;   // the Assistant turn that queued it
               usage: Record<string, unknown> }; // Claude Code's modelUsage
-type RunInput = { /* … */ engine?: Engine };  // omitted = settings.default
+type RunInput = { /* … */ engine?: Engine;   // omitted = settings.default
+                  effort?: string };          // one of EngineStatus.efforts, either engine; omitted = default
 ```
 
 - `GET /api/engine` → `EngineStatus`. `PATCH /api/engine` `Partial<EngineSettings>` → `EngineStatus`.
