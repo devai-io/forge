@@ -153,7 +153,7 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 		return finishReport{Status: "failed", Error: msg}
 	}
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--permission-mode", run.PermissionMode}
-	if run.Model != "" {
+	if run.Model != "" && run.Engine != "deepseek" { // DeepSeek's model goes in the env, with its 1M window
 		args = append(args, "--model", run.Model)
 	}
 	if run.ResumeSession != "" {
