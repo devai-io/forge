@@ -520,7 +520,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request, u *store.User
 	if !decode(w, r, &in) {
 		return
 	}
-	s.jevRoute(r.Context(), &in)
+	s.prepareRun(r.Context(), &in)
 	run, err := s.store.CreateRun(r.Context(), in)
 	if err != nil {
 		writeErr(w, r, err)

@@ -345,6 +345,9 @@ type Run struct {
 	ResumeSession string `json:"resume_session,omitempty"`
 	// ModelNote says why Model was chosen when Forge chose it ("Jev: …").
 	ModelNote string `json:"model_note"`
+	// Engine is the backend an agent run's Claude Code talks to ("claude" or
+	// "deepseek"); empty for command runs.
+	Engine string `json:"engine"`
 }
 
 type RunEvent struct {
@@ -402,6 +405,7 @@ var (
 	RunStatuses     = []string{"queued", "running", "succeeded", "failed", "cancelled"}
 	PermissionModes = []string{"plan", "acceptEdits", "auto", "dontAsk", "bypassPermissions"}
 	RunnerRoles     = []string{"master", "ios", "worker"}
+	Engines         = []string{"deepseek", "claude"}
 )
 
 func OneOf(v string, allowed []string) bool {

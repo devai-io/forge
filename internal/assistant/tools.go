@@ -72,14 +72,15 @@ func toolDefs() []llm.Tool {
 				"active":  prop("boolean", "Only queued/running ones"),
 				"limit":   prop("integer", "Default 10, max 50"),
 			})},
-		{Name: "delegate_to_claude", Description: "Queue a Claude Code session in a repo on one of the machines. Returns the run id; use wait_for_runs or get_run to follow it.",
+		{Name: "delegate_to_claude", Description: "Queue a Claude Code session in a repo on one of the machines. It runs on the default engine (DeepSeek, cheap) unless engine is set. Returns the run id; use wait_for_runs or get_run to follow it.",
 			Parameters: params([]string{"project", "repo", "prompt"}, object{
 				"project":         prop("string", "Project key"),
 				"repo":            prop("string", "Repo name within the project"),
 				"prompt":          prop("string", "Complete, self-contained instructions for Claude Code"),
 				"machine":         prop("string", "Machine name (optional; default the master)"),
 				"permission_mode": prop("string", "plan (read-only, default) | acceptEdits (may change files)"),
-				"model":           prop("string", "Claude model alias, e.g. sonnet or opus (optional; default chosen by Forge)"),
+				"engine":          prop("string", "deepseek | claude (optional; default Forge's setting, normally deepseek). Set claude ONLY when the user explicitly asked for Claude/Anthropic for this work"),
+				"model":           prop("string", "Model name (optional; default chosen by Forge — leave empty unless the user named one)"),
 				"worktree":        prop("boolean", "Work in an isolated git worktree/branch (recommended for changes)"),
 				"task_ref":        prop("string", "Link the run to this task (optional)"),
 			})},
@@ -104,6 +105,7 @@ func toolDefs() []llm.Tool {
 func (a *Assistant) call(ctx context.Context, user *store.User, name string, raw json.RawMessage) (any, string, error) {
 	var in struct {
 		Project, Repo, Prompt, Machine, PermissionMode, Model, TaskRef, Ref, Query, Status, Title string
+		Engine                                                                                    string
 		Description, Priority, Type, Body, Command                                                string
 		Worktree, Active                                                                          bool
 		Limit, RunID, MaxSeconds                                                                  int
@@ -137,6 +139,7 @@ func (a *Assistant) call(ctx context.Context, user *store.User, name string, raw
 	}
 	in.Project, in.Repo, in.Prompt, in.Machine = strings.ToUpper(str("project")), str("repo"), str("prompt"), str("machine")
 	in.PermissionMode, in.Model, in.TaskRef, in.Ref = str("permission_mode"), str("model"), strings.ToUpper(str("task_ref")), strings.ToUpper(str("ref"))
+	in.Engine = strings.ToLower(str("engine"))
 	in.Query, in.Status, in.Title, in.Description = str("query"), str("status"), str("title"), str("description")
 	in.Priority, in.Type, in.Body, in.Command = str("priority"), str("type"), str("body"), str("command")
 	in.Worktree, _ = loose["worktree"].(bool)
@@ -390,8 +393,13 @@ func (a *Assistant) call(ctx context.Context, user *store.User, name string, raw
 		if err != nil {
 			return nil, "", err
 		}
+		switch in.Engine {
+		case "", "deepseek", "claude":
+		default:
+			return nil, "", fmt.Errorf("engine must be deepseek or claude, not %q", in.Engine)
+		}
 		ri := store.RunInput{RunnerID: rn.ID, RepoID: repo.ID, Kind: "agent", Prompt: in.Prompt,
-			PermissionMode: mode, Model: in.Model, Worktree: in.Worktree}
+			PermissionMode: mode, Model: in.Model, Worktree: in.Worktree, Engine: in.Engine}
 		if in.TaskRef != "" {
 			t, err := a.store.TaskByRef(ctx, in.TaskRef)
 			if err != nil {
@@ -410,11 +418,11 @@ func (a *Assistant) call(ctx context.Context, user *store.User, name string, raw
 			a.hooks.Queued(run.RunnerID)
 		}
 		out := object{"run_id": run.ID, "machine": run.RunnerName, "project": run.ProjectKey, "repo": run.RepoName,
-			"permission_mode": run.PermissionMode, "model": run.Model, "model_note": run.ModelNote, "status": run.Status}
+			"permission_mode": run.PermissionMode, "engine": run.Engine, "model": run.Model, "model_note": run.ModelNote, "status": run.Status}
 		if !rn.Online {
 			out["note"] = rn.Name + " is offline; the run waits until it reconnects"
 		}
-		return out, fmt.Sprintf("Queued Claude Code run #%d on %s (%s/%s, %s)", run.ID, run.RunnerName, run.ProjectKey, run.RepoName, mode), nil
+		return out, fmt.Sprintf("Queued Claude Code run #%d on %s (%s/%s, %s, %s)", run.ID, run.RunnerName, run.ProjectKey, run.RepoName, mode, run.Engine), nil
 
 	case "run_command":
 		repo, err := a.repo(ctx, today, in.Project, in.Repo)

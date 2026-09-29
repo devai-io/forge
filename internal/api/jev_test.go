@@ -65,7 +65,7 @@ func TestJevRoutesRunsToCheaperModels(t *testing.T) {
 	queue := func(model string) store.Run {
 		var run store.Run
 		expect(t, "queue", h.do("POST", "/api/runs", map[string]any{"runner_id": created.Runner.ID, "repo_id": repoID,
-			"kind": "agent", "prompt": "What does the README say about deploys?", "model": model}, &run), 201)
+			"kind": "agent", "prompt": "What does the README say about deploys?", "model": model, "engine": "claude"}, &run), 201)
 		return run
 	}
 

@@ -282,6 +282,8 @@ export type Pairing = { code: string; expires_at: string };
 
 export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type RunKind = "agent" | "command";
+/** Where an agent run's Claude Code sends its requests. */
+export type Engine = "deepseek" | "claude";
 export type Run = {
   id: number;
   runner_id: number;
@@ -299,6 +301,7 @@ export type Run = {
   permission_mode: string;
   model: string;
   model_note: string; // why Forge chose the model ("Jev: …"), else ""
+  engine: Engine | ""; // agent runs: the backend Claude Code talks to; "" for commands
   worktree: boolean;
   resume_run_id: number | null;
   status: RunStatus;
@@ -564,6 +567,7 @@ export type RunInput = {
   task_id?: number | null;
   resume_run_id?: number | null;
   confirmed?: boolean;
+  engine?: Engine; // omitted = the server's default (Settings → Agent engine)
 };
 
 export type TaskFilters = {
@@ -674,7 +678,9 @@ export type SecurityKind =
   | "jev_settings"
   | "jev_key"
   | "assistant_settings"
-  | "assistant_key";
+  | "assistant_key"
+  | "engine_settings"
+  | "deepseek_key";
 
 export type SecurityEvent = {
   id: number;
@@ -731,6 +737,16 @@ export type SystemFacts = {
   checkup: { last_at: string | null; last_trigger: string | null; next_at: string; emailed_last: boolean };
   seeded_at: string | null;
 };
+
+// ── Agent engine ──────────────────────────────────────────────────────────
+
+export type EngineSettings = {
+  default: Engine; // used by runs that do not pick an engine
+  model: string; // DeepSeek model for ordinary runs
+  heavy_model: string; // DeepSeek model when Jev judges a task heavy
+};
+
+export type EngineStatus = { settings: EngineSettings; deepseek_key: boolean };
 
 // ── Jev (token saving) ────────────────────────────────────────────────────
 

@@ -228,7 +228,8 @@ func (r *Runner) claimLoop(ctx context.Context) {
 		case r.slots <- struct{}{}:
 		}
 		var resp struct {
-			Run claimedRun `json:"run"`
+			Run    claimedRun   `json:"run"`
+			Engine *engineSetup `json:"engine"`
 		}
 		got, err := r.client.post(ctx, "/api/runner/claim", nil, &resp)
 		if err != nil || !got {
@@ -244,6 +245,7 @@ func (r *Runner) claimLoop(ctx context.Context) {
 			continue
 		}
 		backoff = time.Second
+		resp.Run.Setup = resp.Engine
 		go r.handle(ctx, resp.Run)
 	}
 }

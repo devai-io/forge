@@ -63,6 +63,8 @@ import type {
   TaskFilters,
   TaskInput,
   User,
+  EngineSettings,
+  EngineStatus,
   JevSettings,
   JevStatus,
 } from "./types";
@@ -1042,6 +1044,32 @@ export function useSystemFacts(enabled = true) {
     queryFn: ({ signal }) => api.get<SystemFacts>("/system", undefined, signal),
     refetchInterval: 60_000,
     enabled,
+  });
+}
+
+// ── Agent engine ──────────────────────────────────────────────────────────
+
+export function useEngine() {
+  return useQuery({ queryKey: ["engine"], queryFn: () => api.get<EngineStatus>("/engine") });
+}
+
+export function useUpdateEngine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: Partial<EngineSettings>) => api.patch<EngineStatus>("/engine", patch),
+    onSuccess: (s) => qc.setQueryData(["engine"], s),
+  });
+}
+
+/** Stores the DeepSeek key agent runs use (needs a recent password confirmation). */
+export function useSetDeepseekKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (apiKey: string) => api.put<EngineStatus>("/engine/key", { api_key: apiKey }),
+    onSuccess: (s) => {
+      qc.setQueryData(["engine"], s);
+      void qc.invalidateQueries({ queryKey: ["vault"] });
+    },
   });
 }
 

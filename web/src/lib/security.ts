@@ -31,6 +31,8 @@ export const SECURITY_KINDS: Record<SecurityKind, KindMeta> = {
   jev_key: { label: "Jev API key replaced", tone: "warning", group: "sensitive" },
   assistant_settings: { label: "Assistant settings changed", tone: "neutral", group: "account" },
   assistant_key: { label: "Assistant API key replaced", tone: "warning", group: "sensitive" },
+  engine_settings: { label: "Agent engine settings changed", tone: "neutral", group: "account" },
+  deepseek_key: { label: "DeepSeek API key replaced", tone: "warning", group: "sensitive" },
   runner_rotated: { label: "Machine token rotated", tone: "neutral", group: "machines" },
 };
 

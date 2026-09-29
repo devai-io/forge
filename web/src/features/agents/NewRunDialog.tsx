@@ -1,5 +1,8 @@
 // Queue an agent (Claude Code) or a named command on a runner.
 //
+// An agent run uses the server's default engine (normally DeepSeek) unless
+// Claude is picked here explicitly; a continued run keeps its engine.
+//
 // The runner decides what it will accept: permission modes and commands come
 // from its advertised capabilities, so this form can only offer what the
 // machine on the other end has agreed to run. Continuing a run (resume) copies
@@ -8,15 +11,15 @@
 import { ShieldAlert, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useCreateRun, useProject, useProjects, useRunners, useTasks } from "@/api/hooks";
-import type { RunKind } from "@/api/types";
+import { useCreateRun, useEngine, useProject, useProjects, useRunners, useTasks } from "@/api/hooks";
+import type { Engine, RunKind } from "@/api/types";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { Field, Input, Select, Switch, Textarea } from "@/components/ui/Input";
 import { Segmented } from "@/components/ui/Tabs";
 import { useToast } from "@/components/ui/Toast";
 import type { NewRunPrefill } from "@/features/shell/context";
-import { commandOptions, defaultRunner, PERMISSION_MODE_HELP, runnerForCommand } from "@/lib/agents";
+import { commandOptions, defaultRunner, ENGINE_LABEL, PERMISSION_MODE_HELP, runnerForCommand } from "@/lib/agents";
 
 export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onClose: () => void }) {
   const toast = useToast();
@@ -24,6 +27,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   const create = useCreateRun();
   const runners = useRunners(false);
   const projects = useProjects();
+  const engineStatus = useEngine();
   const resume = prefill.resume;
 
   const [runnerId, setRunnerId] = useState<string>(resume ? String(resume.runner_id) : "");
@@ -37,6 +41,9 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   const [mode, setMode] = useState(resume?.permission_mode || "plan");
   const [worktree, setWorktree] = useState(resume?.worktree ?? false);
   const [model, setModel] = useState(resume?.model ?? "");
+  // "" = the server's default engine.
+  const [engine, setEngine] = useState<Engine | "">("");
+  const defaultEngine = engineStatus.data?.settings.default ?? "deepseek";
   const [confirmText, setConfirmText] = useState("");
   const [taskId, setTaskId] = useState<string>(
     resume?.task_id ? String(resume.task_id) : prefill.task_id ? String(prefill.task_id) : "",
@@ -88,6 +95,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
         confirmed: needsConfirm ? confirmed : undefined,
         permission_mode: kind === "agent" || resume ? effectiveMode : undefined,
         model: model.trim() || undefined,
+        engine: kind === "agent" && !resume && engine ? engine : undefined,
         worktree: kind === "agent" ? worktree : false,
         task_id: taskId ? Number(taskId) : null,
         resume_run_id: resume?.id ?? null,
@@ -188,7 +196,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
               value={kind}
               onChange={setKind}
               items={[
-                { value: "agent", label: "Claude agent" },
+                { value: "agent", label: "Agent" },
                 { value: "command", label: "Command" },
               ]}
             />
@@ -214,7 +222,40 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                 />
               )}
             </Field>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <Field
+                label="Engine"
+                hint={
+                  resume
+                    ? "A continued run keeps its engine."
+                    : (engine || defaultEngine) === "claude"
+                      ? "Anthropic — costs more."
+                      : "DeepSeek — the cheap default."
+                }
+              >
+                {(id, desc) => (
+                  <Select
+                    id={id}
+                    aria-describedby={desc}
+                    value={resume ? resume.engine || "claude" : engine}
+                    disabled={!!resume}
+                    onChange={(e) => {
+                      setEngine(e.target.value as Engine | "");
+                      setModel("");
+                    }}
+                  >
+                    {resume ? (
+                      <option value={resume.engine || "claude"}>{ENGINE_LABEL[resume.engine || "claude"]}</option>
+                    ) : (
+                      <>
+                        <option value="">Default ({ENGINE_LABEL[defaultEngine]})</option>
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="claude">Claude (Anthropic)</option>
+                      </>
+                    )}
+                  </Select>
+                )}
+              </Field>
               <Field label="Permission mode" hint={PERMISSION_MODE_HELP[effectiveMode] ?? ""}>
                 {(id, desc) => (
                   <Select id={id} aria-describedby={desc} value={effectiveMode} onChange={(e) => setMode(e.target.value)}>
@@ -226,7 +267,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                   </Select>
                 )}
               </Field>
-              <Field label="Model" hint="Empty = the runner's default">
+              <Field label="Model" hint="Empty = Forge picks (Jev) or the default">
                 {(id, desc) => (
                   <Input id={id} aria-describedby={desc} value={model} onChange={(e) => setModel(e.target.value)} placeholder="default" />
                 )}

@@ -29,6 +29,7 @@ import { timezoneOptions } from "@/lib/setup";
 import { groupSecret } from "@/lib/vault";
 import { AccentPicker } from "./AccentPicker";
 import { AssistantPanel } from "./AssistantPanel";
+import { EnginePanel } from "./EnginePanel";
 import { TokenSavingPanel } from "./TokenSaving";
 import { RevokeOthersButton, SecurityLogPanel } from "./SecurityLog";
 
@@ -41,6 +42,7 @@ export function SettingsPage() {
       <PasswordPanel />
       <TwoFactorPanel />
       <CheckupPanel />
+      <EnginePanel />
       <TokenSavingPanel />
       <AssistantPanel />
       <AppearancePanel />

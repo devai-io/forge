@@ -32,8 +32,12 @@ One binary, one SQLite file, one folder. MIT licensed.
 - **Assistant (optional)** — a chat backed by any OpenAI-compatible model
   (DeepSeek by default) that reads and updates your projects and tasks and
   delegates real work to Claude Code on your machines, then reports back.
-- **Token saving (optional)** — with a TypeSafe key, Jev picks cheaper models for
-  light agent runs, trims the context Claude sessions start with, and compacts long
+- **Agent engine** — agent runs drive Claude Code against DeepSeek's
+  Anthropic-compatible API by default (with a DeepSeek key), at a fraction of the
+  price; pick Claude per run, or make it the default.
+- **Token saving (optional)** — with a TypeSafe key, Jev picks the model for
+  agent runs (DeepSeek's heavy model only for heavy tasks; Haiku/Sonnet for light
+  Claude runs), trims the context Claude sessions start with, and compacts long
   Claude Code sessions on every machine.
 - **Security** — password + optional TOTP, step-up confirmation for sensitive
   actions, security log, new-device sign-in e-mails.

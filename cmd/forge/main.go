@@ -54,6 +54,9 @@ Server (workspace: FORGE_HOME, default ~/.config/forge):
   forge assistant status | on | off      the Assistant (LLM chat that delegates to Claude Code)
   forge assistant set-key < key.txt      store its provider API key in the vault
   forge assistant model <id> [base-url]  pick the model (and provider URL)
+  forge engine status | deepseek | claude  default engine for agent runs
+  forge engine set-key < key.txt         store the DeepSeek API key agent runs use
+  forge engine model <id> [heavy-id]     DeepSeek models (default / heavy tasks)
   forge import < data.json               add projects, servers, vault items
   forge migrate                          apply database migrations
 
@@ -234,6 +237,8 @@ func runServer(args []string) error {
 		return jevCommand(ctx, cfg, st, args[1:])
 	case "assistant":
 		return assistantCommand(ctx, cfg, st, args[1:])
+	case "engine":
+		return engineCommand(ctx, cfg, st, args[1:])
 	case "add-machine", "create-runner":
 		if len(args) < 2 || len(args) > 3 {
 			return errors.New("usage: forge add-machine <name> [master|ios|worker]")
@@ -490,5 +495,65 @@ func assistantCommand(ctx context.Context, cfg config.Config, st *store.Store, a
 		keyed = k != ""
 	}
 	fmt.Printf("assistant: enabled=%t key=%t model=%s base_url=%s\n", set.Enabled, keyed, set.Model, set.BaseURL)
+	return nil
+}
+
+// engineCommand is Settings → Agent engine, for a server without a browser.
+func engineCommand(ctx context.Context, cfg config.Config, st *store.Store, args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: forge engine status | deepseek | claude | set-key (key on stdin) | model <id> [heavy-id]")
+	}
+	set, err := st.EngineSettings(ctx)
+	if err != nil {
+		return err
+	}
+	box, err := vault.Load(cfg.Home)
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "deepseek", "claude":
+		set.Default = args[0]
+	case "model":
+		if len(args) < 2 || len(args) > 3 {
+			return errors.New("usage: forge engine model <id> [heavy-id]")
+		}
+		set.Model = args[1]
+		if len(args) == 3 {
+			set.HeavyModel = args[2]
+		}
+	case "set-key":
+		raw, err := io.ReadAll(io.LimitReader(os.Stdin, 4096))
+		if err != nil {
+			return err
+		}
+		key := strings.TrimSpace(string(raw))
+		if len(key) < 16 || strings.ContainsAny(key, " \t\n") {
+			return errors.New("expected one API key on stdin")
+		}
+		if err := st.SaveIntegrationSecret(ctx, box, "DeepSeek API key (agent runs)", "integration:deepseek", key, "cli"); err != nil {
+			return err
+		}
+		fmt.Println("key stored in the vault (tag integration:deepseek)")
+	case "status":
+	default:
+		return fmt.Errorf("unknown engine command %q", args[0])
+	}
+	if args[0] != "status" && args[0] != "set-key" {
+		if err := st.SetEngineSettings(ctx, set); err != nil {
+			return err
+		}
+	}
+	key := "none"
+	if box.Available() {
+		if k, _ := st.IntegrationSecret(ctx, box, "integration:deepseek"); k != "" {
+			key = "integration:deepseek"
+		} else if a, _ := st.AssistantSettings(ctx); strings.Contains(a.BaseURL, "deepseek.com") {
+			if k, _ := st.IntegrationSecret(ctx, box, "integration:assistant"); k != "" {
+				key = "integration:assistant"
+			}
+		}
+	}
+	fmt.Printf("engine: default=%s model=%s heavy_model=%s deepseek_key=%s\n", set.Default, set.Model, set.HeavyModel, key)
 	return nil
 }

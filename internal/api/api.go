@@ -86,7 +86,7 @@ func New(cfg config.Config, st *store.Store, m *mail.Mailer, mon *monitor.Monito
 		jevCache:  map[string]relevanceEntry{},
 	}
 	s.jev = jev.New(s.jevKey)
-	s.assistant = assistant.New(st, assistant.Hooks{Key: s.assistantKey, Route: s.jevRoute, Queued: s.wakeups.notify})
+	s.assistant = assistant.New(st, assistant.Hooks{Key: s.assistantKey, Route: s.prepareRun, Queued: s.wakeups.notify})
 	return s
 }
 
@@ -121,6 +121,10 @@ func (s *Server) Handler() http.Handler {
 	h("PATCH /api/jev", s.authed(s.updateJev))
 	h("PUT /api/jev/key", s.authed(s.elevated(s.setJevKey)))
 	h("POST /api/jev/test", s.authed(s.testJev))
+
+	h("GET /api/engine", s.authed(s.getEngine))
+	h("PATCH /api/engine", s.authed(s.updateEngine))
+	h("PUT /api/engine/key", s.authed(s.elevated(s.setDeepseekKey)))
 
 	h("GET /api/assistant", s.authed(s.getAssistant))
 	h("PATCH /api/assistant", s.authed(s.updateAssistant))

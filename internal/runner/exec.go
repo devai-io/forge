@@ -30,6 +30,9 @@ type claimedRun struct {
 	ProjectKey     string  `json:"project_key"`
 	TaskRef        *string `json:"task_ref"`
 	ResumeSession  string  `json:"resume_session"`
+	Engine         string  `json:"engine"`
+	// Setup comes alongside the run in the claim answer (never stored).
+	Setup *engineSetup `json:"-"`
 }
 
 type event struct {
@@ -161,7 +164,19 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 	}
 	args = append(args, r.cfg.ExtraArgs...)
 
+	var env []string
+	if run.Engine == "deepseek" {
+		var err error
+		if env, err = run.Setup.env(run.Model); err != nil {
+			msg := "refused: " + err.Error()
+			ship.send(textEvent("system", msg))
+			return finishReport{Status: "failed", Error: msg}
+		}
+		ship.send(textEvent("system", "engine: DeepSeek ("+run.Setup.BaseURL+")"))
+	}
+
 	cmd := exec.Command(r.cfg.ClaudePath, args...)
+	cmd.Env = env                             // stream adds the rest; engineEnv entries win
 	cmd.Stdin = strings.NewReader(run.Prompt) // stdin, not argv: no length limit, not in `ps`
 	ship.send(textEvent("system", fmt.Sprintf("%s on %s: claude %s in %s",
 		r.hostname, run.ProjectKey, strings.Join(args, " "), dir)))
@@ -174,6 +189,10 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 
 	rep := finishReport{ExitCode: code, SessionID: res.SessionID, Result: res.Result,
 		CostUSD: res.CostUSD, NumTurns: res.NumTurns, DurationMS: res.DurationMS}
+	if run.Engine == "deepseek" {
+		// Claude Code prices tokens at Anthropic's rates; DeepSeek's are not.
+		rep.CostUSD = res.deepseekCost(time.Now())
+	}
 	switch {
 	case errors.Is(ctx.Err(), context.Canceled):
 		rep.Status, rep.Error = "cancelled", "cancelled from Forge"
@@ -242,10 +261,14 @@ func (r *Runner) runCommand(ctx context.Context, run claimedRun, dir string, shi
 func (r *Runner) stream(ctx context.Context, cmd *exec.Cmd, dir string, run claimedRun, ship *shipper,
 	onLine func([]byte) event, onErr func([]byte)) (*int, error) {
 	cmd.Dir = dir
+	engineEnv := cmd.Env
 	cmd.Env = append(os.Environ(), "FORGE_RUN_ID="+fmt.Sprint(run.ID), "FORGE_PROJECT="+run.ProjectKey,
 		"FORGE_REPO="+run.RepoName, "GIT_TERMINAL_PROMPT=0")
 	for k, v := range r.cfg.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	if len(engineEnv) > 0 {
+		cmd.Env = append(withoutClaudeAuth(cmd.Env), engineEnv...)
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
@@ -333,18 +356,20 @@ type claudeResult struct {
 	CostUSD    *float64
 	NumTurns   *int
 	DurationMS *int64
+	Usage      map[string]modelUsage
 }
 
 func (c *claudeResult) observe(line []byte) {
 	var m struct {
-		Type         string   `json:"type"`
-		Subtype      string   `json:"subtype"`
-		SessionID    string   `json:"session_id"`
-		Result       string   `json:"result"`
-		IsError      bool     `json:"is_error"`
-		TotalCostUSD *float64 `json:"total_cost_usd"`
-		NumTurns     *int     `json:"num_turns"`
-		DurationMS   *int64   `json:"duration_ms"`
+		Type         string                `json:"type"`
+		Subtype      string                `json:"subtype"`
+		SessionID    string                `json:"session_id"`
+		Result       string                `json:"result"`
+		IsError      bool                  `json:"is_error"`
+		TotalCostUSD *float64              `json:"total_cost_usd"`
+		NumTurns     *int                  `json:"num_turns"`
+		DurationMS   *int64                `json:"duration_ms"`
+		ModelUsage   map[string]modelUsage `json:"modelUsage"`
 	}
 	if json.Unmarshal(line, &m) != nil {
 		return
@@ -355,6 +380,7 @@ func (c *claudeResult) observe(line []byte) {
 	if m.Type == "result" {
 		c.Result, c.Subtype, c.IsError = m.Result, m.Subtype, m.IsError
 		c.CostUSD, c.NumTurns, c.DurationMS = m.TotalCostUSD, m.NumTurns, m.DurationMS
+		c.Usage = m.ModelUsage
 		if c.Subtype == "success" {
 			c.Subtype = ""
 		}

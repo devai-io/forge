@@ -221,7 +221,27 @@ forge assistant model deepseek-flash          # optional: model [base-url]
 forge assistant on
 ```
 
-### 2e. Optional: token saving with Jev
+### 2e. Agent engine: DeepSeek by default
+
+Agent runs start Claude Code on a machine. By default it talks to
+[DeepSeek](https://platform.deepseek.com)'s Anthropic-compatible API
+(`deepseek-flash`; `deepseek-v4-pro` when Jev judges a task heavy) instead of
+Anthropic. Claude is used for a run only when you pick it in the New run dialog
+(or ask the Assistant for Claude), or when there is no DeepSeek key (the run
+says so). **Settings → Agent engine**, or on the server:
+
+```bash
+forge engine set-key < key.txt   # sealed in the vault (tag integration:deepseek)
+forge engine status              # the Assistant's key is used when it points at DeepSeek
+forge engine claude              # make Claude the default instead (forge engine deepseek to undo)
+```
+
+The machine receives the key with each DeepSeek run and sets
+`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` for that `claude` process only (any
+Anthropic credentials in its environment are dropped for it). Machines need
+Forge ≥ the release that added this; older agents fail DeepSeek runs.
+
+### 2f. Optional: token saving with Jev
 
 With a [TypeSafe](https://jevtypesafeai.com) API key, Forge uses Jev (a small
 decision model) instead of Claude for routine judgements: **Settings → Token

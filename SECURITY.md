@@ -41,5 +41,10 @@ vulnerability) on this repository. Do not open a public issue.
   read (projects, tasks, run results), to the LLM provider you configure. It
   queues runs with the same rules as the web app and cannot use
   `bypassPermissions` or confirm-only commands.
+- Agent runs on DeepSeek (the default engine when a DeepSeek key is stored)
+  send the run's prompt and everything Claude Code reads in the repo to
+  DeepSeek instead of Anthropic. The machine receives the DeepSeek key with
+  each such run (only over the agent's authenticated connection) and passes it
+  to that `claude` process only; it is never written to disk.
 - Project files are always served as downloads (`application/octet-stream`,
   sandboxed), never rendered in the app's origin.

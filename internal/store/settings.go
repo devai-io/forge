@@ -74,3 +74,24 @@ func (s *Store) AssistantSettings(ctx context.Context) (AssistantSettings, error
 func (s *Store) SetAssistantSettings(ctx context.Context, v AssistantSettings) error {
 	return s.putSetting(ctx, "assistant", v)
 }
+
+// EngineSettings say which backend agent runs use when the run does not pick
+// one. "deepseek" runs Claude Code against DeepSeek's Anthropic-compatible
+// API with Model (HeavyModel when Jev judges the task heavy); "claude" is
+// Anthropic. The DeepSeek key is the vault item tagged integration:deepseek,
+// else the Assistant's key when the Assistant talks to DeepSeek.
+type EngineSettings struct {
+	Default    string `json:"default"`
+	Model      string `json:"model"`
+	HeavyModel string `json:"heavy_model"`
+}
+
+func (s *Store) EngineSettings(ctx context.Context) (EngineSettings, error) {
+	v := EngineSettings{Default: "deepseek", Model: "deepseek-flash", HeavyModel: "deepseek-v4-pro"}
+	_, err := s.getSetting(ctx, "engine", &v)
+	return v, err
+}
+
+func (s *Store) SetEngineSettings(ctx context.Context, v EngineSettings) error {
+	return s.putSetting(ctx, "engine", v)
+}

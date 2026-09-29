@@ -50,7 +50,7 @@ func (s *Server) runnerClaim(w http.ResponseWriter, r *http.Request, rn *store.R
 	for {
 		run, err := s.store.ClaimRun(r.Context(), rn.ID)
 		if err == nil {
-			writeJSON(w, http.StatusOK, map[string]any{"run": run})
+			writeJSON(w, http.StatusOK, map[string]any{"run": run, "engine": s.runnerEngine(r.Context(), run)})
 			return
 		}
 		if !errors.Is(err, store.ErrNotFound) {

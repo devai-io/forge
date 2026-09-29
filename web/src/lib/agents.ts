@@ -1,6 +1,6 @@
 // Agent-run helpers shared by the agents screens.
 
-import type { CommandDetail, Pairing, Run, Runner, RunnerCapabilities, RunnerRole } from "@/api/types";
+import type { CommandDetail, Engine, Pairing, Run, Runner, RunnerCapabilities, RunnerRole } from "@/api/types";
 
 // Mirrors deploy/runner.example.json, which is the machine's ~/.config/forge/agent.json:
 // the keys an agent needs to start (api_url, token, allowed_roots) plus safe
@@ -26,6 +26,8 @@ export function runnerConfigSnippet(origin: string, token: string): string {
     2,
   );
 }
+
+export const ENGINE_LABEL: Record<Engine, string> = { deepseek: "DeepSeek", claude: "Claude" };
 
 export const PERMISSION_MODE_HELP: Record<string, string> = {
   plan: "Read-only: explores and proposes a plan, changes nothing.",

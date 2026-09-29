@@ -19,7 +19,7 @@ import { useToast } from "@/components/ui/Toast";
 import { useShell } from "@/features/shell/context";
 import { formatCost, formatDuration } from "@/lib/format";
 import { mapRunEvents } from "@/lib/runlog";
-import { runTitle } from "@/lib/agents";
+import { ENGINE_LABEL, runTitle } from "@/lib/agents";
 import { RunKindIcon, RunStatusBadge } from "./RunBits";
 import { RunLog } from "./RunLog";
 
@@ -123,9 +123,13 @@ function RunView({ run, events, loadingEvents }: { run: Run; events: RunEvent[] 
         <dl className="grid grid-cols-2 gap-2 rounded-lg border border-line bg-surface p-3 text-[12px] sm:grid-cols-4 lg:grid-cols-6">
           {[
             ["Mode", run.kind === "agent" ? run.permission_mode || "—" : "command"],
-            ["Model", run.model_note ? `${run.model} — ${run.model_note}` : run.model || "default"],
+            [
+              "Model",
+              [run.engine ? ENGINE_LABEL[run.engine] : "", run.model || "default", run.model_note].filter(Boolean).join(" · "),
+            ],
             ["Worktree", run.worktree ? "yes" : "no"],
-            ["Cost", formatCost(run.cost_usd)],
+            // DeepSeek runs are priced by the machine from token counts: an estimate.
+            ["Cost", run.engine === "deepseek" && run.cost_usd != null ? `≈ ${formatCost(run.cost_usd)}` : formatCost(run.cost_usd)],
             ["Turns", run.num_turns ?? "—"],
             ["Duration", formatDuration(duration)],
           ].map(([k, v]) => (

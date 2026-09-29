@@ -290,7 +290,7 @@ top = first − 1000).
 | POST | /api/runners/{id}/rotate | – | `{runner: Runner, token: string}` — the token is shown once (manual setup) |
 | DELETE | /api/runners/{id} | – | `204` |
 | GET | /api/runs | query `project` (key), `task` (id), `status`, `limit` (default 50) | `{runs: Run[]}` newest first |
-| POST | /api/runs | `{runner_id, repo_id, kind, prompt?, command?, permission_mode?, model?, worktree?, task_id?, resume_run_id?}` | `201 Run` (queued). `resume_run_id` copies runner/repo from that run and requires it to have a `session_id` |
+| POST | /api/runs | `{runner_id, repo_id, kind, prompt?, command?, permission_mode?, model?, engine?, worktree?, task_id?, resume_run_id?}` | `201 Run` (queued). `resume_run_id` copies runner/repo from that run and requires it to have a `session_id` |
 | GET | /api/runs/{id} | – | `Run` |
 | GET | /api/runs/{id}/events | query `after` (seq, default 0), `limit` (default 500) | `{events: RunEvent[], run: Run}` — poll every ~1.5 s while the run is active |
 | POST | /api/runs/{id}/cancel | – | `Run` (queued → cancelled immediately; running → `cancel_requested`, the runner kills it) |
@@ -304,7 +304,7 @@ capabilities. The repo must have a `path`.
 | Method | Path | Body | Response |
 |---|---|---|---|
 | POST | /api/runner/heartbeat | `{hostname, os, version, capabilities: RunnerCapabilities, running: number[]}` | `{runner_id, cancel: number[] /* run ids to kill */, repos: [{id, project_key, name, path, default_branch}]}` |
-| POST | /api/runner/claim | – | long-poll up to 25 s: `200 {run: Run}` (now `running`) or `204` |
+| POST | /api/runner/claim | – | long-poll up to 25 s: `200 {run: Run, engine}` (now `running`; see *Agent engine*) or `204` |
 | POST | /api/runner/runs/{id}/events | `{events: [{kind, data}]}` | `204` (seq assigned server-side, in order) |
 | POST | /api/runner/runs/{id}/finish | `{status: "succeeded"|"failed"|"cancelled", exit_code?, session_id?, result?, error?, cost_usd?, num_turns?, duration_ms?}` | `204` |
 | POST | /api/runner/repos | `{repos: [{repo_id, branch, dirty, ahead, behind, head, commits_7d, last_commit_at, error}]}` | `204` |
@@ -733,6 +733,35 @@ all, per 15 minutes):
   used or expired code; `429 rate_limited`. The returned `token` replaces the
   machine's previous one.
 
+## Agent engine
+
+An agent run's Claude Code talks to Anthropic (`claude`) or to DeepSeek's
+Anthropic-compatible API (`deepseek`). The DeepSeek key is the vault item tagged
+`integration:deepseek`, else the Assistant's key when its `base_url` is on
+`deepseek.com`.
+
+```ts
+type Engine = "deepseek" | "claude";
+type EngineSettings = { default: Engine; model: string; heavy_model: string };
+// defaults: "deepseek", "deepseek-flash", "deepseek-v4-pro"
+type EngineStatus = { settings: EngineSettings; deepseek_key: boolean };
+type Run = { /* … */ engine: Engine | "" };   // "" for command runs
+type RunInput = { /* … */ engine?: Engine };  // omitted = settings.default
+```
+
+- `GET /api/engine` → `EngineStatus`. `PATCH /api/engine` `Partial<EngineSettings>` → `EngineStatus`.
+- `PUT /api/engine/key` `{api_key}` → `EngineStatus` (elevation; creates/updates the vault item).
+- `POST /api/runs` (agent): no `engine` → `settings.default`; `deepseek` without a
+  key → `claude` with `model_note` saying so. Then Jev routing (below), then a
+  DeepSeek run without a model gets `settings.model`. `resume_run_id` keeps the
+  original run's engine. Unknown engines → 422.
+- `POST /api/runner/claim` → `{run, engine}`: `engine` is `null` for Claude runs,
+  `{name: "deepseek", base_url, api_key, model, heavy_model}` for DeepSeek runs. The
+  agent drops `ANTHROPIC_*`/`CLAUDE_CODE_OAUTH_TOKEN` from that process's environment,
+  sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL` (+ `[1m]`) and
+  the default/sub-agent model variables, and reports `cost_usd` estimated from the
+  result's `modelUsage` at DeepSeek's list prices (doubled in its peak hours).
+
 ## Jev (token saving)
 
 TypeSafe's Jev answers typed questions (yes/no probabilities, pick-one) for a
@@ -754,8 +783,9 @@ type Run = { /* … */ model_note: string };   // "Jev: light task (91% sure) �
 - `PUT /api/jev/key` `{api_key}` → `JevStatus` (elevation; creates/updates the vault item).
 - `POST /api/jev/test` → `{ok, ms?, error?}` — one tiny call.
 - **Routing**: `POST /api/runs` for `kind: "agent"` with no `model` (and not a resume)
-  asks Jev light / medium / heavy; ≥ 70 % confident light → `haiku`, medium →
-  `sonnet`; otherwise the model stays `""` (the machine's default).
+  asks Jev light / medium / heavy. On `claude`: ≥ 70 % confident light → `haiku`,
+  medium → `sonnet`; otherwise the model stays `""` (the machine's default). On
+  `deepseek`: ≥ 70 % confident heavy → `heavy_model`; otherwise `model`.
 - **Context**: `GET /api/runner/context` lists, when a project has more than 8 open
   tasks, the always-kept ones (focus, in progress, blocked, urgent, the repo's own)
   plus up to 12 in total that Jev scores ≥ 0.4 relevant to the repo; the heading
@@ -871,9 +901,10 @@ type ChatMessage = {
   its answer arrives.
 - Tools (`tool_name`), with the arguments and result fields the web app reads:
   - `delegate_to_claude` `{project, repo, prompt, machine?, permission_mode?,
-    model?, worktree?, task_ref?}` → `{run_id, machine, project, repo,
-    permission_mode, model, model_note}`. Queued like `POST /api/runs` with the
-    same machine rules; `bypassPermissions` is never used.
+    engine?, model?, worktree?, task_ref?}` → `{run_id, machine, project, repo,
+    permission_mode, engine, model, model_note}`. Queued like `POST /api/runs` with the
+    same machine rules; `bypassPermissions` is never used. The model is told to
+    set `engine: "claude"` only when the user explicitly asks for Claude.
   - `run_command` `{project, repo, command, machine?}` → `{run_id, machine,
     command, …}`. Commands that need confirming are refused (left to the user).
   - `get_run` `{run_id}` → `{run: {id, status, kind, runner_name, repo_name,

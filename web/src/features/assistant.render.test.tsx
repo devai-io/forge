@@ -59,6 +59,7 @@ const run = (over: Partial<Run> = {}): Run => ({
   permission_mode: "acceptEdits",
   model: "sonnet",
   model_note: "",
+  engine: "claude",
   worktree: false,
   resume_run_id: null,
   status: "running",

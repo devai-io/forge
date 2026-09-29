@@ -124,10 +124,11 @@ func (s *Server) testJev(w http.ResponseWriter, r *http.Request, u *store.User) 
 
 // ── Model routing ─────────────────────────────────────────────────────────
 
-// jevRoute picks a model for an agent run queued without one. It only ever
-// picks a cheaper model; "hard" or an unsure answer keeps the machine's
-// default.
-func (s *Server) jevRoute(ctx context.Context, in *store.RunInput) {
+// jevRoute picks a model for an agent run queued without one. On Claude it
+// only ever picks a cheaper model (haiku / sonnet); "heavy" or an unsure
+// answer keeps the machine's default. On DeepSeek the default is already the
+// cheap model, so only a confident "heavy" moves the run up to HeavyModel.
+func (s *Server) jevRoute(ctx context.Context, in *store.RunInput, eng store.EngineSettings) {
 	if in.Kind != "agent" || in.Model != "" || in.ResumeRunID != nil || strings.TrimSpace(in.Prompt) == "" {
 		return
 	}
@@ -155,6 +156,9 @@ func (s *Server) jevRoute(ctx context.Context, in *store.RunInput) {
 	}
 	a := ans["effort"]
 	model := map[string]string{"light": "haiku", "medium": "sonnet"}[a.Choice]
+	if in.Engine == "deepseek" {
+		model = map[string]string{"heavy": eng.HeavyModel}[a.Choice]
+	}
 	if model == "" || a.Confidence < 0.7 {
 		return
 	}

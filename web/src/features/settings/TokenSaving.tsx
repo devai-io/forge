@@ -17,7 +17,7 @@ const USES: { key: keyof Omit<JevSettings, "enabled">; label: string; hint: stri
   {
     key: "routing",
     label: "Pick the model for agent runs",
-    hint: "A run queued without a model goes to Haiku or Sonnet when Jev is confident the task is light or ordinary; anything else keeps the machine's default.",
+    hint: "A run queued without a model: on DeepSeek, a task Jev is confident is heavy goes to the heavy model (the rest stay on the fast one); on Claude, light or ordinary tasks go to Haiku or Sonnet and anything else keeps the machine's default.",
   },
   {
     key: "context",
