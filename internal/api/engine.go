@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
+	"github.com/devai-io/forge/internal/llm"
 	"github.com/devai-io/forge/internal/store"
 )
 
@@ -97,7 +99,7 @@ func (s *Server) engineStatus(ctx context.Context) (map[string]any, error) {
 	}
 	k, _ := s.deepseekKey(ctx)
 	deepseek := []string{}
-	for _, m := range append([]string{set.Model, set.HeavyModel}, store.DeepSeekModels...) {
+	for _, m := range append(append([]string{set.Model, set.HeavyModel}, s.listDeepSeekModels(ctx, k)...), store.DeepSeekModels...) {
 		if m != "" && !store.OneOf(m, deepseek) {
 			deepseek = append(deepseek, m)
 		}
@@ -180,4 +182,28 @@ func (s *Server) setDeepseekKey(w http.ResponseWriter, r *http.Request, u *store
 	}
 	s.sec(r, "deepseek_key", "DeepSeek API key replaced")
 	s.getEngine(w, r, u)
+}
+
+// listDeepSeekModels is what DeepSeek lists for the key (its current
+// models), cached for a while; nothing without a key or when it can't be
+// reached, and the run form falls back to the known ones.
+func (s *Server) listDeepSeekModels(ctx context.Context, key string) []string {
+	if key == "" {
+		return nil
+	}
+	c := &s.deepseekModels
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cacheKey := s.deepseekAPI + "|" + key
+	if c.key == cacheKey && time.Since(c.at) < 10*time.Minute {
+		return c.models
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	ids, err := llm.New(s.deepseekAPI, func(context.Context) (string, error) { return key, nil }).Models(ctx)
+	c.key, c.at, c.models = cacheKey, time.Now(), ids
+	if err != nil { // try again in a minute
+		c.at, c.models = time.Now().Add(-9*time.Minute), nil
+	}
+	return c.models
 }

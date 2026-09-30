@@ -19,6 +19,7 @@ import (
 	"github.com/devai-io/forge/internal/checkup"
 	"github.com/devai-io/forge/internal/config"
 	"github.com/devai-io/forge/internal/jev"
+	"github.com/devai-io/forge/internal/llm"
 	"github.com/devai-io/forge/internal/mail"
 	"github.com/devai-io/forge/internal/monitor"
 	"github.com/devai-io/forge/internal/monitoring"
@@ -59,6 +60,10 @@ type Server struct {
 
 	assistant *assistant.Assistant
 	models    modelsCache
+
+	// deepseekAPI is where the run form's DeepSeek model list comes from.
+	deepseekAPI    string
+	deepseekModels modelsCache
 }
 
 // Deps are the optional collaborators; a zero value turns the feature off
@@ -76,14 +81,15 @@ func New(cfg config.Config, st *store.Store, m *mail.Mailer, mon *monitor.Monito
 		// hour. The global cap is what actually protects a single-account
 		// site from a distributed guesser; the per-address one keeps a
 		// fat-fingered phone from locking out the laptop.
-		logins:    newLimiter(8, 30, 15*time.Minute),
-		resets:    newLimiter(5, 20, time.Hour),
-		pairs:     newLimiter(10, 60, 15*time.Minute),
-		wakeups:   newNotifier(),
-		terminals: newTerminalHub(),
-		codes:     newCodeSessions(),
-		claimWait: 25 * time.Second,
-		jevCache:  map[string]relevanceEntry{},
+		logins:      newLimiter(8, 30, 15*time.Minute),
+		resets:      newLimiter(5, 20, time.Hour),
+		pairs:       newLimiter(10, 60, 15*time.Minute),
+		wakeups:     newNotifier(),
+		terminals:   newTerminalHub(),
+		codes:       newCodeSessions(),
+		claimWait:   25 * time.Second,
+		deepseekAPI: llm.DefaultBaseURL,
+		jevCache:    map[string]relevanceEntry{},
 	}
 	s.jev = jev.New(s.jevKey)
 	s.assistant = assistant.New(st, assistant.Hooks{Key: s.assistantKey, Route: s.prepareRun, Queued: s.wakeups.notify})

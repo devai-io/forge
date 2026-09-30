@@ -67,6 +67,7 @@ export function EnginePanel() {
                   id={id}
                   aria-describedby={desc}
                   spellCheck={false}
+                  list="deepseek-models"
                   value={models?.model ?? engine.data.settings.model}
                   onChange={(e) => setModels({ ...(models ?? engine.data.settings), model: e.target.value })}
                 />
@@ -78,11 +79,18 @@ export function EnginePanel() {
                   id={id}
                   aria-describedby={desc}
                   spellCheck={false}
+                  list="deepseek-models"
                   value={models?.heavy_model ?? engine.data.settings.heavy_model}
                   onChange={(e) => setModels({ ...(models ?? engine.data.settings), heavy_model: e.target.value })}
                 />
               )}
             </Field>
+            {/* Suggestions: what DeepSeek lists for the key, and the known ones. */}
+            <datalist id="deepseek-models">
+              {(engine.data.models?.deepseek ?? []).map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
             <Button type="submit" variant="subtle" className="mb-6" loading={update.isPending} disabled={!models}>
               Save models
             </Button>

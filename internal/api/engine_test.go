@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -61,7 +62,8 @@ func TestAgentRunsDefaultToDeepSeek(t *testing.T) {
 	expect(t, "bad effort", h.do("POST", "/api/runs", map[string]any{"runner_id": created.Runner.ID, "repo_id": repoID,
 		"kind": "agent", "prompt": "hi", "effort": "extreme"}, nil), 422)
 
-	// The run form's choices: each engine's models, and the efforts.
+	// The run form's choices: each engine's models (DeepSeek's as it lists
+	// them for the key, then the known ones), and the efforts.
 	var offered struct {
 		Models  map[string][]string
 		Efforts []string
@@ -70,6 +72,19 @@ func TestAgentRunsDefaultToDeepSeek(t *testing.T) {
 	if !store.OneOf("claude-opus-5-5", offered.Models["claude"]) || strings.Join(offered.Models["deepseek"], ",") != "deepseek-flash,deepseek-v4-pro" ||
 		!store.OneOf("max", offered.Efforts) {
 		t.Fatalf("offered = %+v", offered)
+	}
+	listing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" || r.Header.Get("Authorization") != "Bearer not-a-real-key-for-tests" {
+			http.Error(w, "no", http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v5"},{"id":"deepseek-flash"}]}`))
+	}))
+	defer listing.Close()
+	h.api.deepseekAPI = listing.URL
+	expect(t, "engine status (listed)", h.do("GET", "/api/engine", nil, &offered), 200)
+	if strings.Join(offered.Models["deepseek"], ",") != "deepseek-flash,deepseek-v4-pro,deepseek-v5" {
+		t.Fatalf("listed = %+v", offered.Models["deepseek"])
 	}
 
 	// A heavy task (Jev, confident) moves up to the heavy DeepSeek model.

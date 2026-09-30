@@ -81,6 +81,7 @@ func setupWith(t *testing.T, withUser bool) *harness {
 	api := New(cfg, st, mailer, monitor.New(st, time.Minute, "test"),
 		Deps{Box: box, Mon: fleet, Checkups: checkup.New(st, fleet, mailer, cfg.PublicURL)})
 	api.claimWait = 500 * time.Millisecond
+	api.deepseekAPI = "http://127.0.0.1:1" // never the real DeepSeek
 	srv.Config.Handler = api.Handler()
 	srv.Start()
 	t.Cleanup(srv.Close)

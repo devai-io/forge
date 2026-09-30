@@ -765,7 +765,7 @@ type Engine = "deepseek" | "claude";
 type EngineSettings = { default: Engine; model: string; heavy_model: string };
 // defaults: "deepseek", "deepseek-flash", "deepseek-v4-pro"
 type EngineStatus = { settings: EngineSettings; deepseek_key: boolean;
-  models: Record<Engine, string[]>;  // the run form's choices (any id Claude Code accepts may be sent)
+  models: Record<Engine, string[]>;  // the run form's choices; deepseek: settings, then what DeepSeek lists for the key, then the known ones
   efforts: string[] };               // claude --effort: low|medium|high|xhigh|max
 type Run = { /* … */ engine: Engine | "";     // "" for command runs
               effort: string;                // claude --effort, "" = default

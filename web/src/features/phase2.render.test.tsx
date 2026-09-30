@@ -1,8 +1,11 @@
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Project, ProjectDetail, Runner, VaultItem } from "@/api/types";
+import { useLocation } from "react-router-dom";
 import { NewRunDialog } from "@/features/agents/NewRunDialog";
 import { LoginPage } from "@/features/auth/AuthPages";
+import { ShellProvider } from "@/features/shell/context";
+import { NewTaskDialog } from "@/features/tasks/NewTaskDialog";
 import { VaultItemSheet } from "@/features/vault/VaultItemSheet";
 import { jsonResponse, makeUser, renderWithProviders, routeFetch, testClient } from "@/test/render";
 
@@ -219,6 +222,35 @@ describe("NewRunDialog confirm-commands", () => {
     await user.selectOptions(screen.getByLabelText("Model"), "__custom__");
     await user.type(screen.getByLabelText("Model id"), "claude-opus-4-1");
     expect(screen.getByLabelText("Model id")).toHaveValue("claude-opus-4-1");
+  });
+});
+
+describe("NewTaskDialog", () => {
+  it("opens the task it created", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routeFetch({ "POST /tasks": () => jsonResponse(201, { id: 42, ref: "SHOP-7", title: "Pause menu" }) }),
+    );
+    const qc = testClient();
+    const project = { id: 2, key: "SHOP", name: "Shop", color: "#3987e5" } as Project;
+    qc.setQueryData(["projects", { includeArchived: false }], [project]);
+    qc.setQueryData(["project", "SHOP"], { ...project, repos: [], servers: [], endpoints: [] });
+    let search = "";
+    function Where() {
+      search = useLocation().search;
+      return null;
+    }
+    renderWithProviders(
+      <ShellProvider>
+        <Where />
+        <NewTaskDialog prefill={{ project_key: "SHOP" }} onClose={() => {}} />
+      </ShellProvider>,
+      { qc, route: "/p/SHOP" },
+    );
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Title"), "Pause menu");
+    await user.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(search).toBe("?task=42"));
   });
 });
 

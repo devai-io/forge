@@ -25,7 +25,6 @@ export function NewTaskDialog({ prefill, onClose }: { prefill: NewTaskPrefill; o
   const [labels, setLabels] = useState("");
   const [focus, setFocus] = useState(prefill.focus ?? false);
   const [repoId, setRepoId] = useState("");
-  const [openAfter, setOpenAfter] = useState(false);
 
   const effectiveKey = projectKey || projects.data?.[0]?.key || "";
   const project = useProject(effectiveKey || undefined);
@@ -53,7 +52,7 @@ export function NewTaskDialog({ prefill, onClose }: { prefill: NewTaskPrefill; o
         onSuccess: (task) => {
           toast.success(`Created ${task.ref}`);
           onClose();
-          if (openAfter) openTask(task.id);
+          openTask(task.id); // straight to the new task, wherever it was created from
         },
         onError: (err) => toast.error(err),
       },
@@ -68,10 +67,6 @@ export function NewTaskDialog({ prefill, onClose }: { prefill: NewTaskPrefill; o
       size="lg"
       footer={
         <>
-          <label className="mr-auto flex items-center gap-2 text-[13px] text-fg-2">
-            <input type="checkbox" checked={openAfter} onChange={(e) => setOpenAfter(e.target.checked)} />
-            Open after creating
-          </label>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
