@@ -15,6 +15,8 @@ export type LogStream = "stdout" | "stderr" | "system";
 export type DisplayItem =
   | { kind: "init"; key: string; model: string; cwd: string; sessionId: string; permissionMode: string; tools: number }
   | { kind: "text"; key: string; text: string }
+  // What the user said in an interactive session (Claude Code replays it).
+  | { kind: "user"; key: string; text: string }
   | { kind: "thinking"; key: string; text: string }
   | {
       kind: "tool";
@@ -149,6 +151,18 @@ export function mapRunEvents(events: RunEvent[]): DisplayItem[] {
       } else if (d.subtype) {
         items.push({ kind: "note", key: `note-${ev.seq}`, text: `system: ${str(d.subtype)}` });
       }
+      continue;
+    }
+
+    if (type === "user" && d.isReplay) {
+      const content = d.message?.content;
+      const text =
+        typeof content === "string"
+          ? content
+          : Array.isArray(content)
+            ? content.map((b: any) => (b?.type === "text" ? str(b.text) : "")).filter(Boolean).join("\n")
+            : "";
+      if (text.trim()) items.push({ kind: "user", key: `user-${ev.seq}`, text });
       continue;
     }
 

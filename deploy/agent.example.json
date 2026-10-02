@@ -16,6 +16,9 @@
     "test": { "run": "make test", "description": "Run the repo's tests" }
   },
 
+  "approvals": false,
+  "idle_minutes": 15,
+
   "max_concurrent": 2,
   "max_run_minutes": 120,
   "scan_interval": "5m",

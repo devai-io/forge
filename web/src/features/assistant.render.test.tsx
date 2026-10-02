@@ -69,6 +69,8 @@ const run = (over: Partial<Run> = {}): Run => ({
   model_note: "",
   engine: "claude",
   effort: "",
+  interactive: false,
+  awaiting: "",
   worktree: false,
   resume_run_id: null,
   status: "running",

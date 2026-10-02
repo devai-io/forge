@@ -40,6 +40,13 @@ function LogItem({ item }: { item: DisplayItem }) {
           <Markdown>{item.text}</Markdown>
         </div>
       );
+    case "user":
+      return (
+        <div className="ml-auto w-fit max-w-[85%] rounded-xl rounded-br-sm bg-accent/12 px-3 py-2 text-[13.5px] whitespace-pre-wrap">
+          <span className="sr-only">You: </span>
+          {item.text}
+        </div>
+      );
     case "thinking":
       return <Thinking text={item.text} />;
     case "tool":

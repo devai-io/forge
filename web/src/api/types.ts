@@ -261,6 +261,8 @@ export type RunnerCapabilities = {
   ci: boolean;
   terminal: boolean;
   code: boolean; // runner can serve VS Code (web)
+  interactive?: boolean; // can keep a session open for questions and follow-ups (older agents: absent)
+  approvals?: boolean; // also relays tool permissions and plan approvals ("approvals" in agent.json)
 };
 export type Runner = {
   id: number;
@@ -303,6 +305,8 @@ export type Run = {
   model_note: string; // why Forge chose the model ("Jev: …"), else ""
   engine: Engine | ""; // agent runs: the backend Claude Code talks to; "" for commands
   effort: string; // claude --effort, "" = default
+  interactive: boolean; // the session stays open for questions and follow-ups
+  awaiting: RunAwaiting; // what a running interactive session waits for
   worktree: boolean;
   resume_run_id: number | null;
   status: RunStatus;
@@ -318,6 +322,33 @@ export type Run = {
   started_at: string | null;
   finished_at: string | null;
 };
+export type RunAwaiting = "" | "answer" | "reply";
+
+export type PromptKind = "question" | "permission" | "plan";
+export type PromptDecision = "answer" | "allow" | "allow_always" | "approve" | "approve_edits" | "deny";
+
+/** What an interactive session asked: AskUserQuestion, a tool permission, ExitPlanMode. */
+export type RunPrompt = {
+  id: number;
+  run_id: number;
+  request_id: string;
+  kind: PromptKind;
+  tool_name: string;
+  input: any; // the tool's input, as Claude Code sent it
+  suggestions: any[]; // Claude Code's permission_suggestions
+  description: string;
+  status: "pending" | "answered" | "expired";
+  answer: Partial<PromptAnswer>;
+  created_at: string;
+  answered_at: string | null;
+};
+
+export type PromptAnswer = {
+  decision: PromptDecision;
+  answers?: Record<string, string>; // question → chosen label(s), comma-separated, or own words
+  message?: string; // why declined / what to change
+};
+
 export type RunEvent = {
   seq: number;
   at: string;
@@ -570,6 +601,7 @@ export type RunInput = {
   confirmed?: boolean;
   engine?: Engine; // omitted = the server's default (Settings → Agent engine)
   effort?: string; // claude --effort, one of EngineStatus.efforts; omitted = default
+  interactive?: boolean; // keep the session open (needs a runner with capabilities.interactive)
 };
 
 export type TaskFilters = {

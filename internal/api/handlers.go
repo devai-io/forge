@@ -561,7 +561,14 @@ func (s *Server) runEvents(w http.ResponseWriter, r *http.Request, u *store.User
 		writeErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": events, "run": run.Public()})
+	prompts := []store.RunPrompt{}
+	if run.Interactive {
+		if prompts, err = s.store.ListPrompts(r.Context(), id); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events, "run": run.Public(), "prompts": prompts})
 }
 
 func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request, u *store.User) {

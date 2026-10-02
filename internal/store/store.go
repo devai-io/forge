@@ -96,7 +96,7 @@ func uniqueWhat(name string) string {
 func checkField(name string) string {
 	name = strings.TrimSuffix(name, "_check")
 	for _, table := range []string{"users", "projects", "repos", "servers", "endpoints", "tasks", "comments",
-		"runners", "runs", "run_events", "vault_items", "vault_audit", "checkups"} {
+		"runners", "runs", "run_events", "run_prompts", "run_inbox", "vault_items", "vault_audit", "checkups"} {
 		if rest, ok := strings.CutPrefix(name, table+"_"); ok {
 			return rest
 		}

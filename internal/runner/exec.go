@@ -33,6 +33,7 @@ type claimedRun struct {
 	Engine         string  `json:"engine"`
 	Effort         string  `json:"effort"`
 	ChatTurnID     *int64  `json:"chat_turn_id"`
+	Interactive    bool    `json:"interactive"`
 	// Setup and Assistant come alongside the run in the claim answer.
 	Setup     *engineSetup    `json:"-"`
 	Assistant *assistantSetup `json:"-"`
@@ -168,6 +169,10 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 		return finishReport{Status: "failed", Error: msg}
 	}
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--permission-mode", run.PermissionMode}
+	interactive := run.Interactive && run.Assistant == nil
+	if interactive {
+		args = append(args, interactiveArgs...)
+	}
 	if run.Model != "" && run.Engine != "deepseek" { // DeepSeek's model goes in the env, with its 1M window
 		args = append(args, "--model", run.Model)
 	}
@@ -202,8 +207,17 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 	}
 
 	cmd := exec.Command(r.cfg.ClaudePath, args...)
-	cmd.Env = env                             // stream adds the rest; engineEnv entries win
-	cmd.Stdin = strings.NewReader(run.Prompt) // stdin, not argv: no length limit, not in `ps`
+	cmd.Env = env // stream adds the rest; engineEnv entries win
+	var sess *session
+	if interactive {
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			return finishReport{Status: "failed", Error: err.Error()}
+		}
+		sess = newSession(ctx, r, run, ship, stdin)
+	} else {
+		cmd.Stdin = strings.NewReader(run.Prompt) // stdin, not argv: no length limit, not in `ps`
+	}
 	// The log line leaves the Assistant's instructions out: long, and not news.
 	shown := make([]string, len(args))
 	copy(shown, args)
@@ -220,10 +234,19 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 		r.hostname, where, strings.Join(shown, " "), dir)))
 
 	var res claudeResult
+	if sess != nil {
+		sess.start()
+	}
 	code, runErr := r.stream(ctx, cmd, dir, run, ship, func(line []byte) event {
+		if sess != nil && !sess.observe(line) {
+			return event{} // protocol, not transcript
+		}
 		res.observe(line)
 		return event{Kind: "claude", Data: shrink(line)}
 	}, nil)
+	if sess != nil {
+		sess.end()
+	}
 
 	rep := finishReport{ExitCode: code, SessionID: res.SessionID, Result: res.Result,
 		CostUSD: res.CostUSD, NumTurns: res.NumTurns, DurationMS: res.DurationMS, Usage: res.RawUsage}
@@ -344,7 +367,11 @@ func (r *Runner) stream(ctx context.Context, cmd *exec.Cmd, dir string, run clai
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		readLines(stdout, func(b []byte) { ship.send(onLine(b)) })
+		readLines(stdout, func(b []byte) {
+			if e := onLine(b); e.Kind != "" {
+				ship.send(e)
+			}
+		})
 	}()
 	go func() {
 		defer wg.Done()
@@ -396,6 +423,8 @@ type claudeResult struct {
 	DurationMS *int64
 	Usage      map[string]modelUsage
 	RawUsage   json.RawMessage
+	turns      int
+	duration   int64
 }
 
 func (c *claudeResult) observe(line []byte) {
@@ -417,8 +446,19 @@ func (c *claudeResult) observe(line []byte) {
 		c.SessionID = m.SessionID
 	}
 	if m.Type == "result" {
-		c.Result, c.Subtype, c.IsError = m.Result, m.Subtype, m.IsError
-		c.CostUSD, c.NumTurns, c.DurationMS = m.TotalCostUSD, m.NumTurns, m.DurationMS
+		// An interactive session reports one result per turn: the cost is the
+		// session's so far, turns and duration are the turn's own.
+		c.Result, c.Subtype, c.IsError, c.CostUSD = m.Result, m.Subtype, m.IsError, m.TotalCostUSD
+		if m.NumTurns != nil {
+			c.turns += *m.NumTurns
+			n := c.turns
+			c.NumTurns = &n
+		}
+		if m.DurationMS != nil {
+			c.duration += *m.DurationMS
+			d := c.duration
+			c.DurationMS = &d
+		}
 		c.Usage, c.RawUsage = nil, nil
 		if len(m.ModelUsage) > 0 && json.Unmarshal(m.ModelUsage, &c.Usage) == nil {
 			c.RawUsage = m.ModelUsage

@@ -18,8 +18,9 @@ vulnerability) on this repository. Do not open a public issue.
   database backups in `backups/` — together they decrypt the vault.
 - Keep the workspace folder private (Forge creates it `0700`, its files
   `0600`).
-- Leave `terminal`, `code` and permission modes beyond `plan`/`acceptEdits`
-  off on machines that do not need them — they are opt-in per machine.
+- Leave `terminal`, `code`, `approvals` and permission modes beyond
+  `plan`/`acceptEdits` off on machines that do not need them — they are
+  opt-in per machine.
 - Review Settings → Security (the security log) now and then.
 
 ## Design notes
@@ -34,6 +35,12 @@ vulnerability) on this repository. Do not open a public issue.
   bound to its row.
 - Agents authenticate with a token (stored hashed) and can only do what their
   local configuration (`~/.config/forge/agent.json`) allows.
+- Interactive runs relay Claude Code's questions to the web app. With
+  `"approvals": true` a machine also lets whoever is signed in to Forge allow
+  tool calls and plans one by one — the same power as sitting at that
+  terminal; "allow for this session" never writes a settings file, and a mode
+  switch is limited to the machine's `permission_modes`. Off (the default),
+  those requests are denied on the machine.
 - Machines join with a one-time pairing code (valid 15 minutes, stored
   hashed, rate-limited); the first account is created with a one-time setup
   token printed by the server. Neither is ever shown again.

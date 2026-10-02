@@ -53,6 +53,8 @@ import type {
   RepoInput,
   Run,
   RunEvent,
+  RunPrompt,
+  PromptAnswer,
   RunFilters,
   RunInput,
   Runner,
@@ -685,6 +687,12 @@ export function useRuns(filters: RunFilters, refetchInterval: number | false = 8
   });
 }
 
+/** How many interactive runs wait on the user (a question, an approval, a reply) — the Agents nav badge. */
+export function useWaitingRuns(): number {
+  const runs = useRuns({ status: "running", limit: 50 }, 10_000);
+  return (runs.data ?? []).filter((r) => r.awaiting).length;
+}
+
 /** `live`: poll every 3 s while the run is queued or running (the run page polls its events instead). */
 export function useRun(id: number, { live = false }: { live?: boolean } = {}) {
   return useQuery({
@@ -699,7 +707,7 @@ export function isActiveRun(run: Pick<Run, "status"> | undefined | null): boolea
   return !!run && (run.status === "queued" || run.status === "running");
 }
 
-type RunEventsData = { events: RunEvent[]; run: Run };
+type RunEventsData = { events: RunEvent[]; run: Run; prompts: RunPrompt[] };
 
 /**
  * Incremental log polling. Each fetch asks only for events after the last seq
@@ -720,6 +728,7 @@ export function useRunEvents(id: number) {
         const merged: RunEventsData = {
           run: res.run,
           events: prev ? [...prev.events, ...res.events.filter((e) => e.seq > after)] : res.events,
+          prompts: res.prompts ?? [], // always the whole list: it is short
         };
         prev = merged;
         if (res.events.length < 500) break;
@@ -730,6 +739,37 @@ export function useRunEvents(id: number) {
     refetchInterval: (query) => (isActiveRun(query.state.data?.run) || !query.state.data ? 1500 : false),
     structuralSharing: false,
   });
+}
+
+// ── Interactive runs ─────────────────────────────────────────────────────
+// Answers and follow-ups go to the run's inbox; the machine picks them up
+// within a moment, and the transcript poll shows what happened.
+
+function useRunInput<V>(fn: (v: V) => Promise<unknown>, runId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.runEvents(runId) });
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+    },
+  });
+}
+
+export function useAnswerPrompt(runId: number) {
+  return useRunInput(
+    ({ promptId, answer }: { promptId: number; answer: PromptAnswer }) =>
+      api.post<{ prompt: RunPrompt }>(`/runs/${runId}/prompts/${promptId}/answer`, answer),
+    runId,
+  );
+}
+
+export function useSendRunMessage(runId: number) {
+  return useRunInput((text: string) => api.post<Run>(`/runs/${runId}/messages`, { text }), runId);
+}
+
+export function useEndRunSession(runId: number) {
+  return useRunInput(() => api.post<Run>(`/runs/${runId}/end`), runId);
 }
 
 export function useCreateRun() {

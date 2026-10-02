@@ -104,6 +104,8 @@ func (s *Server) runnerFinish(w http.ResponseWriter, r *http.Request, rn *store.
 		writeErr(w, r, err)
 		return
 	}
+	s.inboxes.notify(id) // a session's inbox poll ends with the run
+	s.inboxes.forget(id)
 	if run, err := s.store.RunByID(r.Context(), id); err == nil && run.ChatTurnID != nil {
 		s.assistant.FinishSession(r.Context(), run) // an Assistant turn on Claude Code
 	}

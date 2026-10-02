@@ -181,6 +181,33 @@ describe("NewRunDialog confirm-commands", () => {
     expect(posted[0]).toMatchObject({ kind: "command", command: "publish-android", repo_id: 11, runner_id: 1, confirmed: true });
   });
 
+  it("queues an agent run as interactive when the machine supports it", async () => {
+    const posted: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      routeFetch({
+        "POST /runs": (init) => {
+          posted.push(JSON.parse(String(init.body)));
+          return jsonResponse(201, { id: 99, runner_name: "desktop" });
+        },
+      }),
+    );
+    const qc = testClient();
+    qc.setQueryData(["runners"], [{ ...runner, capabilities: { ...runner.capabilities, interactive: true, approvals: false } }]);
+    qc.setQueryData(["projects", { includeArchived: false }], [project]);
+    qc.setQueryData(["project", "SHOP"], detail);
+    qc.setQueryData(["tasks", { project: "SHOP", open: true }], []);
+    renderWithProviders(<NewRunDialog prefill={{ project_key: "SHOP" }} onClose={() => {}} />, { qc });
+    const user = userEvent.setup();
+    const toggle = screen.getByRole("switch", { name: /Interactive/ });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText(/Permission prompts are denied: desktop has approvals off/)).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Prompt"), "Fix it");
+    await user.click(screen.getByRole("button", { name: "Queue run" }));
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0]).toMatchObject({ kind: "agent", interactive: true });
+  });
+
   it("offers each engine's models and the effort levels for an agent run", async () => {
     const posted: unknown[] = [];
     vi.stubGlobal(

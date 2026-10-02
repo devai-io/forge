@@ -116,6 +116,8 @@ func (r *Runner) capabilities() map[string]any {
 		"terminal":         r.terminalEnabled(),
 		"code":             r.codeEnabled(),
 		"code_gateway":     r.codeGateway(),
+		"interactive":      true,
+		"approvals":        r.cfg.Approvals,
 	}
 }
 

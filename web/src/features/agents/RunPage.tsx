@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ApiError } from "@/api/client";
 import { isActiveRun, useCancelRun, useRun, useRunEvents } from "@/api/hooks";
-import type { Run, RunEvent } from "@/api/types";
+import type { Run, RunEvent, RunPrompt } from "@/api/types";
 import { ColorDot } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
@@ -21,6 +21,7 @@ import { formatCost, formatDuration } from "@/lib/format";
 import { mapRunEvents } from "@/lib/runlog";
 import { ENGINE_LABEL, runTitle } from "@/lib/agents";
 import { RunKindIcon, RunStatusBadge } from "./RunBits";
+import { RunInteraction } from "./RunInteraction";
 import { RunLog } from "./RunLog";
 
 export function RunPage() {
@@ -40,10 +41,22 @@ export function RunPage() {
       </div>
     );
   }
-  return <RunView run={current} events={events.data?.events} loadingEvents={events.isPending} />;
+  return (
+    <RunView run={current} events={events.data?.events} prompts={events.data?.prompts ?? []} loadingEvents={events.isPending} />
+  );
 }
 
-function RunView({ run, events, loadingEvents }: { run: Run; events: RunEvent[] | undefined; loadingEvents: boolean }) {
+function RunView({
+  run,
+  events,
+  prompts,
+  loadingEvents,
+}: {
+  run: Run;
+  events: RunEvent[] | undefined;
+  prompts: RunPrompt[];
+  loadingEvents: boolean;
+}) {
   const cancel = useCancelRun();
   const toast = useToast();
   const { newRun, openTask } = useShell();
@@ -62,9 +75,10 @@ function RunView({ run, events, loadingEvents }: { run: Run; events: RunEvent[] 
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
+  const pendingPrompts = prompts.filter((p) => p.status === "pending").length;
   useEffect(() => {
     if (follow && active) bottom.current?.scrollIntoView({ block: "end" });
-  }, [items.length, follow, active]);
+  }, [items.length, pendingPrompts, follow, active]);
 
   const duration =
     run.duration_ms ??
@@ -224,9 +238,15 @@ function RunView({ run, events, loadingEvents }: { run: Run; events: RunEvent[] 
         )}
         {active ? (
           <p className="mt-3 flex items-center gap-2 text-[12px] text-fg-3" role="status">
-            <span className="size-1.5 animate-pulse-soft rounded-full bg-accent" aria-hidden /> Live
+            <span className="size-1.5 animate-pulse-soft rounded-full bg-accent" aria-hidden />
+            {run.awaiting === "answer"
+              ? "Waiting for your answer"
+              : run.awaiting === "reply"
+                ? "Your turn — reply, or end the session"
+                : "Live"}
           </p>
         ) : null}
+        {active && run.interactive && run.status === "running" ? <RunInteraction run={run} prompts={prompts} /> : null}
         <div ref={bottom} />
       </section>
 

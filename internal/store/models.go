@@ -270,6 +270,11 @@ type RunnerCapabilities struct {
 	// CodeGateway is where forge-api reaches the runner's VS Code gateway
 	// (a tailnet address); not shown in the UI.
 	CodeGateway string `json:"code_gateway,omitempty"`
+	// Interactive: the agent can keep a session open for questions and
+	// follow-ups. Approvals: it also relays tool permissions and plan
+	// approvals (the machine's "approvals" setting); otherwise only questions.
+	Interactive bool `json:"interactive"`
+	Approvals   bool `json:"approvals"`
 }
 
 type CommandDetail struct {
@@ -358,6 +363,12 @@ type Run struct {
 	Usage json.RawMessage `json:"usage"`
 	// AppendSystem: only the runner needs it (Assistant sessions).
 	AppendSystem string `json:"append_system,omitempty"`
+	// Interactive: the session stays open on the machine; its questions and
+	// approval requests come to the web app, and follow-ups go back to it.
+	Interactive bool `json:"interactive"`
+	// Awaiting is what a running interactive session waits for: "answer" (a
+	// pending prompt), "reply" (it finished a turn), or "" (it is working).
+	Awaiting string `json:"awaiting"`
 }
 
 type RunEvent struct {

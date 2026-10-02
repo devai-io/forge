@@ -72,6 +72,15 @@ type Config struct {
 	//   {"/home/me/": "/Users/me/"}
 	PathMap map[string]string `json:"path_map"`
 
+	// Approvals lets interactive runs relay tool permissions and plan
+	// approvals to Forge, where the user allows or denies them (as in a
+	// terminal session). Off: those are denied, as in a plain -p run;
+	// questions (AskUserQuestion) are relayed either way.
+	Approvals bool `json:"approvals"`
+	// IdleMinutes is how long an interactive session waits for a follow-up
+	// after a turn before it closes (default 15).
+	IdleMinutes int `json:"idle_minutes"`
+
 	// Code serves VS Code (web) from this machine — the master only.
 	Code CodeConfig `json:"code"`
 
@@ -192,6 +201,9 @@ func (c *Config) normalize() error {
 	}
 	if c.MaxRunMinutes <= 0 {
 		c.MaxRunMinutes = 120
+	}
+	if c.IdleMinutes <= 0 {
+		c.IdleMinutes = 15
 	}
 	c.Commands = map[string]Command{}
 	for name, raw := range c.RawCommands {

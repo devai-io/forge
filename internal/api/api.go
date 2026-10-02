@@ -50,6 +50,7 @@ type Server struct {
 	resets  *limiter // reset e-mails requested
 	pairs   *limiter // wrong machine pairing codes
 	wakeups *notifier
+	inboxes *notifier // per run: something for an interactive session's machine
 
 	// claimWait is how long a runner's claim long-poll is held open.
 	claimWait time.Duration
@@ -85,6 +86,7 @@ func New(cfg config.Config, st *store.Store, m *mail.Mailer, mon *monitor.Monito
 		resets:      newLimiter(5, 20, time.Hour),
 		pairs:       newLimiter(10, 60, 15*time.Minute),
 		wakeups:     newNotifier(),
+		inboxes:     newNotifier(),
 		terminals:   newTerminalHub(),
 		codes:       newCodeSessions(),
 		claimWait:   25 * time.Second,
@@ -216,12 +218,19 @@ func (s *Server) Handler() http.Handler {
 	h("GET /api/runs/{id}", s.authed(s.getRun))
 	h("GET /api/runs/{id}/events", s.authed(s.runEvents))
 	h("POST /api/runs/{id}/cancel", s.authed(s.cancelRun))
+	h("POST /api/runs/{id}/prompts/{pid}/answer", s.authed(s.answerPrompt))
+	h("POST /api/runs/{id}/messages", s.authed(s.sendRunMessage))
+	h("POST /api/runs/{id}/end", s.authed(s.endRunSession))
 
 	h("POST /api/runner/pair", s.runnerPair)
 	h("POST /api/runner/heartbeat", s.runnerAuth(s.runnerHeartbeat))
 	h("POST /api/runner/claim", s.runnerAuth(s.runnerClaim))
 	h("POST /api/runner/runs/{id}/events", s.runnerAuth(s.runnerEvents))
 	h("POST /api/runner/runs/{id}/finish", s.runnerAuth(s.runnerFinish))
+	h("POST /api/runner/runs/{id}/prompts", s.runnerAuth(s.runnerPrompt))
+	h("POST /api/runner/runs/{id}/prompts/expire", s.runnerAuth(s.runnerExpirePrompt))
+	h("POST /api/runner/runs/{id}/inbox", s.runnerAuth(s.runnerInbox))
+	h("POST /api/runner/runs/{id}/awaiting", s.runnerAuth(s.runnerAwaiting))
 	h("POST /api/runner/repos", s.runnerAuth(s.runnerRepos))
 	h("GET /api/runner/control", s.runnerAuth(s.runnerControl))
 	h("GET /api/runner/tty/{channel}", s.runnerAuth(s.runnerTTY))
@@ -643,6 +652,13 @@ func (n *notifier) wait(runnerID int64) <-chan struct{} {
 		n.chans[runnerID] = ch
 	}
 	return ch
+}
+
+// forget drops an id's channel (a finished run's inbox).
+func (n *notifier) forget(id int64) {
+	n.mu.Lock()
+	delete(n.chans, id)
+	n.mu.Unlock()
 }
 
 func (n *notifier) notify(runnerID int64) {

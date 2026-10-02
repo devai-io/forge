@@ -15,8 +15,17 @@ const STATUS: Record<RunStatus, { label: string; tone: "neutral" | "accent" | "g
   cancelled: { label: "Cancelled", tone: "outline" },
 };
 
-export function RunStatusBadge({ run }: { run: Pick<Run, "status" | "cancel_requested"> }) {
+export function RunStatusBadge({ run }: { run: Pick<Run, "status" | "cancel_requested"> & { awaiting?: Run["awaiting"] } }) {
   const s = STATUS[run.status];
+  // An interactive session waiting on the user says so.
+  const waiting = run.status === "running" && !run.cancel_requested && run.awaiting;
+  if (waiting) {
+    return (
+      <Badge tone="warning" dot className="[&>span:first-child]:animate-pulse-soft">
+        {run.awaiting === "answer" ? "Needs you" : "Your turn"}
+      </Badge>
+    );
+  }
   const label = run.status === "running" && run.cancel_requested ? "Cancelling" : s.label;
   return (
     <Badge tone={s.tone} dot className={clsx(run.status === "running" && "[&>span:first-child]:animate-pulse-soft")}>

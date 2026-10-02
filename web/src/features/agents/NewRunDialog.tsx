@@ -47,6 +47,8 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   const [model, setModel] = useState(resume?.model ?? "");
   const [customModel, setCustomModel] = useState(false);
   const [effort, setEffort] = useState(resume?.effort ?? "");
+  // Interactive by default: questions, approvals and replies in Forge.
+  const [interactive, setInteractive] = useState(resume ? resume.interactive : true);
   // "" = the server's default engine.
   const [engine, setEngine] = useState<Engine | "">("");
   const defaultEngine = engineStatus.data?.settings.default ?? "deepseek";
@@ -70,6 +72,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   const tasks = useTasks({ project: effectiveProjectKey, open: true }, { enabled: !!effectiveProjectKey && !resume });
 
   const modes = runner?.capabilities.permission_modes.length ? runner.capabilities.permission_modes : ["plan"];
+  const canInteract = !!runner?.capabilities.interactive;
   const repoName = repos.find((r) => String(r.id) === effectiveRepoId)?.name;
   // Commands any runner offers for this repo (unscoped, or scoped to it) —
   // picking one that lives elsewhere (an iOS upload on the Mac) moves the run there.
@@ -107,6 +110,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
         model: model.trim() || undefined,
         engine: kind === "agent" && !resume && engine ? engine : undefined,
         effort: kind === "agent" || resume ? effort || undefined : undefined,
+        interactive: (kind === "agent" || !!resume) && canInteract && interactive ? true : undefined,
         worktree: kind === "agent" ? worktree : false,
         task_id: taskId ? Number(taskId) : null,
         resume_run_id: resume?.id ?? null,
@@ -326,6 +330,23 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                   </Select>
                 )}
               </Field>
+            </div>
+            <div>
+              <Switch
+                checked={canInteract && interactive}
+                onChange={setInteractive}
+                disabled={!canInteract}
+                label="Interactive — answer its questions and reply here, like a terminal session"
+              />
+              <p className="mt-1 pl-11 text-[12px] text-fg-3">
+                {!runner
+                  ? null
+                  : !canInteract
+                    ? `${runner.name}'s Forge agent is too old for this; update it to talk to the session.`
+                    : runner.capabilities.approvals
+                      ? "Questions, permission prompts and plan approval come to you; the session waits for replies after each turn."
+                      : `Questions come to you. Permission prompts are denied: ${runner.name} has approvals off (agent.json).`}
+              </p>
             </div>
             {!resume ? (
               <Switch

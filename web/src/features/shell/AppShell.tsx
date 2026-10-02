@@ -6,7 +6,7 @@ import clsx from "clsx";
 import { Ellipsis, LogOut, Monitor, Moon, Plus, Search, Settings, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useLogout, useProjects } from "@/api/hooks";
+import { useLogout, useProjects, useWaitingRuns } from "@/api/hooks";
 import { ColorDot, Kbd } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Menu } from "@/components/ui/Menu";
@@ -78,8 +78,21 @@ function Logo() {
   );
 }
 
+function WaitingBadge({ count, compact }: { count: number; compact?: boolean }) {
+  if (!count) return null;
+  const label = `${count} run${count === 1 ? "" : "s"} waiting for you`;
+  return compact ? (
+    <span className="absolute -top-0.5 -right-1 size-2 rounded-full bg-warning" role="status" aria-label={label} />
+  ) : (
+    <span className="ml-auto rounded-full bg-warning/20 px-1.5 text-[11px] font-semibold text-fg tabular" role="status" aria-label={label}>
+      {count}
+    </span>
+  );
+}
+
 function Sidebar() {
   const projects = useProjects();
+  const waiting = useWaitingRuns();
   const [creating, setCreating] = useState(false);
   return (
     <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r border-line bg-surface/60 md:flex">
@@ -101,6 +114,7 @@ function Sidebar() {
           >
             <Icon className="size-4 text-fg-3" aria-hidden />
             {label}
+            {to === "/agents" ? <WaitingBadge count={waiting} /> : null}
           </NavLink>
         ))}
       </nav>
@@ -254,6 +268,7 @@ function TopBar() {
 function MobileNav() {
   const location = useLocation();
   const [moreOpen, setMoreOpen] = useState(false);
+  const waiting = useWaitingRuns();
   const more = NAV.filter((n) => !n.mobile);
   const moreActive = [...more.map((n) => n.to), "/settings"].some((to) => location.pathname.startsWith(to));
 
@@ -307,7 +322,10 @@ function MobileNav() {
       >
         {NAV.filter((n) => n.mobile).map(({ to, short, icon: Icon, end }) => (
           <NavLink key={to} to={to} end={end} className={({ isActive }) => tab(isActive && !moreOpen)}>
-            <Icon className="size-5" aria-hidden />
+            <span className="relative">
+              <Icon className="size-5" aria-hidden />
+              {to === "/agents" ? <WaitingBadge count={waiting} compact /> : null}
+            </span>
             {short}
           </NavLink>
         ))}

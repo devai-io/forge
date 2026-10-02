@@ -194,7 +194,9 @@ Full reference: [`deploy/agent.example.json`](deploy/agent.example.json).
 | `terminal` | `false` | let Forge attach to this machine's tmux sessions |
 | `code` | off | `{"enabled": true, "listen": "10.0.0.5:7422"}` — VS Code in the browser; `listen` must be an address the **server** can reach (a private network/VPN), never a public one |
 | `path_map` | `{}` | where repos registered with other machines' paths live here, e.g. `{"/home/me/": "/Users/me/"}` |
-| `max_concurrent`, `max_run_minutes` | 2, 120 | run limits |
+| `approvals` | `false` | interactive runs relay tool permissions and plan approvals to Forge, where you allow or deny each one; off, those are denied on the machine (questions always come through) |
+| `idle_minutes` | 15 | how long an interactive run waits for your reply after each turn before it ends |
+| `max_concurrent`, `max_run_minutes` | 2, 120 | run limits (an interactive run holds its slot while it waits) |
 | `ci_interval` | `15m` | how often GitHub Actions status is read with `gh` (`0` = off) |
 | `pull_interval` | `30m` | master only: fetch every repo, fast-forward the ones with no local changes or unpushed commits (`0` = off). Uses this machine's git credentials — SSH keys must work without a prompt (no passphrase, or an agent the service can reach) |
 

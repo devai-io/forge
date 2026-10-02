@@ -290,15 +290,53 @@ top = first − 1000).
 | POST | /api/runners/{id}/rotate | – | `{runner: Runner, token: string}` — the token is shown once (manual setup) |
 | DELETE | /api/runners/{id} | – | `204` |
 | GET | /api/runs | query `project` (key), `task` (id), `status`, `limit` (default 50) | `{runs: Run[]}` newest first |
-| POST | /api/runs | `{runner_id, repo_id, kind, prompt?, command?, permission_mode?, model?, engine?, worktree?, task_id?, resume_run_id?}` | `201 Run` (queued). `resume_run_id` copies runner/repo from that run and requires it to have a `session_id` |
+| POST | /api/runs | `{runner_id, repo_id, kind, prompt?, command?, permission_mode?, model?, engine?, effort?, interactive?, worktree?, task_id?, resume_run_id?}` | `201 Run` (queued). `resume_run_id` copies runner/repo from that run and requires it to have a `session_id` |
 | GET | /api/runs/{id} | – | `Run` |
-| GET | /api/runs/{id}/events | query `after` (seq, default 0), `limit` (default 500) | `{events: RunEvent[], run: Run}` — poll every ~1.5 s while the run is active |
+| GET | /api/runs/{id}/events | query `after` (seq, default 0), `limit` (default 500) | `{events: RunEvent[], run: Run, prompts: RunPrompt[]}` — poll every ~1.5 s while the run is active; `prompts` is the whole list (empty unless interactive) |
 | POST | /api/runs/{id}/cancel | – | `Run` (queued → cancelled immediately; running → `cancel_requested`, the runner kills it) |
+| POST | /api/runs/{id}/prompts/{pid}/answer | `PromptAnswer` | `{prompt: RunPrompt}`; `409` if already answered, `422` for a decision the prompt's kind does not take or a run that is not a running interactive one |
+| POST | /api/runs/{id}/messages | `{text}` | `Run` — a follow-up for the session (read when it finishes what it is doing) |
+| POST | /api/runs/{id}/end | – | `Run` — closes the session after the current turn; the run then finishes normally |
 
 Validation for `POST /api/runs`: the runner must exist; `kind = agent` needs a
 non-empty `prompt` and a `permission_mode` listed in the runner's capabilities
 (default `plan`); `kind = command` needs a `command` listed in the runner's
 capabilities. The repo must have a `path`.
+
+#### Interactive runs
+
+An agent run with `interactive: true` (only on a runner whose capabilities say
+`interactive`; never an Assistant session) keeps its Claude Code session open
+on the machine, like a terminal session. What the session asks becomes a
+`RunPrompt`; the answer, follow-up messages and "end" go to the run's inbox,
+which the machine long-polls. The machine builds Claude Code's reply from the
+answer under its own rules: permissions and plans are relayed only with
+`"approvals": true` in its `agent.json` (otherwise denied there, as in a plain
+run); "allow for this session" stays in the session; a mode switch only to a
+mode the machine accepts. After each turn it waits `idle_minutes` (default 15)
+for a follow-up, then closes and the run finishes.
+
+```ts
+type Run = { /* … */ interactive: boolean;
+             awaiting: "" | "answer" | "reply" };   // running interactive runs: a pending prompt / the turn ended
+type RunnerCapabilities = { /* … */ interactive?: boolean; approvals?: boolean };
+type RunPrompt = {
+  id: number; run_id: number; request_id: string;
+  kind: "question" | "permission" | "plan";        // AskUserQuestion | any other tool | ExitPlanMode
+  tool_name: string; input: unknown;                // the tool's input as Claude Code sent it
+  suggestions: unknown[];                           // Claude Code's permission_suggestions
+  description: string;
+  status: "pending" | "answered" | "expired";       // expired: withdrawn, or the run ended
+  answer: PromptAnswer | {}; created_at: string; answered_at: string | null;
+};
+type PromptAnswer = {
+  decision: "answer" | "deny"                       // question
+          | "allow" | "allow_always" | "deny"       // permission (allow_always: for this session)
+          | "approve" | "approve_edits" | "deny";   // plan (approve_edits: then acceptEdits)
+  answers?: Record<string, string>;                 // question text → label(s) ", "-joined, or own words
+  message?: string;                                 // deny: why, or what to change
+};
+```
 
 ### Runner protocol (`Authorization: Bearer frg_…`)
 | Method | Path | Body | Response |
@@ -308,6 +346,10 @@ capabilities. The repo must have a `path`.
 | POST | /api/runner/runs/{id}/events | `{events: [{kind, data}]}` | `204` (seq assigned server-side, in order) |
 | POST | /api/runner/runs/{id}/finish | `{status: "succeeded"|"failed"|"cancelled", exit_code?, session_id?, result?, error?, cost_usd?, num_turns?, duration_ms?, usage?}` | `204` — `usage`: Claude Code's `modelUsage`, stored on the run |
 | POST | /api/runner/repos | `{repos: [{repo_id, branch, dirty, ahead, behind, head, commits_7d, last_commit_at, error}]}` | `204` |
+| POST | /api/runner/runs/{id}/prompts | `{request_id, tool_name, input, suggestions, description}` | `{prompt: RunPrompt}` — interactive runs; the same `request_id` twice is stored once |
+| POST | /api/runner/runs/{id}/prompts/expire | `{request_id}` | `204` — Claude Code withdrew it |
+| POST | /api/runner/runs/{id}/inbox | `{after: number}` | long-poll up to 25 s: `{items: [{id, kind: "answer"\|"message"\|"end", data}], done: boolean}` — `answer` data is `{request_id, answer: PromptAnswer}`, `message` is `{text}`; `done` once the run is no longer running |
+| POST | /api/runner/runs/{id}/awaiting | `{awaiting: "reply" \| ""}` | `204` — the session finished a turn / is working again |
 
 A runner only ever sees runs addressed to it. Runs stuck `running` on a runner
 that has been offline for 10 minutes are marked `failed` with

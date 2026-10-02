@@ -239,7 +239,10 @@ SELECT r.id, coalesce(r.runner_id, 0), coalesce(rn.name, r.runner_name), coalesc
        r.kind, r.prompt, r.command, r.permission_mode, r.model, r.worktree, r.resume_run_id, r.status,
        r.cancel_requested, r.session_id, r.result, r.error, r.exit_code, r.cost_usd, r.num_turns, r.duration_ms,
        r.created_at, r.started_at, r.finished_at, coalesce(rp.path, ''), r.resume_session, r.model_note, r.engine,
-       r.effort, r.chat_turn_id, r.usage, r.append_system
+       r.effort, r.chat_turn_id, r.usage, r.append_system, r.interactive,
+       CASE WHEN r.status <> 'running' THEN ''
+            WHEN EXISTS (SELECT 1 FROM run_prompts pr WHERE pr.run_id = r.id AND pr.status = 'pending') THEN 'answer'
+            ELSE r.awaiting END
 FROM runs r
 LEFT JOIN projects p ON p.id = r.project_id
 LEFT JOIN repos rp ON rp.id = r.repo_id
@@ -254,7 +257,8 @@ func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 		&r.RepoID, &r.RepoName, &r.TaskID, &r.TaskRef, &r.Kind, &r.Prompt, &r.Command, &r.PermissionMode,
 		&r.Model, &r.Worktree, &r.ResumeRunID, &r.Status, &r.CancelRequested, &r.SessionID, &r.Result, &r.Error,
 		&r.ExitCode, &r.CostUSD, &r.NumTurns, &r.DurationMS, &r.CreatedAt, &r.StartedAt, &r.FinishedAt,
-		&r.RepoPath, &r.ResumeSession, &r.ModelNote, &r.Engine, &r.Effort, &r.ChatTurnID, &usage, &r.AppendSystem); err != nil {
+		&r.RepoPath, &r.ResumeSession, &r.ModelNote, &r.Engine, &r.Effort, &r.ChatTurnID, &usage, &r.AppendSystem,
+		&r.Interactive, &r.Awaiting); err != nil {
 		return nil, mapErr(err)
 	}
 	r.Usage = json.RawMessage(usage)
@@ -349,6 +353,9 @@ type RunInput struct {
 	// AppendSystem is added to Claude Code's system prompt (Assistant
 	// sessions); set by the server only.
 	AppendSystem string `json:"-"`
+	// Interactive keeps the session open for questions and follow-ups (an
+	// agent run on a machine that supports it).
+	Interactive bool `json:"interactive"`
 }
 
 // CreateRun validates a run against what its runner says it can do, then
@@ -439,6 +446,12 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 		if in.Effort != "" && !OneOf(in.Effort, ClaudeEfforts) {
 			return nil, invalid("effort", "must be one of %s", strings.Join(ClaudeEfforts, ", "))
 		}
+		if in.Interactive && home {
+			return nil, invalid("interactive", "an assistant session answers through its chat")
+		}
+		if in.Interactive && runner.LastSeenAt != nil && !caps.Interactive {
+			return nil, invalid("interactive", "runner %s needs a newer Forge agent for interactive runs", runner.Name)
+		}
 		in.Command = ""
 	case "command":
 		in.Command = strings.TrimSpace(in.Command)
@@ -457,7 +470,7 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 				return nil, invalid("confirmed", "%q needs explicit confirmation", in.Command)
 			}
 		}
-		in.PermissionMode, in.Worktree, in.Model, in.Engine, in.Effort = "", false, "", "", ""
+		in.PermissionMode, in.Worktree, in.Model, in.Engine, in.Effort, in.Interactive = "", false, "", "", "", false
 	default:
 		return nil, invalid("kind", "must be agent or command")
 	}
@@ -472,11 +485,11 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO runs (runner_id, runner_name, project_id, repo_id, task_id, kind, prompt, command,
 			                  permission_mode, model, worktree, resume_run_id, resume_session, model_note, engine, effort, chat_turn_id,
-			                  append_system)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id`,
+			                  append_system, interactive)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id`,
 			runner.ID, runner.Name, projectID, repoID, in.TaskID, in.Kind, in.Prompt, in.Command,
 			in.PermissionMode, in.Model, in.Worktree, in.ResumeRunID, resumeSession, in.ModelNote, in.Engine,
-			in.Effort, in.ChatTurnID, in.AppendSystem).Scan(&id); err != nil {
+			in.Effort, in.ChatTurnID, in.AppendSystem, in.Interactive).Scan(&id); err != nil {
 			return mapErr(err)
 		}
 		if home {
@@ -617,13 +630,16 @@ func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishI
 		err := tx.QueryRow(ctx, `
 			UPDATE runs SET status = $3, exit_code = $4, session_id = CASE WHEN $5 = '' THEN session_id ELSE $5 END,
 			       result = $6, error = $7, cost_usd = $8, num_turns = $9, duration_ms = $10, finished_at = now(),
-			       usage = $11
+			       usage = $11, awaiting = ''
 			WHERE id = $1 AND runner_id = $2 AND status = 'running'
 			RETURNING project_id, task_id, repo_id`,
 			runID, runnerID, in.Status, in.ExitCode, truncate(in.SessionID, 200), truncate(in.Result, 200000),
 			truncate(in.Error, 5000), in.CostUSD, in.NumTurns, in.DurationMS, usage).Scan(&projectID, &taskID, &repoID)
 		if err != nil {
 			return mapErr(err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE run_prompts SET status = 'expired' WHERE run_id = $1 AND status = 'pending'`, runID); err != nil {
+			return err
 		}
 		if repoID == nil {
 			return nil // an assistant session: its chat records it
