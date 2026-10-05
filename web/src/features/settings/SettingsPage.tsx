@@ -31,6 +31,8 @@ import { AccentPicker } from "./AccentPicker";
 import { AssistantPanel } from "./AssistantPanel";
 import { EnginePanel } from "./EnginePanel";
 import { TokenSavingPanel } from "./TokenSaving";
+import { TelegramPanel } from "./TelegramPanel";
+import { MemoryPanel } from "@/features/memory/MemoryPanel";
 import { RevokeOthersButton, SecurityLogPanel } from "./SecurityLog";
 
 export function SettingsPage() {
@@ -45,6 +47,12 @@ export function SettingsPage() {
       <EnginePanel />
       <TokenSavingPanel />
       <AssistantPanel />
+      <TelegramPanel />
+      <MemoryPanel
+        project="global"
+        title="Memory about you"
+        intro="What Forge remembers about you in every project — preferences, how you like things done. Claude sessions and the Assistant start with these; each project's own memory is on its page."
+      />
       <AppearancePanel />
       <section id="security" aria-labelledby="settings-security-h" className="scroll-mt-16 space-y-4 pt-2">
         <h2 id="settings-security-h" className="text-[15px] font-semibold tracking-tight">

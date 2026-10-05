@@ -34,6 +34,15 @@ One binary, one SQLite file, one folder. MIT licensed.
   real work to Claude Code on your machines) or by a Claude Code session on your
   main machine — engine, model and effort per chat, and what each turn spent,
   per API.
+- **Memory** — durable notes per project (decisions, conventions, gotchas,
+  how-tos) and about you. Claude sessions start with them, recall more as a
+  request needs them, and save what they learn through the `forge` MCP server;
+  the Assistant and Telegram use the same memory. Searchable and editable on
+  each project's Memory tab.
+- **Telegram (optional)** — a bot that brings Claude's questions, permission
+  prompts and plans to your phone with buttons, tells you when runs finish or
+  wait for a reply (reply to continue), posts the daily check-up, and passes
+  everything else to the Assistant. Long-polling: nothing to expose.
 - **Agent engine** — agent runs drive Claude Code against DeepSeek's
   Anthropic-compatible API by default (with a DeepSeek key), at a fraction of the
   price; pick Claude per run, or make it the default.

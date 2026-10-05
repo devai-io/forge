@@ -239,6 +239,16 @@ project's context, and a UserPromptSubmit hook that matches each request to
 the open tasks it is about (Jev when on, else shared keywords) so Claude keeps
 them current. Run it again after upgrading to pick up new hooks.
 
+**Memory.** The context also lists the project's memories (what earlier
+sessions saved: decisions, conventions, gotchas, how-tos) and those about you;
+the prompt hook recalls more when a request needs them, and the MCP server's
+`forge_recall` / `forge_remember` / `forge_update_memory` / `forge_forget` let
+Claude search and keep them current. The memory tools need an agent at least as
+new as the server's memory release; the context works with any agent. Browse
+and edit memory on a project's **Memory** tab, and the memories about you under
+**Settings**. Keep `CLAUDE.md` for the stable rules of a repo; memory is for
+what is learned along the way.
+
 ### 2e. Agent engine: DeepSeek by default
 
 Agent runs start Claude Code on a machine. By default it talks to
@@ -274,6 +284,30 @@ forge jev status
 With "compaction" on, each machine's agent installs the pinned
 `fast-jev-compaction` Claude Code plugin within a heartbeat or two. Opt a
 machine out with `"claude_jev": false` in its `agent.json`.
+
+### 2g. Optional: Telegram
+
+A bot that brings Claude's questions, permission prompts and plans to your
+phone (with buttons), says when runs finish or wait for a reply (reply to
+continue), posts the daily check-up, and passes anything else to the Assistant.
+The server long-polls Telegram — no webhook, nothing to expose.
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`) and copy
+   its token.
+2. **Settings → Telegram**: paste the token, switch on, then send your bot any
+   message — it answers with your chat id. Enter that id under *Chat id*.
+   Or on the server:
+
+```bash
+forge telegram set-token < token.txt   # sealed in the vault (tag integration:telegram)
+forge telegram on
+forge telegram chat 123456789          # your chat id, from the bot's answer
+forge telegram test                    # says hello in that chat
+```
+
+Only that chat is read or written; answering prompts from it is logged in the
+security log. Answering a permission from Telegram needs the machine's
+`"approvals": true`, as on the run page.
 
 ---
 

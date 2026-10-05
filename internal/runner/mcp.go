@@ -26,7 +26,8 @@ import (
 const mcpInstructions = `Forge is the user's command center: every project, its repos, servers, endpoints, tasks and the daily check-up.
 When you start work in a repo, the SessionStart hook has usually already injected the Forge context; call forge_context if it is missing or stale.
 Use forge_tasks / forge_task to see what is planned, forge_update_task to move a task (todo → in_progress → done) as you actually work on it, forge_comment to leave a short note of what you did (commit hashes, decisions), and forge_create_task for follow-ups you discover. Refer to tasks by ref, e.g. ALPHA-12.
-Respect each project's change-control notes (e.g. "production changes need explicit approval") — Forge context includes them.`
+Respect each project's change-control notes (e.g. "production changes need explicit approval") — Forge context includes them.
+Memory: sessions start with the project's memories (what earlier sessions learned); forge_recall searches for more. When you learn something durable that a future session would otherwise rediscover — a decision and why, a convention, a gotcha, how to build/test/deploy here, a preference the user stated — save it with forge_remember: one fact per memory, specific, no secrets, no task status (that belongs on tasks). If a memory turns out wrong or stale, fix it with forge_update_memory or drop it with forge_forget.`
 
 type rpcMsg struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -55,7 +56,7 @@ func str(desc string) map[string]any { return map[string]any{"type": "string", "
 // in plan mode (a read-only Assistant chat, a plan run); the others change
 // tasks and are left to modes that allow changes.
 var readOnlyTools = map[string]bool{"forge_context": true, "forge_projects": true, "forge_tasks": true,
-	"forge_task": true, "forge_checkup": true}
+	"forge_task": true, "forge_checkup": true, "forge_recall": true}
 
 func listedTools() []map[string]any {
 	out := make([]map[string]any, len(mcpTools))
@@ -92,6 +93,21 @@ var mcpTools = []tool{
 		obj(map[string]any{"task": str("task ref"), "body": str("markdown")}, "task", "body")},
 	{"forge_checkup", "Today's check-up action list (failing and warning items), optionally for one project.",
 		obj(map[string]any{"project": str("project key")})},
+	{"forge_recall", "Search Forge memory: what earlier sessions and the user saved about this project (decisions, conventions, gotchas, how-tos) and about the user. Defaults to the project of the current directory; without a query, lists the newest.",
+		obj(map[string]any{"query": str("words to search for"), "project": str("project key, or \"global\" for memories about the user only"),
+			"limit": map[string]any{"type": "integer", "description": "default 15"}})},
+	{"forge_remember", "Save one durable fact to Forge memory so future sessions start knowing it. Defaults to the current directory's project; global: true for something about the user that holds in every project (a preference). Returns similar memories — update one of those instead of adding a near-copy.",
+		obj(map[string]any{"content": str("the fact, self-contained and specific (who/what/why); no secrets"),
+			"kind":    map[string]any{"type": "string", "enum": []string{"fact", "decision", "convention", "gotcha", "preference", "howto"}},
+			"project": str("project key (default: the current directory's)"), "repo": str("repo name, when it only applies to one repo"),
+			"global": map[string]any{"type": "boolean", "description": "about the user, every project"},
+			"pinned": map[string]any{"type": "boolean", "description": "always shown first (only for the essentials)"}}, "content")},
+	{"forge_update_memory", "Correct a memory (by id, e.g. 12 for m12): new content, kind, or pinned.",
+		obj(map[string]any{"id": map[string]any{"type": "integer"}, "content": str("replacement text"),
+			"kind":   map[string]any{"type": "string", "enum": []string{"fact", "decision", "convention", "gotcha", "preference", "howto"}},
+			"pinned": map[string]any{"type": "boolean"}}, "id")},
+	{"forge_forget", "Delete a memory that is wrong or no longer true (by id, e.g. 12 for m12).",
+		obj(map[string]any{"id": map[string]any{"type": "integer"}}, "id")},
 }
 
 // ServeMCP runs the stdio MCP loop until stdin closes.
@@ -395,6 +411,9 @@ func callTool(ctx context.Context, c *client, name string, a map[string]any) (st
 			b.WriteString("Nothing open.\n")
 		}
 		return b.String(), nil
+
+	case "forge_recall", "forge_remember", "forge_update_memory", "forge_forget":
+		return memoryTool(ctx, c, name, a)
 	}
 	return "", fmt.Errorf("unknown tool %s", name)
 }
@@ -413,11 +432,12 @@ func asAPIError(err error, target **apiError) bool {
 // or break a session.
 func PrintContext(cfg *Config, hook bool, in io.Reader, out io.Writer) {
 	cwd, _ := os.Getwd()
+	var h struct {
+		SessionID string `json:"session_id"`
+		Cwd       string `json:"cwd"`
+		Source    string `json:"source"`
+	}
 	if hook {
-		var h struct {
-			Cwd    string `json:"cwd"`
-			Source string `json:"source"`
-		}
 		raw, _ := io.ReadAll(io.LimitReader(in, 1<<20))
 		if json.Unmarshal(raw, &h) == nil && h.Cwd != "" {
 			cwd = h.Cwd
@@ -427,10 +447,23 @@ func PrintContext(cfg *Config, hook bool, in io.Reader, out io.Writer) {
 	defer cancel()
 	c := newClient(cfg.APIURL, cfg.Token)
 	var res struct {
-		Markdown string `json:"markdown"`
+		Markdown  string  `json:"markdown"`
+		MemoryIDs []int64 `json:"memory_ids"`
 	}
 	if err := c.get(ctx, "/api/runner/context?cwd="+url.QueryEscape(cwd), &res); err != nil || res.Markdown == "" {
 		return
+	}
+	if hook && len(res.MemoryIDs) > 0 {
+		// The prompt hook must not recall what the session starts with.
+		path := matchSeenPath(h.SessionID)
+		var known []string
+		if b, err := os.ReadFile(path); err == nil {
+			_ = json.Unmarshal(b, &known)
+		}
+		for _, id := range res.MemoryIDs {
+			known = append(known, fmt.Sprintf("m%d", id))
+		}
+		saveSeen(path, known)
 	}
 	if !hook {
 		fmt.Fprint(out, res.Markdown)

@@ -98,3 +98,44 @@ func (s *Store) EngineSettings(ctx context.Context) (EngineSettings, error) {
 func (s *Store) SetEngineSettings(ctx context.Context, v EngineSettings) error {
 	return s.putSetting(ctx, "engine", v)
 }
+
+// TelegramSettings connect Forge to a Telegram bot (the token is the vault
+// item tagged integration:telegram). Only ChatID is ever answered or written
+// to; each switch turns one kind of traffic on.
+type TelegramSettings struct {
+	Enabled bool  `json:"enabled"`
+	ChatID  int64 `json:"chat_id"`
+	// Prompts: what an interactive run asks (questions, permissions, plans)
+	// is sent with buttons, and answered from Telegram.
+	Prompts bool `json:"prompts"`
+	// Runs: a run that finishes, or an interactive one that waits for a reply.
+	Runs bool `json:"runs"`
+	// Checkup: the scheduled daily check-up.
+	Checkup bool `json:"checkup"`
+	// Assistant: other messages go to the Assistant (one chat, /new starts another).
+	Assistant bool `json:"assistant"`
+}
+
+func (s *Store) TelegramSettings(ctx context.Context) (TelegramSettings, error) {
+	v := TelegramSettings{Prompts: true, Runs: true, Checkup: true, Assistant: true}
+	_, err := s.getSetting(ctx, "telegram", &v)
+	return v, err
+}
+
+func (s *Store) SetTelegramSettings(ctx context.Context, v TelegramSettings) error {
+	return s.putSetting(ctx, "telegram", v)
+}
+
+// TelegramChat is the Assistant chat Telegram messages currently go to (0:
+// the next message starts one).
+func (s *Store) TelegramChat(ctx context.Context) int64 {
+	var v struct {
+		ChatID int64 `json:"chat_id"`
+	}
+	_, _ = s.getSetting(ctx, "telegram_chat", &v)
+	return v.ChatID
+}
+
+func (s *Store) SetTelegramChat(ctx context.Context, chatID int64) error {
+	return s.putSetting(ctx, "telegram_chat", map[string]int64{"chat_id": chatID})
+}

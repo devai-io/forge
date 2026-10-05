@@ -24,6 +24,7 @@ import (
 	"github.com/devai-io/forge/internal/monitor"
 	"github.com/devai-io/forge/internal/monitoring"
 	"github.com/devai-io/forge/internal/store"
+	"github.com/devai-io/forge/internal/telegram"
 	"github.com/devai-io/forge/internal/vault"
 	"github.com/devai-io/forge/internal/webui"
 )
@@ -65,6 +66,13 @@ type Server struct {
 	// deepseekAPI is where the run form's DeepSeek model list comes from.
 	deepseekAPI    string
 	deepseekModels modelsCache
+
+	// Telegram (telegram.go): the Bot API client, the loop's state, how long
+	// a poll waits and how often an Assistant turn is checked on.
+	tg            *telegram.Client
+	tgs           tgState
+	tgPoll        time.Duration
+	tgFollowEvery time.Duration
 }
 
 // Deps are the optional collaborators; a zero value turns the feature off
@@ -82,17 +90,21 @@ func New(cfg config.Config, st *store.Store, m *mail.Mailer, mon *monitor.Monito
 		// hour. The global cap is what actually protects a single-account
 		// site from a distributed guesser; the per-address one keeps a
 		// fat-fingered phone from locking out the laptop.
-		logins:      newLimiter(8, 30, 15*time.Minute),
-		resets:      newLimiter(5, 20, time.Hour),
-		pairs:       newLimiter(10, 60, 15*time.Minute),
-		wakeups:     newNotifier(),
-		inboxes:     newNotifier(),
-		terminals:   newTerminalHub(),
-		codes:       newCodeSessions(),
-		claimWait:   25 * time.Second,
-		deepseekAPI: llm.DefaultBaseURL,
-		jevCache:    map[string]relevanceEntry{},
+		logins:        newLimiter(8, 30, 15*time.Minute),
+		resets:        newLimiter(5, 20, time.Hour),
+		pairs:         newLimiter(10, 60, 15*time.Minute),
+		wakeups:       newNotifier(),
+		inboxes:       newNotifier(),
+		terminals:     newTerminalHub(),
+		codes:         newCodeSessions(),
+		claimWait:     25 * time.Second,
+		deepseekAPI:   llm.DefaultBaseURL,
+		jevCache:      map[string]relevanceEntry{},
+		tgPoll:        25 * time.Second,
+		tgFollowEvery: 2 * time.Second,
 	}
+	s.tgs.following = map[int64]bool{}
+	s.tg = telegram.New(s.telegramToken)
 	s.jev = jev.New(s.jevKey)
 	s.assistant = assistant.New(st, assistant.Hooks{Key: s.assistantKey, Route: s.prepareRun, Queued: s.wakeups.notify})
 	return s
@@ -137,6 +149,16 @@ func (s *Server) Handler() http.Handler {
 	h("GET /api/assistant", s.authed(s.getAssistant))
 	h("PATCH /api/assistant", s.authed(s.updateAssistant))
 	h("PUT /api/assistant/key", s.authed(s.elevated(s.setAssistantKey)))
+	h("GET /api/telegram", s.authed(s.getTelegram))
+	h("PATCH /api/telegram", s.authed(s.updateTelegram))
+	h("PUT /api/telegram/token", s.authed(s.elevated(s.setTelegramToken)))
+	h("POST /api/telegram/test", s.authed(s.testTelegram))
+
+	h("GET /api/memories", s.authed(s.listMemories))
+	h("POST /api/memories", s.authed(s.createMemory))
+	h("PATCH /api/memories/{id}", s.authed(s.updateMemory))
+	h("DELETE /api/memories/{id}", s.authed(s.deleteMemory))
+
 	h("GET /api/chats", s.authed(s.listChats))
 	h("POST /api/chats", s.authed(s.createChat))
 	h("GET /api/chats/{id}", s.authed(s.getChat))
@@ -243,6 +265,10 @@ func (s *Server) Handler() http.Handler {
 	h("POST /api/runner/tasks/{task}/comments", s.runnerAuth(s.runnerComment))
 	h("GET /api/runner/checkup", s.runnerAuth(s.runnerCheckup))
 	h("GET /api/runner/jev", s.runnerAuth(s.runnerJev))
+	h("GET /api/runner/memories", s.runnerAuth(s.runnerMemories))
+	h("POST /api/runner/memories", s.runnerAuth(s.runnerRemember))
+	h("PATCH /api/runner/memories/{id}", s.runnerAuth(s.runnerUpdateMemory))
+	h("DELETE /api/runner/memories/{id}", s.runnerAuth(s.runnerForget))
 
 	h("GET /api/terminal/hosts", s.authed(s.terminalHosts))
 	h("GET /api/terminal/{runner}/attach", s.authed(s.elevated(s.terminalAttach)))

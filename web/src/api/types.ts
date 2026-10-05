@@ -895,3 +895,53 @@ export type ChatMessage = {
 
 /** GET /api/chats/{id}, POST /api/chats and POST /api/chats/{id}/messages. */
 export type ChatThread = { chat: Chat; messages: ChatMessage[]; turns: ChatTurn[] };
+
+// ── Memory ────────────────────────────────────────────────────────────────
+
+export type MemoryKind = "fact" | "decision" | "convention" | "gotcha" | "preference" | "howto";
+export const MEMORY_KINDS: MemoryKind[] = ["fact", "decision", "convention", "gotcha", "preference", "howto"];
+
+export type Memory = {
+  id: number;
+  project_key: string | null; // null: about the user, every project
+  repo_id: number | null;
+  repo_name: string | null;
+  kind: MemoryKind;
+  content: string;
+  source: "user" | "claude" | "assistant" | "telegram";
+  origin: string; // e.g. "Claude on desk", "web"
+  pinned: boolean; // listed first in every session's context
+  recalls: number; // times handed to a session on demand
+  last_recalled_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** GET /api/memories — counts are per project key ("" = about the user). */
+export type MemoryList = { memories: Memory[]; counts: Record<string, number> };
+
+export type MemoryInput = { project_key?: string; repo?: string; kind?: MemoryKind; content: string; pinned?: boolean };
+export type MemorySaved = { memory: Memory; duplicate: boolean; similar: Memory[] };
+export type MemoryPatch = { content?: string; kind?: MemoryKind; pinned?: boolean; project_key?: string };
+
+// ── Telegram ──────────────────────────────────────────────────────────────
+
+export type TelegramSettings = {
+  enabled: boolean;
+  chat_id: number; // the one chat the bot reads and writes (0: not linked)
+  prompts: boolean; // interactive-run prompts, answered with buttons
+  runs: boolean; // finished runs and runs waiting for a reply
+  checkup: boolean; // the scheduled daily check-up
+  assistant: boolean; // other messages go to the Assistant
+};
+
+export type TelegramStatus = {
+  settings: TelegramSettings;
+  token_configured: boolean;
+  bot: string; // @username once known ("" before a test)
+  last_error: string;
+  last_error_at: string | null;
+  last_poll_at: string | null;
+};
+
+export type TelegramTest = { ok: boolean; bot?: string; sent?: boolean; note?: string; error?: string };

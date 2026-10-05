@@ -94,6 +94,7 @@ func (s *Server) runnerPrompt(w http.ResponseWriter, r *http.Request, rn *store.
 		writeErr(w, r, err)
 		return
 	}
+	s.tgNotifyPrompt(id, p)
 	writeJSON(w, http.StatusOK, map[string]any{"prompt": p})
 }
 
@@ -168,6 +169,9 @@ func (s *Server) runnerAwaiting(w http.ResponseWriter, r *http.Request, rn *stor
 	if err := s.store.SetAwaiting(r.Context(), id, rn.ID, in.Awaiting); err != nil {
 		writeErr(w, r, err)
 		return
+	}
+	if in.Awaiting == "reply" {
+		s.tgNotifyAwaiting(id)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

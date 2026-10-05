@@ -791,9 +791,18 @@ request typed into Claude Code it posts:
   starting with `/` only match named refs. At most 3 matches; refs in `known` are
   left out. `markdown` is empty when nothing matched.
 
+- With `known_memories: number[]` in the body (agents since memory; older
+  ones leave it out and get no memories), the answer also carries `memories:
+  Memory[]` — at most 3 of the project's (and the user's) memories that the
+  full-text search finds for the prompt *and* that share ≥ 2 significant words
+  with it, minus `known_memories` — and `markdown` gains a "Forge memory that
+  may matter" section. Each counts as a recall.
+
 The hook adds `markdown` as context and remembers the refs per session (user
-cache dir, `forge/prompt-matches/<session>.json`, pruned after 7 days), so a
-session hears about each task once. Errors print nothing.
+cache dir, `forge/prompt-matches/<session>.json`, pruned after 7 days; memory
+ids are kept there as `"m12"`, including those the SessionStart context listed —
+`GET /api/runner/context` returns them as `memory_ids`), so a session hears
+about each task and memory once. Errors print nothing.
 
 ## Agent engine
 
@@ -1034,3 +1043,111 @@ type ChatMessage = {
     generically (arguments and result as JSON).
 - A failed tool call is a `tool` message with `is_error: true` and the reason
   in `content`.
+  - `recall` `{query?, project?, limit?}` → `{memories: string[]}`;
+    `remember` `{content, project?, repo?, kind?, pinned?}` → `{memory,
+    duplicate, similar}`; `update_memory` `{id, content?, kind?, pinned?}`;
+    `forget` `{id}` — see *Memory*. Every DeepSeek turn's system prompt ends
+    with up to 15 memories about the user (no project).
+
+
+# memory and Telegram
+
+## Memory
+
+Durable notes Forge keeps between sessions: per project (decisions,
+conventions, gotchas, how-tos) or about the user (`project_key: null`,
+preferences for every project). Claude sessions start with them, recall more on
+demand and save what they learn (MCP); the Assistant and Telegram read and
+write the same list. Content is indexed for full-text search (SQLite FTS5,
+porter stemming: `deploying` finds `deploys`).
+
+```ts
+type Memory = {
+  id: number;
+  project_key: string | null;      // null: about the user, every project
+  repo_id: number | null; repo_name: string | null;  // only for that repo
+  kind: "fact" | "decision" | "convention" | "gotcha" | "preference" | "howto";
+  content: string;                 // 3–2000 characters
+  source: "user" | "claude" | "assistant" | "telegram";
+  origin: string;                  // "web", "Claude on desk", "Assistant", "telegram"
+  pinned: boolean;                 // listed first in every session's context
+  recalls: number;                 // times handed out on demand (search, match)
+  last_recalled_at: string | null;
+  created_at: string; updated_at: string;
+};
+type MemorySaved = { memory: Memory; duplicate: boolean; similar: Memory[] };
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | /api/memories | query `project` (key, or `global`; omitted: all), `q`, `limit` (default 200) | `{memories: Memory[], counts: {[key or ""]: number}}` — with `q`, best match first; else pinned, then newest |
+| POST | /api/memories | `{project_key?, repo?, kind?, content, pinned?}` | `201 MemorySaved` — the same words (case- and space-insensitive) in the same scope return the existing one with `duplicate: true`; `similar` lists up to 3 search hits in that scope |
+| PATCH | /api/memories/{id} | `{content?, kind?, pinned?, project_key?}` (`""` moves it to the user's memory) | `Memory` |
+| DELETE | /api/memories/{id} | – | `204` |
+
+Runner side (Bearer runner token; backs `forge_recall`, `forge_remember`,
+`forge_update_memory`, `forge_forget`):
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | /api/runner/memories | query `project` (key or `global`), `cwd` (resolves the project when `project` is empty), `q`, `limit` (default 15) | `{project_key, memories}` — a project includes the user's memories; with `q`, each hit counts as a recall |
+| POST | /api/runner/memories | `{content, kind?, project_key?, cwd?, repo?, pinned?, global?}` | `201 MemorySaved` (`source: claude`, `origin: "Claude on <machine>"`); `422` when neither a key nor `cwd` names a project and `global` is not set |
+| PATCH | /api/runner/memories/{id} | as the browser route | `Memory` |
+| DELETE | /api/runner/memories/{id} | – | `204` |
+
+**Session context.** `GET /api/runner/context` (the SessionStart hook) lists,
+after the infra notes: the project's memories (project-wide plus the session's
+repo; pinned, then most recalled, then newest; at most 20) and up to 6 about
+the user, each as `[m<id>] (<kind>[, repo][, pinned]) <content>` cut at 400
+characters, the whole list at 3,500; the rest is one `forge_recall` away. The
+answer gains `memory_ids`. The context ends with an instruction to save durable
+learnings with `forge_remember` and to fix wrong ones.
+
+## Telegram
+
+The server long-polls the Bot API (`getUpdates`, 25 s) — no webhook, nothing
+exposed — and only ever reads from or writes to `chat_id`. The token is the
+vault item tagged `integration:telegram`; settings live in `settings`
+(`telegram`, and `telegram_chat`: the Assistant chat messages go to).
+
+```ts
+type TelegramSettings = { enabled: boolean; chat_id: number;
+  prompts: boolean; runs: boolean; checkup: boolean; assistant: boolean };  // all true by default
+type TelegramStatus = { settings: TelegramSettings; token_configured: boolean; bot: string;
+  last_error: string; last_error_at: string | null; last_poll_at: string | null };
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | /api/telegram | – | `TelegramStatus` |
+| PATCH | /api/telegram | `{enabled?, chat_id?, prompts?, runs?, checkup?, assistant?}` | `TelegramStatus`; changing `chat_id` needs elevation (`403 elevation_required`) |
+| PUT | /api/telegram/token | `{token}` (elevated) | `TelegramStatus`; `422` unless it looks like `123456:ABC…` |
+| POST | /api/telegram/test | – | `{ok, bot?, sent?, note?, error?}` — `getMe`, then a message to the chat when one is set |
+
+What the bot does (`internal/api/telegram.go`):
+
+- **Prompts** (`prompts`): each new prompt of an interactive run is sent once,
+  with buttons — permission: Allow / Allow for session / Deny; plan: Approve /
+  Approve + accept edits / Deny; a one-question, single-select question: one
+  button per option (up to 8) plus Decline. Callback data `p:<prompt>:<decision>`
+  (`o<n>` = option n). A **reply** to the message answers in words: a question's
+  answer (several questions: one line each), or for a permission or plan a deny
+  carrying the reply as its message. Answers go through `AnswerPrompt` exactly as
+  the web app's do and are logged (`telegram_answer`).
+- **Runs** (`runs`): an interactive run that finishes a turn posts Claude's last
+  words with an *End session* button (`e:<run>`); a reply is a follow-up message
+  (`telegram_run_message`). A run that finishes (not cancelled, not an Assistant
+  session) posts its status and result.
+- **Check-up** (`checkup`): the scheduled check-up's open actions.
+- **Assistant** (`assistant`): any other text goes to the current Telegram
+  Assistant chat (created on demand with the default engine); the answer — the
+  turn's last assistant message, or its error — is posted when the turn ends, and
+  a reply to it continues that chat.
+- Commands: `/new [text]`, `/stop`, `/tasks [KEY]`, `/runs`, `/checkup`,
+  `/remember [KEY] text`, `/recall [KEY] words`, `/help`.
+- A message from another chat is ignored; while no chat is set the bot answers
+  any chat with its id (to enter in Settings) and does nothing else.
+- Telegram's links (`telegram_links`: message id → prompt / run / chat) are how
+  replies and button presses find their target.
+
+CLI on the server: `forge telegram status | on | off | set-token (stdin) | chat <id> | test`.

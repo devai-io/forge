@@ -93,6 +93,29 @@ func toolDefs() []llm.Tool {
 			})},
 		{Name: "get_run", Description: "A run's status and, when finished, its result (Claude's final answer or the command's output tail).",
 			Parameters: params([]string{"run_id"}, object{"run_id": prop("integer", "Run id")})},
+		{Name: "recall", Description: "Search Forge memory: durable notes saved per project (decisions, conventions, gotchas, how-tos) and about the user. Without a query, lists the newest.",
+			Parameters: params(nil, object{
+				"query":   prop("string", "Words to search for (optional)"),
+				"project": prop("string", "Project key (optional; also includes memories about the user), or \"global\" for those only"),
+				"limit":   prop("integer", "Default 10, max 50"),
+			})},
+		{Name: "remember", Description: "Save one durable fact to Forge memory. Claude Code sessions in that project start with it. Returns similar memories: update or forget one of those instead of adding a near-copy.",
+			Parameters: params([]string{"content"}, object{
+				"content": prop("string", "The fact, self-contained and specific; no secrets"),
+				"project": prop("string", "Project key; omit for something about the user that holds everywhere (a preference)"),
+				"repo":    prop("string", "Repo name, when it only applies to one repo (optional)"),
+				"kind":    prop("string", "fact | decision | convention | gotcha | preference | howto (default fact)"),
+				"pinned":  prop("boolean", "Always listed first (only for essentials)"),
+			})},
+		{Name: "update_memory", Description: "Correct a memory: new content, kind or pinned.",
+			Parameters: params([]string{"id"}, object{
+				"id":      prop("integer", "Memory id (12 for m12)"),
+				"content": prop("string", "Replacement text"),
+				"kind":    prop("string", "fact | decision | convention | gotcha | preference | howto"),
+				"pinned":  prop("boolean", "Pinned or not"),
+			})},
+		{Name: "forget", Description: "Delete a memory that is wrong or no longer true.",
+			Parameters: params([]string{"id"}, object{"id": prop("integer", "Memory id (12 for m12)")})},
 		{Name: "wait_for_runs", Description: "Wait until the runs finish (or max_seconds pass) and return their status and results.",
 			Parameters: params([]string{"run_ids"}, object{
 				"run_ids":     object{"type": "array", "items": object{"type": "integer"}, "description": "Run ids"},
@@ -455,6 +478,9 @@ func (a *Assistant) call(ctx context.Context, user *store.User, name string, raw
 		}
 		return object{"run": a.runDetail(ctx, r)}, fmt.Sprintf("Checked run #%d — %s", r.ID, r.Status), nil
 
+	case "recall", "remember", "update_memory", "forget":
+		return a.memoryTool(ctx, name, in.Project, loose, str, num)
+
 	case "wait_for_runs":
 		if len(in.RunIDs) == 0 {
 			return nil, "", errors.New("run_ids is required")
@@ -627,4 +653,84 @@ func turnOf(ctx context.Context) *int64 {
 		return &id
 	}
 	return nil
+}
+
+// memoryTool runs the memory tools.
+func (a *Assistant) memoryTool(ctx context.Context, name, project string, loose map[string]any,
+	str func(string) string, num func(string) int) (any, string, error) {
+	lines := func(ms []store.Memory) []string {
+		out := []string{}
+		for _, m := range ms {
+			scope := "user"
+			if m.ProjectKey != nil {
+				scope = *m.ProjectKey
+			}
+			out = append(out, scope+": "+m.Line(600))
+		}
+		return out
+	}
+	switch name {
+	case "recall":
+		limit := num("limit")
+		if limit <= 0 || limit > 50 {
+			limit = 10
+		}
+		f := store.MemoryFilter{Query: str("query"), Limit: limit}
+		switch {
+		case project == "GLOBAL":
+			f.Global = true
+		case project != "":
+			f.ProjectKey, f.WithGlobal = project, true
+		}
+		ms, err := a.store.ListMemories(ctx, f)
+		if err != nil {
+			return nil, "", err
+		}
+		if f.Query != "" {
+			ids := make([]int64, len(ms))
+			for i, m := range ms {
+				ids[i] = m.ID
+			}
+			a.store.MarkRecalled(ctx, ids)
+		}
+		return object{"memories": lines(ms)}, fmt.Sprintf("Recalled %d memories", len(ms)), nil
+
+	case "remember":
+		pinned, _ := loose["pinned"].(bool)
+		saved, err := a.store.CreateMemory(ctx, store.MemoryInput{ProjectKey: project, Repo: str("repo"),
+			Kind: strings.ToLower(str("kind")), Content: str("content"), Pinned: pinned, Source: "assistant", Origin: "Assistant"})
+		if err != nil {
+			return nil, "", err
+		}
+		out := object{"memory": saved.Memory.Line(0), "duplicate": saved.Duplicate, "similar": lines(saved.Similar)}
+		if saved.Duplicate {
+			return out, fmt.Sprintf("Already remembered (m%d)", saved.Memory.ID), nil
+		}
+		return out, fmt.Sprintf("Remembered m%d", saved.Memory.ID), nil
+
+	case "update_memory":
+		p := store.MemoryPatch{}
+		if v := str("content"); v != "" {
+			p.Content = &v
+		}
+		if v := strings.ToLower(str("kind")); v != "" {
+			p.Kind = &v
+		}
+		if v, ok := loose["pinned"].(bool); ok {
+			p.Pinned = &v
+		}
+		m, err := a.store.UpdateMemory(ctx, int64(num("id")), p)
+		if err != nil {
+			return nil, "", err
+		}
+		return object{"memory": m.Line(0)}, fmt.Sprintf("Updated m%d", m.ID), nil
+
+	case "forget":
+		id := int64(num("id"))
+		if err := a.store.DeleteMemory(ctx, id); err != nil {
+			return nil, "", fmt.Errorf("no memory m%d", id)
+		}
+		return object{"forgotten": id}, fmt.Sprintf("Forgot m%d", id), nil
+	}
+	return nil, "", fmt.Errorf("unknown tool %q", name)
 }

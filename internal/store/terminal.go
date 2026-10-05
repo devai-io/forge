@@ -215,6 +215,9 @@ type PathContext struct {
 	ProjectKey string  `json:"project_key"`
 	RepoName   *string `json:"repo_name"`
 	Markdown   string  `json:"markdown"`
+	// MemoryIDs are the memories the markdown lists, so the prompt hook does
+	// not recall them again in the same session.
+	MemoryIDs []int64 `json:"memory_ids"`
 }
 
 // TaskTrimmer picks, from a project's open tasks (most important first), the
@@ -306,6 +309,12 @@ func (s *Store) ContextForPath(ctx context.Context, cwd string, trim TaskTrimmer
 		w("**Down right now:** %s\n", strings.Join(down, ", "))
 	}
 
+	var repoID *int64
+	if repo != nil {
+		repoID = &repo.ID
+	}
+	memIDs := s.writeMemories(ctx, &b, key, repoID)
+
 	tasks, err := s.ListTasks(ctx, TaskFilter{ProjectKey: key, Open: true, Limit: 200})
 	if err == nil && len(tasks) > 0 {
 		rank := map[string]int{"in_progress": 0, "blocked": 1, "todo": 2, "backlog": 3}
@@ -360,8 +369,51 @@ func (s *Store) ContextForPath(ctx context.Context, cwd string, trim TaskTrimmer
 		}
 	}
 	w("\nUse the `forge` MCP tools to read or update this (forge_tasks, forge_update_task, forge_comment, forge_create_task, forge_checkup). Refer to tasks by ref (%s-N).\n", key)
+	w("Memory: forge_recall searches what earlier sessions learned; when you learn something a future session would need " +
+		"(a decision and its reason, a convention, a gotcha, how to do X here), save it with forge_remember — one fact per memory, " +
+		"no secrets — and fix or drop a wrong one (forge_update_memory, forge_forget).\n")
 	out.Markdown = b.String()
+	out.MemoryIDs = memIDs
 	return out, nil
+}
+
+// Memory budget of the session context: the list is cut here, the rest is
+// one forge_recall away.
+const (
+	contextMemoryChars = 3500
+	contextMemoryLine  = 400
+	contextMemoryMax   = 20
+	contextGlobalMax   = 6
+)
+
+// writeMemories adds the project's (and the user's) memories to a session
+// context and returns the ids it listed.
+func (s *Store) writeMemories(ctx context.Context, b *strings.Builder, key string, repoID *int64) []int64 {
+	ids := []int64{}
+	project, global, err := s.contextMemories(ctx, key, repoID)
+	if err != nil || len(project)+len(global) == 0 {
+		return ids
+	}
+	used := 0
+	section := func(title string, list []Memory, max int) {
+		if len(list) == 0 {
+			return
+		}
+		fmt.Fprintf(b, "\n## %s\n", title)
+		for i, m := range list {
+			line := m.Line(contextMemoryLine)
+			if i == max || used+len(line) > contextMemoryChars {
+				fmt.Fprintf(b, "- …%d more (forge_recall)\n", len(list)-i)
+				return
+			}
+			used += len(line)
+			ids = append(ids, m.ID)
+			b.WriteString("- " + line + "\n")
+		}
+	}
+	section("Memory: what earlier sessions learned here", project, contextMemoryMax)
+	section("Memory: about the user (every project)", global, contextGlobalMax)
+	return ids
 }
 
 func clipLines(s string, maxLines, maxChars int) string {

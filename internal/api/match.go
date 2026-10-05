@@ -44,11 +44,19 @@ func (s *Server) runnerMatch(w http.ResponseWriter, r *http.Request, rn *store.R
 		Cwd    string   `json:"cwd"`
 		Prompt string   `json:"prompt"`
 		Known  []string `json:"known"` // refs this session was already told about
+		// KnownMemories: memories this session already has. Only agents
+		// that send it get memories back (older ones would get the same
+		// ones on every request).
+		KnownMemories *[]int64 `json:"known_memories"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
 	all, key := s.matchTasks(r.Context(), in.Cwd, in.Prompt)
+	memories := []store.Memory{}
+	if in.KnownMemories != nil {
+		memories = s.recallMemories(r.Context(), key, in.Prompt, *in.KnownMemories)
+	}
 	known := map[string]bool{}
 	for _, ref := range in.Known {
 		known[strings.ToUpper(ref)] = true
@@ -59,7 +67,14 @@ func (s *Server) runnerMatch(w http.ResponseWriter, r *http.Request, rn *store.R
 			matches = append(matches, m)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"project_key": key, "matches": matches, "markdown": matchMarkdown(matches)})
+	md := matchMarkdown(matches)
+	if rm := recallMarkdown(memories); rm != "" {
+		if md != "" {
+			md += "\n"
+		}
+		md += rm
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"project_key": key, "matches": matches, "memories": memories, "markdown": md})
 }
 
 func (s *Server) matchTasks(ctx context.Context, cwd, prompt string) ([]taskMatch, string) {

@@ -3,10 +3,12 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -33,6 +35,7 @@ func PrintMatch(cfg *Config, in io.Reader, out io.Writer) {
 	if b, err := os.ReadFile(seenPath); err == nil {
 		_ = json.Unmarshal(b, &known)
 	}
+	refs, memories := splitSeen(known)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -41,25 +44,52 @@ func PrintMatch(cfg *Config, in io.Reader, out io.Writer) {
 		Matches  []struct {
 			Ref string `json:"ref"`
 		} `json:"matches"`
+		Memories []struct {
+			ID int64 `json:"id"`
+		} `json:"memories"`
 	}
-	body := map[string]any{"cwd": h.Cwd, "prompt": h.Prompt, "known": known}
+	body := map[string]any{"cwd": h.Cwd, "prompt": h.Prompt, "known": refs, "known_memories": memories}
 	if _, err := newClient(cfg.APIURL, cfg.Token).post(ctx, "/api/runner/match", body, &res); err != nil || res.Markdown == "" {
 		return
 	}
 	_ = json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]any{
 		"hookEventName": "UserPromptSubmit", "additionalContext": res.Markdown}})
 
-	if seenPath == "" {
-		return
-	}
 	for _, m := range res.Matches {
 		known = append(known, m.Ref)
 	}
-	if b, err := json.Marshal(known); err == nil {
-		_ = os.MkdirAll(filepath.Dir(seenPath), 0o700)
-		_ = os.WriteFile(seenPath, b, 0o600)
-		pruneOld(filepath.Dir(seenPath), 7*24*time.Hour)
+	for _, m := range res.Memories {
+		known = append(known, fmt.Sprintf("m%d", m.ID))
 	}
+	saveSeen(seenPath, known)
+}
+
+// saveSeen keeps what a session was told (task refs, and memories as "m12").
+func saveSeen(path string, known []string) {
+	if path == "" {
+		return
+	}
+	if b, err := json.Marshal(known); err == nil {
+		_ = os.MkdirAll(filepath.Dir(path), 0o700)
+		_ = os.WriteFile(path, b, 0o600)
+		pruneOld(filepath.Dir(path), 7*24*time.Hour)
+	}
+}
+
+// splitSeen separates the task refs from the memory ids ("m12").
+func splitSeen(known []string) ([]string, []int64) {
+	refs, memories := []string{}, []int64{}
+	for _, k := range known {
+		var id int64
+		if strings.HasPrefix(k, "m") {
+			if _, err := fmt.Sscanf(k, "m%d", &id); err == nil {
+				memories = append(memories, id)
+				continue
+			}
+		}
+		refs = append(refs, k)
+	}
+	return refs, memories
 }
 
 var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9-]{1,100}$`)

@@ -109,6 +109,7 @@ func (s *Server) runnerFinish(w http.ResponseWriter, r *http.Request, rn *store.
 	if run, err := s.store.RunByID(r.Context(), id); err == nil && run.ChatTurnID != nil {
 		s.assistant.FinishSession(r.Context(), run) // an Assistant turn on Claude Code
 	}
+	s.tgNotifyFinished(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -252,6 +252,7 @@ func (s *Store) DeleteProject(ctx context.Context, key string) error {
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+	s.pruneMemoryIndex(ctx)
 	return nil
 }
 

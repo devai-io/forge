@@ -243,12 +243,13 @@ func (a *Assistant) turn(ctx context.Context, chat *store.Chat, turn *store.Chat
 	defer func() { _ = a.store.SetChatTurnUsage(context.Background(), turn.ID, meter.Entries()) }()
 	api := apiName(set.BaseURL)
 	tools := toolDefs()
+	known := a.userMemories(ctx)
 	for step := 0; step < maxSteps; step++ {
 		history, err := a.store.ChatMessages(ctx, chat.ID, 0)
 		if err != nil {
 			return err
 		}
-		msg, u, err := client.Chat(ctx, model, turn.Effort, a.conversation(user, history), tools)
+		msg, u, err := client.Chat(ctx, model, turn.Effort, a.conversation(user, known, history), tools)
 		if err != nil {
 			return err
 		}
@@ -310,8 +311,8 @@ func apiName(baseURL string) string {
 // chat, with older tool results cut short (the recent ones matter; the old
 // ones mostly cost tokens). DeepSeek's reasoning goes back with each of its
 // messages, as its thinking mode requires.
-func (a *Assistant) conversation(user *store.User, history []store.ChatMessage) []llm.Message {
-	out := []llm.Message{{Role: "system", Content: systemPrompt(user, a.store.PublicURL)}}
+func (a *Assistant) conversation(user *store.User, known string, history []store.ChatMessage) []llm.Message {
+	out := []llm.Message{{Role: "system", Content: systemPrompt(user, a.store.PublicURL) + known}}
 	recentFrom := len(history) - 8
 	for i, m := range history {
 		switch m.Role {
@@ -359,8 +360,24 @@ How to work:
 - Permission modes: "plan" (read-only) for questions, investigation and reviews; "acceptEdits" only when %s asked for changes. For changes, prefer worktree: true (an isolated branch) unless they want the edit in their checkout. Never try to bypass permissions.
 - After delegating you may wait_for_runs (at most 10 minutes per call) and summarise the outcome with the key findings. For longer work, say what you queued and give the run link (%s/agents/runs/<id>); they can ask you to check later.
 - Machines: omit machine to use the master. Commands marked confirm (store uploads, deploys) cannot be run from here — tell the user to run them from the Agents page.
+- Memory: Forge keeps durable notes per project (decisions, conventions, gotchas, how-tos) and about the user. recall before answering questions about how a project works or what was decided; remember what the user tells you that should outlast this chat (a preference, a decision and its reason) — one fact per memory, no secrets; forget a memory that turned out wrong. Claude Code sessions start with these memories, so a good memory saves every later session from rediscovering it.
 - Keep the task board current when it helps: create or update tasks, link runs to tasks with task_ref, comment on what was done.
 - Be concise and concrete. Answer in the user's language. Use Markdown.
 
 Today is %s (%s).`, name, publicURL, name, name, publicURL, time.Now().In(loc).Format("Monday 2 January 2006"), user.Timezone)
+}
+
+// userMemories is what Forge remembers about the user (memories with no
+// project), appended to the system prompt of each turn.
+func (a *Assistant) userMemories(ctx context.Context) string {
+	ms, err := a.store.ListMemories(ctx, store.MemoryFilter{Global: true, Limit: 15})
+	if err != nil || len(ms) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\nWhat you remember about the user (memory; recall searches the projects' memories):\n")
+	for _, m := range ms {
+		b.WriteString("- " + m.Line(300) + "\n")
+	}
+	return b.String()
 }

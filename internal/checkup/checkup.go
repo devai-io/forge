@@ -26,6 +26,9 @@ type Runner struct {
 	mailer    *mail.Mailer
 	publicURL string
 
+	// Notify, when set, also delivers each scheduled check-up (Telegram).
+	Notify func(context.Context, *store.Checkup)
+
 	mu sync.Mutex // one check-up at a time
 }
 
@@ -67,6 +70,9 @@ func (r *Runner) Loop(ctx context.Context) {
 			continue
 		}
 		slog.Info("daily check-up done", "status", c.Status, "fail", c.Counts.Fail, "warn", c.Counts.Warn)
+		if r.Notify != nil {
+			r.Notify(ctx, c)
+		}
 		if u.CheckupEmail && r.mailer.Enabled() {
 			if err := r.mailer.Send(u.Email, subject(c), r.body(c)); err != nil {
 				slog.Error("check-up e-mail", "err", err)

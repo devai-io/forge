@@ -80,12 +80,10 @@ func TestFakeClaude(t *testing.T) {
 	}
 }
 
-func TestInteractiveRun(t *testing.T) {
-	h := setup(t)
-	h.login()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+// startFakeMachine pairs a machine whose claude is TestFakeClaude, runs its
+// agent until ctx ends, and returns it with the id of a repo it can work in.
+func startFakeMachine(ctx context.Context, t *testing.T, h *harness) (store.Runner, int64) {
+	t.Helper()
 	var rn store.Runner
 	var token string
 	expect(t, "machine", h.newRunner("desk", &rn, &token), 201)
@@ -121,6 +119,16 @@ func TestInteractiveRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	go func() { _ = runner.New(rc).Run(ctx) }()
+
+	return rn, repoID
+}
+
+func TestInteractiveRun(t *testing.T) {
+	h := setup(t)
+	h.login()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rn, repoID := startFakeMachine(ctx, t, h)
 
 	var run store.Run
 	expect(t, "queue", h.do("POST", "/api/runs", map[string]any{"runner_id": rn.ID, "repo_id": repoID, "kind": "agent",

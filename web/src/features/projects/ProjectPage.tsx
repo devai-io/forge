@@ -52,9 +52,10 @@ import { CIBadge } from "./CIBadge";
 import { ProgressMeter } from "./ProjectCard";
 import { ProjectDialog } from "./ProjectDialog";
 import { ProjectFiles } from "./ProjectFiles";
+import { MemoryPanel } from "@/features/memory/MemoryPanel";
 
-type Tab = "overview" | "board" | "list" | "agents" | "files" | "activity";
-const TABS: Tab[] = ["overview", "board", "list", "agents", "files", "activity"];
+type Tab = "overview" | "board" | "list" | "agents" | "memory" | "files" | "activity";
+const TABS: Tab[] = ["overview", "board", "list", "agents", "memory", "files", "activity"];
 
 export function ProjectPage() {
   const { key = "" } = useParams();
@@ -101,6 +102,7 @@ export function ProjectPage() {
           { value: "board", label: "Board", count: s.total - s.done },
           { value: "list", label: "List", count: s.total },
           { value: "agents", label: "Agents", count: s.active_runs || undefined },
+          { value: "memory", label: "Memory" },
           { value: "files", label: "Files" },
           { value: "activity", label: "Activity" },
         ]}
@@ -109,6 +111,13 @@ export function ProjectPage() {
       {tab === "board" ? <BoardTab project={p} /> : null}
       {tab === "list" ? <ListTab project={p} /> : null}
       {tab === "agents" ? <AgentsTab project={p} /> : null}
+      {tab === "memory" ? (
+        <MemoryPanel
+          project={p.key}
+          title="Memory"
+          intro="What Claude sessions in this project start with: decisions, conventions, gotchas and how-tos that earlier sessions (or you) saved. Sessions recall more as requests need it and add what they learn."
+        />
+      ) : null}
       {tab === "files" ? <ProjectFiles projectKey={p.key} /> : null}
       {tab === "activity" ? <ActivityTab project={p} /> : null}
     </div>

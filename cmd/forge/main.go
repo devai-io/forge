@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,6 +17,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -59,6 +62,8 @@ Server (workspace: FORGE_HOME, default ~/.config/forge):
   forge engine status | deepseek | claude  default engine for agent runs
   forge engine set-key < key.txt         store the DeepSeek API key agent runs use
   forge engine model <id> [heavy-id]     DeepSeek models (default / heavy tasks)
+  forge telegram status | on | off | set-token | chat <id> | test
+                                         the Telegram bot (token on stdin for set-token)
   forge import < data.json               add projects, servers, vault items
   forge migrate                          apply database migrations
 
@@ -246,6 +251,8 @@ func runServer(args []string) error {
 		return assistantCommand(ctx, cfg, st, args[1:])
 	case "engine":
 		return engineCommand(ctx, cfg, st, args[1:])
+	case "telegram":
+		return telegramCommand(ctx, cfg, st, args[1:])
 	case "add-machine", "create-runner":
 		if len(args) < 2 || len(args) > 3 {
 			return errors.New("usage: forge add-machine <name> [master|ios|worker]")
@@ -313,11 +320,14 @@ func serve(ctx context.Context, cfg config.Config, database *db.DB, st *store.St
 		GrafanaPublicURL:   cfg.GrafanaPublicURL,
 	}, api.MonitoringSources{Store: st, Box: box})
 	checkups := checkup.New(st, fleet, mailer, cfg.PublicURL)
+	app := api.New(cfg, st, mailer, mon, api.Deps{Box: box, Mon: fleet, Checkups: checkups})
+	checkups.Notify = app.NotifyCheckup
 	go checkups.Loop(ctx)
+	go app.RunTelegram(ctx)
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           api.New(cfg, st, mailer, mon, api.Deps{Box: box, Mon: fleet, Checkups: checkups}).Handler(),
+		Handler:           app.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute, // project file uploads
 		WriteTimeout:      60 * time.Second, // > the agent's 25 s long-poll
@@ -637,6 +647,74 @@ func assistantAsk(ctx context.Context, cfg config.Config, st *store.Store, args 
 			cost = fmt.Sprintf("$%.5f", *r.CostUSD)
 		}
 		fmt.Printf("  run #%d %s %s %s (%s) %s\n", r.ID, r.Engine, r.Model, r.RepoName, r.Status, cost)
+	}
+	return nil
+}
+
+// telegramCommand is Settings → Telegram, for a server without a browser.
+func telegramCommand(ctx context.Context, cfg config.Config, st *store.Store, args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: forge telegram status | on | off | set-token (token on stdin) | chat <id> | test")
+	}
+	set, err := st.TelegramSettings(ctx)
+	if err != nil {
+		return err
+	}
+	box, err := vault.Load(cfg.Home)
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "on", "off":
+		set.Enabled = args[0] == "on"
+	case "chat":
+		if len(args) != 2 {
+			return errors.New("usage: forge telegram chat <id>")
+		}
+		id, err := strconv.ParseInt(args[1], 10, 64)
+		if err != nil || id == 0 {
+			return fmt.Errorf("chat id %q: want a number", args[1])
+		}
+		set.ChatID = id
+	case "set-token":
+		raw, err := io.ReadAll(io.LimitReader(os.Stdin, 4096))
+		if err != nil {
+			return err
+		}
+		token := strings.TrimSpace(string(raw))
+		if !regexp.MustCompile(`^\d{5,15}:[A-Za-z0-9_-]{30,64}$`).MatchString(token) {
+			return errors.New("expected one bot token (123456:ABC…) on stdin")
+		}
+		if err := st.SaveIntegrationSecret(ctx, box, "Telegram bot token", "integration:telegram", token, "cli"); err != nil {
+			return err
+		}
+		fmt.Println("token stored in the vault (tag integration:telegram)")
+	case "test":
+		res := api.New(cfg, st, nil, nil, api.Deps{Box: box}).TestTelegram(ctx)
+		out, _ := json.Marshal(res)
+		fmt.Println(string(out))
+		if ok, _ := res["ok"].(bool); !ok {
+			return errors.New("telegram test failed")
+		}
+		return nil
+	case "status":
+	default:
+		return fmt.Errorf("unknown telegram command %q", args[0])
+	}
+	if args[0] != "status" && args[0] != "set-token" {
+		if err := st.SetTelegramSettings(ctx, set); err != nil {
+			return err
+		}
+	}
+	keyed := false
+	if box.Available() {
+		k, _ := st.IntegrationSecret(ctx, box, "integration:telegram")
+		keyed = k != ""
+	}
+	fmt.Printf("telegram: enabled=%t token=%t chat=%d prompts=%t runs=%t checkup=%t assistant=%t\n",
+		set.Enabled, keyed, set.ChatID, set.Prompts, set.Runs, set.Checkup, set.Assistant)
+	if set.Enabled && keyed && set.ChatID != 0 {
+		fmt.Println("the running server picks this up within 30 s")
 	}
 	return nil
 }

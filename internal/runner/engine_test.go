@@ -119,7 +119,9 @@ func TestMCPReadToolsAreMarkedReadOnly(t *testing.T) {
 	for _, tl := range listedTools() {
 		ro := tl["annotations"].(map[string]any)["readOnlyHint"].(bool)
 		name := tl["name"].(string)
-		if want := !strings.Contains(name, "create") && !strings.Contains(name, "update") && name != "forge_comment"; ro != want {
+		writes := strings.Contains(name, "create") || strings.Contains(name, "update") ||
+			name == "forge_comment" || name == "forge_remember" || name == "forge_forget"
+		if want := !writes; ro != want {
 			t.Errorf("%s readOnlyHint = %v", name, ro)
 		}
 	}

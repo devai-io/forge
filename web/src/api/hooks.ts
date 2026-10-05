@@ -70,6 +70,14 @@ import type {
   EngineStatus,
   JevSettings,
   JevStatus,
+  Memory,
+  MemoryInput,
+  MemoryList,
+  MemoryPatch,
+  MemorySaved,
+  TelegramSettings,
+  TelegramStatus,
+  TelegramTest,
 } from "./types";
 
 export const keys = {
@@ -103,6 +111,8 @@ export const keys = {
   system: ["system"] as const,
   terminalCapture: (runnerId: number, name: string) => ["terminal-capture", runnerId, name] as const,
   assistant: ["assistant"] as const,
+  memories: (project: string, q: string) => ["memories", project, q] as const,
+  telegram: ["telegram"] as const,
   chats: ["chats"] as const,
   chat: (id: number) => ["chat", id] as const,
 };
@@ -1293,5 +1303,81 @@ export function useDeleteChat() {
       qc.removeQueries({ queryKey: keys.chat(id) });
       void qc.invalidateQueries({ queryKey: keys.chats });
     },
+  });
+}
+
+// ── Memory ────────────────────────────────────────────────────────────────
+//
+// project: a key, "global" (about the user) or "" (everything).
+
+export function useMemories(project: string, q = "") {
+  return useQuery({
+    queryKey: keys.memories(project, q),
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (project) params.set("project", project);
+      if (q.trim()) params.set("q", q.trim());
+      return api.get<MemoryList>(`/memories?${params.toString()}`);
+    },
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useCreateMemory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: MemoryInput) => api.post<MemorySaved>("/memories", input),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ["memories"] }),
+  });
+}
+
+export function useUpdateMemory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: number; patch: MemoryPatch }) => api.patch<Memory>(`/memories/${id}`, patch),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ["memories"] }),
+  });
+}
+
+export function useDeleteMemory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.del(`/memories/${id}`),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ["memories"] }),
+  });
+}
+
+// ── Telegram ──────────────────────────────────────────────────────────────
+
+export function useTelegram() {
+  return useQuery({ queryKey: keys.telegram, queryFn: () => api.get<TelegramStatus>("/telegram") });
+}
+
+/** Changing chat_id needs a recent password confirmation (the gate asks). */
+export function useUpdateTelegram() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: Partial<TelegramSettings>) => api.patch<TelegramStatus>("/telegram", patch),
+    onSuccess: (s) => qc.setQueryData(keys.telegram, s),
+  });
+}
+
+/** Stores the bot token in the vault (needs a recent password confirmation). */
+export function useSetTelegramToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (token: string) => api.put<TelegramStatus>("/telegram/token", { token }),
+    onSuccess: (s) => {
+      qc.setQueryData(keys.telegram, s);
+      void qc.invalidateQueries({ queryKey: ["vault"] });
+    },
+  });
+}
+
+export function useTestTelegram() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<TelegramTest>("/telegram/test"),
+    onSettled: () => void qc.invalidateQueries({ queryKey: keys.telegram }),
   });
 }
