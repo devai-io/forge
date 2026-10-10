@@ -97,6 +97,6 @@ describe("gettingStartedSteps", () => {
       ["2fa", false],
       ["docs", true],
     ]);
-    expect(steps[0].to).toBe("/agents?add=1");
+    expect(steps[0].to).toBe("/machines?add=1");
   });
 });

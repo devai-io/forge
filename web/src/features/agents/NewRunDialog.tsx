@@ -161,7 +161,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
           <>
             {runners.isSuccess && runnerList.length === 0 ? (
               <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-[13px]">
-                No machines yet. Add one on the Agents page and pair it — one command on that machine.
+                No machines yet. Add one on the Machines page and pair it — one command on that machine.
               </p>
             ) : null}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

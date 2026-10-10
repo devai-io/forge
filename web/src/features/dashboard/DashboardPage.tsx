@@ -199,7 +199,7 @@ function Alerts({ d }: { d: Dashboard }) {
           Master offline: <strong className="font-semibold">{offline.map((r) => r.name).join(", ")}</strong> — nothing runs, scans or attaches until it is back
         </>
       ),
-      to: "/agents",
+      to: "/machines",
     });
   }
   if (d.stats.blocked > 0) {
@@ -370,7 +370,7 @@ function AgentsPanel({ d }: { d: Dashboard }) {
             </span>
           ))
         ) : (
-          <Link to="/agents" className="hover:text-fg-2">
+          <Link to="/machines?add=1" className="hover:text-fg-2">
             No machines yet — add one →
           </Link>
         )}

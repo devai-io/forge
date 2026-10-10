@@ -73,7 +73,7 @@ export function TerminalPage() {
         <ErrorState error={hosts.error} onRetry={() => hosts.refetch()} />
       ) : list.length === 0 ? (
         <EmptyState icon={<SquareTerminal />} title="No machines yet">
-          Terminals come from the Forge agent on your machines. Add and pair one on the Agents page, then set{" "}
+          Terminals come from the Forge agent on your machines. Add and pair one on the Machines page, then set{" "}
           <code className="font-mono">"terminal": true</code> in its <code className="font-mono">~/.config/forge/agent.json</code>.
         </EmptyState>
       ) : (

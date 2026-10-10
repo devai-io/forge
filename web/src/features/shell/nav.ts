@@ -1,4 +1,4 @@
-import { BookOpen, Bot, ClipboardCheck, Code, FolderKanban, Gauge, LayoutDashboard, ListTodo, Lock, Server, Sparkles, SquareTerminal } from "lucide-react";
+import { BookOpen, Bot, ClipboardCheck, Code, Cpu, FolderKanban, Gauge, LayoutDashboard, ListTodo, Lock, Server, Sparkles, SquareTerminal } from "lucide-react";
 
 // `mobile`: gets its own slot in the phone tab bar — five at most, beside "More"
 // (AppShell's grid-cols-6); the rest live under "More".
@@ -13,6 +13,7 @@ export const NAV = [
   { to: "/infra", label: "Infrastructure", short: "Infra", icon: Server, end: false, mobile: false },
   { to: "/monitoring", label: "Monitoring", short: "Monitoring", icon: Gauge, end: false, mobile: false, keywords: "grafana metrics alerts nomad hosts probes" },
   { to: "/vault", label: "Vault", short: "Vault", icon: Lock, end: false, mobile: false, keywords: "secrets keys passwords tokens keystore certificates" },
-  { to: "/agents", label: "Agents", short: "Agents", icon: Bot, end: false, mobile: true },
+  { to: "/agents", label: "Agents", short: "Agents", icon: Bot, end: false, mobile: true, keywords: "runs sessions claude running" },
+  { to: "/machines", label: "Machines", short: "Machines", icon: Cpu, end: false, mobile: false, keywords: "runners agents pair add machine master worker" },
   { to: "/docs", label: "Docs", short: "Docs", icon: BookOpen, end: false, mobile: false, keywords: "documentation help how it works what forge does security" },
 ] as const;

@@ -6,7 +6,7 @@ export type StartStep = { id: "machine" | "project" | "2fa" | "docs"; label: str
 
 export function gettingStartedSteps(s: { machines: number; projects: number; totp: boolean; docsRead: boolean }): StartStep[] {
   return [
-    { id: "machine", label: "Add a machine", hint: "Pair your desktop or a server with one command", to: "/agents?add=1", done: s.machines > 0 },
+    { id: "machine", label: "Add a machine", hint: "Pair your desktop or a server with one command", to: "/machines?add=1", done: s.machines > 0 },
     { id: "project", label: "Create a project", hint: "Or explore the demo data", to: "/projects", done: s.projects > 0 },
     { id: "2fa", label: "Turn on two-factor", hint: "A code from an authenticator app", to: "/settings#settings-2fa", done: s.totp },
     { id: "docs", label: "Read the docs", hint: "What Forge does, and what it doesn't", to: "/docs", done: s.docsRead },

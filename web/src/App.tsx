@@ -3,6 +3,7 @@ import { Route, Routes } from "react-router-dom";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { FullPageSpinner } from "@/components/ui/Spinner";
 import { AgentsPage } from "@/features/agents/AgentsPage";
+import { MachinesPage } from "@/features/agents/MachinesPage";
 import { RunPage } from "@/features/agents/RunPage";
 import { ForgotPage, LoginPage, ResetPage } from "@/features/auth/AuthPages";
 import { SetupPage } from "@/features/auth/SetupPage";
@@ -64,6 +65,7 @@ export function App() {
           <Route path="vault" element={page(<VaultPage />)} />
           <Route path="agents" element={<AgentsPage />} />
           <Route path="agents/runs/:id" element={<RunPage />} />
+          <Route path="machines" element={<MachinesPage />} />
           <Route path="settings" element={page(<SettingsPage />)} />
           <Route path="docs" element={page(<DocsPage />)} />
           <Route path="*" element={<EmptyState title="Page not found" className="mx-auto mt-10 max-w-md" />} />
