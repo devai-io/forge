@@ -206,6 +206,8 @@ describe("NewRunDialog confirm-commands", () => {
     await user.click(screen.getByRole("button", { name: "Queue run" }));
     await waitFor(() => expect(posted).toHaveLength(1));
     expect(posted[0]).toMatchObject({ kind: "agent", interactive: true });
+    // No redirect: the toast links to the new run.
+    expect(await screen.findByRole("link", { name: /Run #99 queued on desktop/ })).toHaveAttribute("href", "/agents/runs/99");
   });
 
   it("offers each engine's models and the effort levels for an agent run", async () => {

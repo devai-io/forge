@@ -1,5 +1,6 @@
 // Toasts: short confirmations and errors for mutations. Errors stay longer
-// and are announced assertively; everything else politely.
+// and are announced assertively; everything else politely. A toast with
+// something to click (a link to what was just started) can stay longer.
 
 import clsx from "clsx";
 import { CircleAlert, CircleCheck, Info, X } from "lucide-react";
@@ -9,10 +10,12 @@ import { errorMessage } from "@/api/client";
 type ToastKind = "success" | "error" | "info";
 type ToastItem = { id: number; kind: ToastKind; message: ReactNode };
 
+type ToastOptions = { duration?: number };
+
 type ToastApi = {
-  success: (message: ReactNode) => void;
+  success: (message: ReactNode, opts?: ToastOptions) => void;
   error: (err: unknown) => void;
-  info: (message: ReactNode) => void;
+  info: (message: ReactNode, opts?: ToastOptions) => void;
 };
 
 const ToastContext = createContext<ToastApi | null>(null);
@@ -23,19 +26,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const dismiss = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
   const push = useCallback(
-    (kind: ToastKind, message: ReactNode) => {
+    (kind: ToastKind, message: ReactNode, opts?: ToastOptions) => {
       const id = nextId++;
       setToasts((t) => [...t.slice(-3), { id, kind, message }]);
-      window.setTimeout(() => dismiss(id), kind === "error" ? 7000 : 3500);
+      window.setTimeout(() => dismiss(id), opts?.duration ?? (kind === "error" ? 7000 : 3500));
     },
     [dismiss],
   );
 
   const api = useMemo<ToastApi>(
     () => ({
-      success: (m) => push("success", m),
+      success: (m, opts) => push("success", m, opts),
       error: (err) => push("error", typeof err === "string" ? err : errorMessage(err)),
-      info: (m) => push("info", m),
+      info: (m, opts) => push("info", m, opts),
     }),
     [push],
   );

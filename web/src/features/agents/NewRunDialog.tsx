@@ -12,7 +12,7 @@
 
 import { ShieldAlert, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useCreateRun, useEngine, useProject, useProjects, useRunners, useTasks } from "@/api/hooks";
 import type { Engine, RunKind } from "@/api/types";
 import { Button } from "@/components/ui/Button";
@@ -125,9 +125,21 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
       },
       {
         onSuccess: (run) => {
-          toast.success(`Run #${run.id} queued on ${run.runner_name}`);
           onClose();
-          navigate(`/agents/runs/${run.id}`);
+          // A follow-up continues where the reader already is: go to it. A new
+          // run leaves them where they started it (a task, the check-up); the
+          // toast links to it.
+          if (resume) {
+            toast.success(`Run #${run.id} queued on ${run.runner_name}`);
+            navigate(`/agents/runs/${run.id}`);
+            return;
+          }
+          toast.success(
+            <Link to={`/agents/runs/${run.id}`} className="hover:underline">
+              Run #{run.id} queued on {run.runner_name} — <span className="font-medium text-accent">open it →</span>
+            </Link>,
+            { duration: 8000 },
+          );
         },
         onError: (err) => toast.error(err),
       },
