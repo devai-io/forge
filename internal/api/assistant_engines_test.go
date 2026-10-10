@@ -224,7 +224,9 @@ func TestAssistantClaudeCodeTurns(t *testing.T) {
 		"running":      []int64{},
 	}, nil, bearer...), 200)
 	var skipStatus struct {
-		Engines map[string]struct{ SkipPermissions bool `json:"skip_permissions"` }
+		Engines map[string]struct {
+			SkipPermissions bool `json:"skip_permissions"`
+		}
 	}
 	expect(t, "status", h.do("GET", "/api/assistant", nil, &skipStatus), 200)
 	if !skipStatus.Engines["claude"].SkipPermissions {
