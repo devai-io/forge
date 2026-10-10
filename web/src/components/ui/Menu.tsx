@@ -1,5 +1,7 @@
 // Dropdown menu: a trigger button and a list of actions, keyboard-usable
 // (ArrowUp/Down, Home/End, Enter, Escape) and closed by an outside click.
+// `side="top"` opens it upwards — for triggers pinned to the bottom of the
+// screen, where a downward list would push the page into scrolling.
 
 import clsx from "clsx";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
@@ -19,16 +21,22 @@ export function Menu({
   trigger,
   items,
   align = "end",
+  side = "bottom",
+  header,
   label,
   className,
   triggerClassName,
+  menuClassName,
 }: {
   trigger: ReactNode;
   items: MenuItem[];
   align?: "start" | "end";
+  side?: "top" | "bottom";
+  header?: ReactNode;
   label: string;
   className?: string;
   triggerClassName?: string;
+  menuClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -113,10 +121,13 @@ export function Menu({
           aria-label={label}
           onClick={(e) => e.stopPropagation()}
           className={clsx(
-            "animate-in absolute top-full z-50 mt-1 min-w-44 rounded-lg border border-line-strong bg-surface p-1 shadow-pop",
+            "animate-in absolute z-50 min-w-44 rounded-lg border border-line-strong bg-surface p-1 shadow-pop",
+            side === "top" ? "bottom-full mb-1" : "top-full mt-1",
             align === "end" ? "right-0" : "left-0",
+            menuClassName,
           )}
         >
+          {header}
           {items.map((item, i) =>
             item === "separator" ? (
               <div key={`sep-${i}`} role="separator" className="my-1 h-px bg-line" />

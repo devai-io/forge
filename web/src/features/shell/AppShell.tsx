@@ -3,8 +3,8 @@
 // (task drawer, command palette, new-task / new-run dialogs).
 
 import clsx from "clsx";
-import { Ellipsis, LogOut, Monitor, Moon, Plus, Search, Settings, Sun } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Ellipsis, LogOut, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Sun } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useLogout, useProjects, useWaitingRuns } from "@/api/hooks";
 import { ColorDot, Kbd } from "@/components/ui/Badge";
@@ -32,12 +32,39 @@ function isTyping(target: EventTarget | null): boolean {
   return !!el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
 }
 
+// The desktop sidebar can be collapsed to an icon rail, remembered per browser.
+const SIDEBAR_KEY = "forge.sidebar";
+
+function useSidebarCollapsed(): [boolean, () => void] {
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_KEY) === "collapsed";
+    } catch {
+      return false;
+    }
+  });
+  const toggle = useCallback(
+    () =>
+      setCollapsed((c) => {
+        try {
+          localStorage.setItem(SIDEBAR_KEY, c ? "expanded" : "collapsed");
+        } catch {
+          // Private mode: the choice just isn't remembered.
+        }
+        return !c;
+      }),
+    [],
+  );
+  return [collapsed, toggle];
+}
+
 function ShellFrame() {
   const { setPaletteOpen, newTask } = useShell();
   const location = useLocation();
+  const [collapsed, toggleSidebar] = useSidebarCollapsed();
 
   // Global shortcuts: ⌘/Ctrl+K opens the palette anywhere; "c" creates a task
-  // when focus is not in a field.
+  // and "[" collapses/expands the sidebar when focus is not in a field.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -47,15 +74,18 @@ function ShellFrame() {
         e.preventDefault();
         const key = /^\/p\/([^/]+)/.exec(location.pathname)?.[1];
         newTask({ project_key: key });
+      } else if (e.key === "[" && !e.metaKey && !e.ctrlKey && !e.altKey && !isTyping(e.target) && !document.querySelector("[aria-modal=true]")) {
+        e.preventDefault();
+        toggleSidebar();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setPaletteOpen, newTask, location.pathname]);
+  }, [setPaletteOpen, newTask, toggleSidebar, location.pathname]);
 
   return (
     <div className="flex min-h-dvh">
-      <Sidebar />
+      <Sidebar collapsed={collapsed} onToggle={toggleSidebar} />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar />
         <main className="min-w-0 flex-1 px-4 pt-4 pb-24 sm:px-6 md:pb-10">
@@ -69,11 +99,11 @@ function ShellFrame() {
   );
 }
 
-function Logo() {
+function Logo({ iconOnly }: { iconOnly?: boolean }) {
   return (
-    <Link to="/" className="flex items-center gap-2 font-semibold tracking-tight">
+    <Link to="/" className="flex items-center gap-2 font-semibold tracking-tight" aria-label={iconOnly ? "Forge" : undefined}>
       <img src="/favicon.svg" alt="" className="size-6" />
-      <span>Forge</span>
+      {iconOnly ? null : <span>Forge</span>}
     </Link>
   );
 }
@@ -90,14 +120,26 @@ function WaitingBadge({ count, compact }: { count: number; compact?: boolean }) 
   );
 }
 
-function Sidebar() {
+function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const projects = useProjects();
   const waiting = useWaitingRuns();
   const [creating, setCreating] = useState(false);
+  const row = (isActive: boolean, height: string) =>
+    clsx(
+      "flex items-center gap-2.5 rounded-md text-[13px] transition-colors",
+      height,
+      collapsed ? "justify-center" : "px-2.5",
+      isActive ? "bg-surface-3 font-medium text-fg" : "text-fg-2 hover:bg-surface-2 hover:text-fg",
+    );
   return (
-    <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r border-line bg-surface/60 md:flex">
-      <div className="flex h-13 items-center px-4">
-        <Logo />
+    <aside
+      className={clsx(
+        "sticky top-0 hidden h-dvh shrink-0 flex-col border-r border-line bg-surface/60 md:flex",
+        collapsed ? "w-14" : "w-60",
+      )}
+    >
+      <div className={clsx("flex h-13 items-center", collapsed ? "justify-center" : "px-4")}>
+        <Logo iconOnly={collapsed} />
       </div>
       <nav aria-label="Main" className="space-y-0.5 px-2">
         {NAV.map(({ to, label, icon: Icon, end }) => (
@@ -105,30 +147,34 @@ function Sidebar() {
             key={to}
             to={to}
             end={end}
-            className={({ isActive }) =>
-              clsx(
-                "flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors",
-                isActive ? "bg-surface-3 font-medium text-fg" : "text-fg-2 hover:bg-surface-2 hover:text-fg",
-              )
-            }
+            title={collapsed ? label : undefined}
+            aria-label={collapsed ? label : undefined}
+            className={({ isActive }) => row(isActive, "h-8")}
           >
-            <Icon className="size-4 text-fg-3" aria-hidden />
-            {label}
-            {to === "/agents" ? <WaitingBadge count={waiting} /> : null}
+            <span className="relative">
+              <Icon className="size-4 text-fg-3" aria-hidden />
+              {collapsed && to === "/agents" ? <WaitingBadge count={waiting} compact /> : null}
+            </span>
+            {collapsed ? null : label}
+            {!collapsed && to === "/agents" ? <WaitingBadge count={waiting} /> : null}
           </NavLink>
         ))}
       </nav>
-      <div className="mt-5 flex items-center justify-between px-4 pb-1">
-        <h2 className="text-[11px] font-semibold tracking-wide text-fg-3 uppercase">Projects</h2>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="rounded p-0.5 text-fg-3 hover:bg-surface-2 hover:text-fg"
-          aria-label="New project"
-        >
-          <Plus className="size-3.5" />
-        </button>
-      </div>
+      {collapsed ? (
+        <div className="mx-3 mt-4 mb-2 h-px bg-line" />
+      ) : (
+        <div className="mt-5 flex items-center justify-between px-4 pb-1">
+          <h2 className="text-[11px] font-semibold tracking-wide text-fg-3 uppercase">Projects</h2>
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="rounded p-0.5 text-fg-3 hover:bg-surface-2 hover:text-fg"
+            aria-label="New project"
+          >
+            <Plus className="size-3.5" />
+          </button>
+        </div>
+      )}
       <nav aria-label="Projects" className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
         {projects.isPending
           ? Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="mx-1 h-7" />)
@@ -138,61 +184,107 @@ function Sidebar() {
                 <NavLink
                   key={p.key}
                   to={`/p/${p.key}`}
-                  className={({ isActive }) =>
-                    clsx(
-                      "flex h-7.5 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors",
-                      isActive ? "bg-surface-3 font-medium text-fg" : "text-fg-2 hover:bg-surface-2 hover:text-fg",
-                    )
-                  }
+                  title={collapsed ? p.name : undefined}
+                  aria-label={collapsed ? p.name : undefined}
+                  className={({ isActive }) => row(isActive, "h-7.5")}
                 >
                   <ColorDot color={p.color} />
-                  <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                  {p.stats.endpoints_down > 0 ? (
-                    <span className="size-1.5 rounded-full bg-critical" title={`${p.stats.endpoints_down} endpoint(s) down`} />
-                  ) : null}
-                  {open > 0 ? <span className="tabular text-[11px] text-fg-3">{open}</span> : null}
+                  {collapsed ? null : (
+                    <>
+                      <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                      {p.stats.endpoints_down > 0 ? (
+                        <span className="size-1.5 rounded-full bg-critical" title={`${p.stats.endpoints_down} endpoint(s) down`} />
+                      ) : null}
+                      {open > 0 ? <span className="tabular text-[11px] text-fg-3">{open}</span> : null}
+                    </>
+                  )}
                 </NavLink>
               );
             })}
       </nav>
-      <UserMenu />
+      <div className={clsx("flex gap-1 border-t border-line p-2", collapsed ? "flex-col-reverse items-center" : "items-center")}>
+        <UserMenu compact={collapsed} />
+        <button
+          type="button"
+          onClick={onToggle}
+          title={`${collapsed ? "Expand" : "Collapse"} sidebar ([)`}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-expanded={!collapsed}
+          className="grid size-7 shrink-0 place-items-center rounded-md text-fg-3 hover:bg-surface-2 hover:text-fg"
+        >
+          {collapsed ? <PanelLeftOpen className="size-4" aria-hidden /> : <PanelLeftClose className="size-4" aria-hidden />}
+        </button>
+      </div>
       {creating ? <ProjectDialog onClose={() => setCreating(false)} /> : null}
     </aside>
   );
 }
 
-function UserMenu() {
+function Avatar({ name, size = "size-6" }: { name: string; size?: string }) {
+  return (
+    <span className={clsx("grid shrink-0 place-items-center rounded-full bg-accent text-[11px] font-semibold text-accent-fg", size)}>
+      {name.slice(0, 1).toUpperCase()}
+    </span>
+  );
+}
+
+function UserMenu({ compact }: { compact: boolean }) {
   const user = useUser();
   const logout = useLogout();
   const navigate = useNavigate();
+  const { pref, setPref } = useTheme();
+  const name = user.display_name || user.username;
+  const themes: { value: ThemePref; label: string; icon: React.ReactNode }[] = [
+    { value: "system", label: "Match system", icon: <Monitor /> },
+    { value: "light", label: "Light theme", icon: <Sun /> },
+    { value: "dark", label: "Dark theme", icon: <Moon /> },
+  ];
   return (
-    <div className="border-t border-line p-2">
-      <Menu
-        label="Account"
-        align="start"
-        className="w-full"
-        triggerClassName="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-surface-2"
-        trigger={
+    <Menu
+      label="Account"
+      side="top"
+      align="start"
+      className={compact ? undefined : "min-w-0 flex-1"}
+      menuClassName="w-60"
+      triggerClassName={clsx(
+        "flex items-center gap-2.5 rounded-md text-left hover:bg-surface-2",
+        compact ? "p-0.5" : "w-full px-2 py-1.5",
+      )}
+      header={
+        <div className="mb-1 flex items-center gap-2.5 border-b border-line px-2 pt-1.5 pb-2.5">
+          <Avatar name={name} size="size-8" />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[13px] font-medium">{name}</span>
+            <span className="block truncate text-[11px] text-fg-3">{user.email || `@${user.username}`}</span>
+          </span>
+        </div>
+      }
+      trigger={
+        compact ? (
+          <Avatar name={name} />
+        ) : (
           <>
-            <span className="grid size-6 place-items-center rounded-full bg-accent text-[11px] font-semibold text-accent-fg">
-              {(user.display_name || user.username).slice(0, 1).toUpperCase()}
-            </span>
+            <Avatar name={name} />
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] font-medium">{user.display_name || user.username}</span>
+              <span className="block truncate text-[13px] font-medium">{name}</span>
               <span className="block truncate text-[11px] text-fg-3">{user.email}</span>
             </span>
           </>
-        }
-        items={[
-          { label: "Settings", icon: <Settings />, onSelect: () => navigate("/settings") },
-          {
-            label: "Sign out",
-            icon: <LogOut />,
-            onSelect: () => logout.mutate(undefined, { onSettled: () => navigate("/login") }),
-          },
-        ]}
-      />
-    </div>
+        )
+      }
+      items={[
+        { label: "Settings", icon: <Settings />, onSelect: () => navigate("/settings") },
+        "separator",
+        ...themes.map((t) => ({ label: t.label, icon: t.icon, checked: pref === t.value, onSelect: () => setPref(t.value) })),
+        "separator",
+        {
+          label: "Sign out",
+          icon: <LogOut />,
+          danger: true,
+          onSelect: () => logout.mutate(undefined, { onSettled: () => navigate("/login") }),
+        },
+      ]}
+    />
   );
 }
 
