@@ -36,8 +36,12 @@ func (s *Server) runnerHeartbeat(w http.ResponseWriter, r *http.Request, rn *sto
 			scan = true
 		}
 	}
+	maxRuns := store.DefaultMaxConcurrent
+	if set, err := s.store.EngineSettings(r.Context()); err == nil {
+		maxRuns = set.MaxConcurrent
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"runner_id": rn.ID, "role": rn.Role, "scan": scan,
-		"cancel": cancel, "repos": repos, "jev_rev": s.runnerJevConfig(r.Context())["rev"]})
+		"cancel": cancel, "repos": repos, "jev_rev": s.runnerJevConfig(r.Context())["rev"], "max_concurrent": maxRuns})
 }
 
 // runnerClaim long-polls for up to claimWait (25 s). It wakes early when a run is queued

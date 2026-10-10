@@ -1,7 +1,8 @@
 // Settings → Agent engine: which backend an agent run's Claude Code talks to
 // when the run does not pick one. DeepSeek speaks Anthropic's API, so the
 // same claude binary runs against it for a fraction of the price; Claude is
-// then only used for the runs someone explicitly queues on Claude.
+// then only used for the runs someone explicitly queues on Claude. Also how
+// many runs each machine works on at once.
 
 import { useState } from "react";
 import { useEngine, useSetDeepseekKey, useUpdateEngine } from "@/api/hooks";
@@ -21,6 +22,9 @@ export function EnginePanel() {
   const toast = useToast();
   const [key, setKeyText] = useState("");
   const [models, setModels] = useState<Pick<EngineSettings, "model" | "heavy_model"> | null>(null);
+  const [maxRuns, setMaxRuns] = useState<string | null>(null);
+  const maxRunsValue = Number(maxRuns);
+  const maxRunsValid = maxRuns !== null && Number.isInteger(maxRunsValue) && maxRunsValue >= 1 && maxRunsValue <= 16;
 
   const save = (patch: Partial<EngineSettings>, done?: () => void) =>
     update.mutate(patch, { onSuccess: () => done?.(), onError: (e) => toast.error(e) });
@@ -93,6 +97,37 @@ export function EnginePanel() {
             </datalist>
             <Button type="submit" variant="subtle" className="mb-6" loading={update.isPending} disabled={!models}>
               Save models
+            </Button>
+          </form>
+
+          <form
+            className="flex flex-wrap items-end gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (maxRunsValid) save({ max_concurrent: maxRunsValue }, () => setMaxRuns(null));
+            }}
+          >
+            <Field
+              label="Concurrent runs per machine"
+              hint="How many runs each machine works on at once; an interactive run holds its place while it waits for you. A machine's agent.json max_concurrent can only lower it."
+              error={maxRuns !== null && !maxRunsValid ? "A whole number from 1 to 16" : undefined}
+              className="w-72"
+            >
+              {(id, desc) => (
+                <Input
+                  id={id}
+                  aria-describedby={desc}
+                  type="number"
+                  min={1}
+                  max={16}
+                  step={1}
+                  value={maxRuns ?? String(engine.data.settings.max_concurrent)}
+                  onChange={(e) => setMaxRuns(e.target.value)}
+                />
+              )}
+            </Field>
+            <Button type="submit" variant="subtle" className="mb-6" loading={update.isPending} disabled={!maxRunsValid}>
+              Save
             </Button>
           </form>
 

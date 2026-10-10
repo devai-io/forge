@@ -7,7 +7,7 @@ import { jsonResponse, makeUser, renderWithProviders, routeFetch, testClient } f
 afterEach(() => vi.unstubAllGlobals());
 
 const status = (over: Partial<EngineStatus> = {}): EngineStatus => ({
-  settings: { default: "deepseek", model: "deepseek-flash", heavy_model: "deepseek-v4-pro" },
+  settings: { default: "deepseek", model: "deepseek-flash", heavy_model: "deepseek-v4-pro", max_concurrent: 4 },
   deepseek_key: false,
   models: { deepseek: ["deepseek-flash", "deepseek-v4-pro"], claude: ["claude-opus-5-5"] },
   efforts: ["low", "medium", "high", "xhigh", "max"],
@@ -48,5 +48,31 @@ describe("Settings → Agent engine", () => {
     expect(await screen.findByText("DeepSeek key in the vault")).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: "Claude" }));
     await waitFor(() => expect(sent).toEqual([{ api_key: "not-a-real-key-for-tests" }, { default: "claude" }]));
+  });
+
+  it("sets how many runs each machine takes at once", async () => {
+    const sent: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      routeFetch({
+        "GET /engine": () => jsonResponse(200, status()),
+        "PATCH /engine": (init) => {
+          sent.push(JSON.parse(String(init.body)));
+          return jsonResponse(200, status({ settings: { ...status().settings, max_concurrent: 6 } }));
+        },
+      }),
+    );
+    renderWithProviders(<EnginePanel />, { qc: testClient({ user: makeUser(), elevated_until: null }) });
+    const user = userEvent.setup();
+    const input = await screen.findByLabelText("Concurrent runs per machine");
+    expect(input).toHaveValue(4);
+    await user.clear(input);
+    await user.type(input, "20");
+    expect(screen.getByText("A whole number from 1 to 16")).toBeInTheDocument();
+    await user.clear(input);
+    await user.type(input, "6");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(sent).toEqual([{ max_concurrent: 6 }]));
+    expect(screen.getByLabelText("Concurrent runs per machine")).toHaveValue(6);
   });
 });

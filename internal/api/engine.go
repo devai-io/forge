@@ -128,9 +128,18 @@ func (s *Server) updateEngine(w http.ResponseWriter, r *http.Request, u *store.U
 		Default    *string `json:"default"`
 		Model      *string `json:"model"`
 		HeavyModel *string `json:"heavy_model"`
+		// MaxConcurrent: runs per machine at once.
+		MaxConcurrent *int `json:"max_concurrent"`
 	}
 	if !decode(w, r, &in) {
 		return
+	}
+	if in.MaxConcurrent != nil {
+		if *in.MaxConcurrent < 1 || *in.MaxConcurrent > 16 {
+			writeErr(w, r, &store.ValidationError{Field: "max_concurrent", Message: "must be between 1 and 16"})
+			return
+		}
+		set.MaxConcurrent = *in.MaxConcurrent
 	}
 	if in.Default != nil {
 		if !store.OneOf(*in.Default, store.Engines) {
@@ -158,7 +167,7 @@ func (s *Server) updateEngine(w http.ResponseWriter, r *http.Request, u *store.U
 		writeErr(w, r, err)
 		return
 	}
-	s.sec(r, "engine_settings", fmt.Sprintf("default=%s model=%s heavy=%s", set.Default, set.Model, set.HeavyModel))
+	s.sec(r, "engine_settings", fmt.Sprintf("default=%s model=%s heavy=%s max_concurrent=%d", set.Default, set.Model, set.HeavyModel, set.MaxConcurrent))
 	s.getEngine(w, r, u)
 }
 

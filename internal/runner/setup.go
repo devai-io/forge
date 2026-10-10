@@ -111,8 +111,7 @@ func DefaultSettings() map[string]any {
 			"git-pull":   "git pull --ff-only",
 			"git-fetch":  "git fetch --prune",
 		},
-		"max_concurrent": 2,
-		"terminal":       false,
+		"terminal": false,
 	}
 }
 

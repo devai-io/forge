@@ -780,6 +780,7 @@ export type EngineSettings = {
   default: Engine; // used by runs that do not pick an engine
   model: string; // DeepSeek model for ordinary runs
   heavy_model: string; // DeepSeek model when Jev judges a task heavy
+  max_concurrent: number; // runs each machine works on at once (1–16; agent.json can only lower it)
 };
 
 export type EngineStatus = {

@@ -158,7 +158,7 @@ type RunnerCapabilities = {
   claude: boolean;              // `claude` binary found on the runner
   permission_modes: string[];   // modes this runner will accept, e.g. ["plan","acceptEdits"]
   commands: string[];           // named shell commands defined in the runner's local config
-  max_concurrent: number;
+  max_concurrent: number;       // runs it takes at once now: EngineSettings.max_concurrent under agent.json's cap
 };
 type Runner = {
   id: number; name: string; hostname: string; os: string; version: string;
@@ -631,6 +631,7 @@ type TerminalHost = { /* … as above, plus */ role: RunnerRole };
 |---|---|---|---|
 | PATCH | /api/runners/{id} | `{role}` | `Runner` — making one runner master demotes the previous master to `worker` |
 | POST | /api/runner/heartbeat | – | response gains `role` and `scan: boolean` (false for non-masters) |
+| POST | /api/runner/heartbeat | – | response gains `max_concurrent` (EngineSettings): the agent resizes its run slots to it, never above its own agent.json `max_concurrent` |
 
 ## VS Code (web) on the master
 
@@ -816,7 +817,10 @@ Anthropic-compatible API (`deepseek`). The DeepSeek key is the vault item tagged
 
 ```ts
 type Engine = "deepseek" | "claude";
-type EngineSettings = { default: Engine; model: string; heavy_model: string };
+type EngineSettings = {
+  default: Engine; model: string; heavy_model: string;
+  max_concurrent: number;        // runs per machine at once, 1–16 (default 4); PATCH validates the range
+};
 // defaults: "deepseek", "deepseek-flash", "deepseek-v4-pro"
 type EngineStatus = { settings: EngineSettings; deepseek_key: boolean;
   models: Record<Engine, string[]>;  // the run form's choices; deepseek: settings, then what DeepSeek lists for the key, then the known ones

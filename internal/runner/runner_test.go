@@ -67,7 +67,7 @@ func TestConfigRequiresTokenAndRoots(t *testing.T) {
 	if err := c.normalize(); err != nil {
 		t.Fatal(err)
 	}
-	if c.APIURL != "https://forge.example" || c.MaxConcurrent != 2 || len(c.PermissionModes) != 2 {
+	if c.APIURL != "https://forge.example" || c.MaxConcurrent != 0 || c.maxConcurrent(0) != DefaultMaxConcurrent || len(c.PermissionModes) != 2 {
 		t.Errorf("defaults not applied: %+v", c)
 	}
 	for _, bad := range []*Config{

@@ -83,15 +83,26 @@ func (s *Store) SetAssistantSettings(ctx context.Context, v AssistantSettings) e
 // API with Model (HeavyModel when Jev judges the task heavy); "claude" is
 // Anthropic. The DeepSeek key is the vault item tagged integration:deepseek,
 // else the Assistant's key when the Assistant talks to DeepSeek.
+//
+// MaxConcurrent is how many runs each machine works on at once (an
+// interactive run holds its slot while it waits for a reply); a machine's
+// agent.json max_concurrent can only lower it.
 type EngineSettings struct {
-	Default    string `json:"default"`
-	Model      string `json:"model"`
-	HeavyModel string `json:"heavy_model"`
+	Default       string `json:"default"`
+	Model         string `json:"model"`
+	HeavyModel    string `json:"heavy_model"`
+	MaxConcurrent int    `json:"max_concurrent"`
 }
 
+// DefaultMaxConcurrent is the per-machine run limit until Settings change it.
+const DefaultMaxConcurrent = 4
+
 func (s *Store) EngineSettings(ctx context.Context) (EngineSettings, error) {
-	v := EngineSettings{Default: "deepseek", Model: "deepseek-flash", HeavyModel: "deepseek-v4-pro"}
+	v := EngineSettings{Default: "deepseek", Model: "deepseek-flash", HeavyModel: "deepseek-v4-pro", MaxConcurrent: DefaultMaxConcurrent}
 	_, err := s.getSetting(ctx, "engine", &v)
+	if v.MaxConcurrent <= 0 {
+		v.MaxConcurrent = DefaultMaxConcurrent
+	}
 	return v, err
 }
 

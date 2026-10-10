@@ -297,17 +297,28 @@ func TestRunnerProtocol(t *testing.T) {
 	bearer := []string{"Authorization", "Bearer " + created.Token}
 
 	var hb struct {
-		RunnerID int64 `json:"runner_id"`
-		Cancel   []int64
-		Repos    []store.RunnerRepo
+		RunnerID      int64 `json:"runner_id"`
+		Cancel        []int64
+		Repos         []store.RunnerRepo
+		MaxConcurrent int `json:"max_concurrent"`
 	}
-	expect(t, "heartbeat", runner.do("POST", "/api/runner/heartbeat", map[string]any{
-		"hostname": "desk", "os": "linux/amd64", "version": "test",
-		"capabilities": map[string]any{"claude": true, "permission_modes": []string{"plan"}, "commands": []string{"test"}, "max_concurrent": 1},
-		"running":      []int64{},
-	}, &hb, bearer...), 200)
-	if hb.RunnerID != created.Runner.ID || len(hb.Repos) == 0 {
+	beat := func() {
+		t.Helper()
+		expect(t, "heartbeat", runner.do("POST", "/api/runner/heartbeat", map[string]any{
+			"hostname": "desk", "os": "linux/amd64", "version": "test",
+			"capabilities": map[string]any{"claude": true, "permission_modes": []string{"plan"}, "commands": []string{"test"}, "max_concurrent": 1},
+			"running":      []int64{},
+		}, &hb, bearer...), 200)
+	}
+	beat()
+	if hb.RunnerID != created.Runner.ID || len(hb.Repos) == 0 || hb.MaxConcurrent != store.DefaultMaxConcurrent {
 		t.Fatalf("heartbeat = %+v", hb)
+	}
+	// Concurrent runs per machine come from Settings.
+	expect(t, "max_concurrent too high", h.do("PATCH", "/api/engine", map[string]any{"max_concurrent": 17}, nil), 422)
+	expect(t, "max_concurrent", h.do("PATCH", "/api/engine", map[string]any{"max_concurrent": 6}, nil), 200)
+	if beat(); hb.MaxConcurrent != 6 {
+		t.Fatalf("max_concurrent after the setting = %d", hb.MaxConcurrent)
 	}
 	repoID := hb.Repos[0].ID
 

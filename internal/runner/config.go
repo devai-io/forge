@@ -48,6 +48,8 @@ type Config struct {
 	RawCommands map[string]json.RawMessage `json:"commands"`
 	Env         map[string]string          `json:"env"`
 
+	// MaxConcurrent caps the runs this machine takes at once below Forge's
+	// setting (Settings → Agent engine); 0 or unset: no local cap.
 	MaxConcurrent int    `json:"max_concurrent"`
 	MaxRunMinutes int    `json:"max_run_minutes"`
 	ScanInterval  string `json:"scan_interval"`
@@ -196,8 +198,8 @@ func (c *Config) normalize() error {
 		}
 		c.AllowedRoots[i] = r
 	}
-	if c.MaxConcurrent <= 0 {
-		c.MaxConcurrent = 2
+	if c.MaxConcurrent < 0 {
+		c.MaxConcurrent = 0
 	}
 	if c.MaxRunMinutes <= 0 {
 		c.MaxRunMinutes = 120
@@ -247,6 +249,23 @@ func (c *Config) normalize() error {
 		c.scanEvery = d
 	}
 	return nil
+}
+
+// DefaultMaxConcurrent is how many runs a machine takes at once until Forge
+// says otherwise (the server's default setting too).
+const DefaultMaxConcurrent = 4
+
+// maxConcurrent is Forge's limit (0: not known yet, the default) under this
+// machine's own cap.
+func (c *Config) maxConcurrent(server int) int {
+	n := server
+	if n <= 0 {
+		n = DefaultMaxConcurrent
+	}
+	if c.MaxConcurrent > 0 && c.MaxConcurrent < n {
+		n = c.MaxConcurrent
+	}
+	return n
 }
 
 func (c *Config) claudeJev() bool { return c.ClaudeJev == nil || *c.ClaudeJev }

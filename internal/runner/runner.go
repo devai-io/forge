@@ -20,7 +20,7 @@ type Runner struct {
 	mu      sync.Mutex
 	running map[int64]context.CancelFunc
 	repos   []repoRef
-	slots   chan struct{}
+	slots   *slots
 	rescan  chan struct{}
 
 	ciMu    sync.Mutex
@@ -47,7 +47,7 @@ func New(cfg *Config) *Runner {
 		client:   newClient(cfg.APIURL, cfg.Token),
 		hostname: host,
 		running:  map[int64]context.CancelFunc{},
-		slots:    make(chan struct{}, cfg.MaxConcurrent),
+		slots:    newSlots(cfg.maxConcurrent(0)),
 		rescan:   make(chan struct{}, 1),
 		ciCache:  map[int64]ciEntry{},
 		busy:     map[string]int{},
@@ -92,9 +92,7 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	// Let in-flight runs report before exiting (their contexts are already
 	// cancelled, so this is the kill + final report, not the whole run).
-	for i := 0; i < cap(r.slots); i++ {
-		r.slots <- struct{}{}
-	}
+	r.slots.drain()
 	return nil
 }
 
@@ -111,7 +109,7 @@ func (r *Runner) capabilities() map[string]any {
 		"permission_modes": r.cfg.PermissionModes,
 		"commands":         r.cfg.CommandNames(),
 		"command_details":  details,
-		"max_concurrent":   r.cfg.MaxConcurrent,
+		"max_concurrent":   r.slots.max(),
 		"ci":               r.ciEnabled(),
 		"terminal":         r.terminalEnabled(),
 		"code":             r.codeEnabled(),
@@ -150,6 +148,8 @@ func (r *Runner) heartbeat(ctx context.Context) error {
 		Role   string    `json:"role"`
 		Scan   *bool     `json:"scan"`
 		JevRev string    `json:"jev_rev"`
+		// MaxConcurrent is Forge's setting (0 from an older server: keep ours).
+		MaxConcurrent int `json:"max_concurrent"`
 	}
 	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -174,6 +174,12 @@ func (r *Runner) heartbeat(ctx context.Context) error {
 	// Only the master scans; an older API that does not say, means "yes".
 	r.scanOK = resp.Scan == nil || *resp.Scan
 	r.role = resp.Role
+	if resp.MaxConcurrent > 0 {
+		if n := r.cfg.maxConcurrent(resp.MaxConcurrent); n != r.slots.max() {
+			slog.Info("concurrent runs", "max", n)
+			r.slots.setLimit(n)
+		}
+	}
 	if r.repos == nil {
 		r.repos = []repoRef{}
 	}
@@ -224,10 +230,8 @@ func (r *Runner) claimLoop(ctx context.Context) {
 	backoff := time.Second
 	for {
 		// Wait for a free slot before asking for work.
-		select {
-		case <-ctx.Done():
+		if !r.slots.acquire(ctx) {
 			return
-		case r.slots <- struct{}{}:
 		}
 		var resp struct {
 			Run       claimedRun      `json:"run"`
@@ -236,7 +240,7 @@ func (r *Runner) claimLoop(ctx context.Context) {
 		}
 		got, err := r.client.post(ctx, "/api/runner/claim", nil, &resp)
 		if err != nil || !got {
-			<-r.slots
+			r.slots.release()
 			if ctx.Err() != nil {
 				return
 			}
@@ -254,7 +258,7 @@ func (r *Runner) claimLoop(ctx context.Context) {
 }
 
 func (r *Runner) handle(parent context.Context, run claimedRun) {
-	defer func() { <-r.slots }()
+	defer r.slots.release()
 	ctx, cancel := context.WithCancel(parent)
 	busyDir, _ := r.cfg.Allowed(run.RepoPath)
 	r.mu.Lock()
