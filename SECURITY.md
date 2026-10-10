@@ -51,7 +51,8 @@ vulnerability) on this repository. Do not open a public issue.
 - Skipping permissions (`bypassPermissions`, i.e.
   `--dangerously-skip-permissions`) is something only you choose in the web
   app — per run, per terminal session, or per Assistant chat on Claude Code —
-  and only on a machine whose own `permission_modes` list it. Leave it out
+  and only on a machine whose own `permission_modes` list it; there it is the
+  default for new runs, sessions and chats. Leave it out
   there unless you want everyone signed in to Forge to be able to run any
   command on that machine.
 - An Assistant chat on Claude Code is a Claude Code session on the master

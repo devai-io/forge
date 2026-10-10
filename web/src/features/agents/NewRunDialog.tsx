@@ -42,7 +42,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   const [kind, setKind] = useState<RunKind>("agent");
   const [prompt, setPrompt] = useState(prefill.prompt ?? "");
   const [command, setCommand] = useState("");
-  const [mode, setMode] = useState(resume?.permission_mode || "plan");
+  const [mode, setMode] = useState("");
   const [worktree, setWorktree] = useState(resume?.worktree ?? false);
   const [model, setModel] = useState(resume?.model ?? "");
   const [customModel, setCustomModel] = useState(false);
@@ -77,7 +77,15 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   // Commands any runner offers for this repo (unscoped, or scoped to it) —
   // picking one that lives elsewhere (an iOS upload on the Mac) moves the run there.
   const commands = commandOptions(runnerList, repoName, runner?.id);
-  const effectiveMode = modes.includes(mode) ? mode : modes[0];
+  // Default: no permission prompts where the machine allows it, else what
+  // the resumed run used, else the safest mode.
+  const effectiveMode = modes.includes(mode)
+    ? mode
+    : modes.includes("bypassPermissions")
+      ? "bypassPermissions"
+      : resume && modes.includes(resume.permission_mode)
+        ? resume.permission_mode
+        : modes[0];
   const selectedCommand = commands.find((c) => c.name === command) ?? commands[0];
   const effectiveCommand = selectedCommand?.name ?? "";
   // A command the selected runner doesn't have runs where it lives.

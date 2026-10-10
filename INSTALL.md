@@ -189,7 +189,7 @@ Full reference: [`deploy/agent.example.json`](deploy/agent.example.json).
 | Key | Default | Meaning |
 |---|---|---|
 | `allowed_roots` | the existing ones of `~/dev`, `~/code`, `~/src`, `~/projects`, `~/work` (else `~/dev`) | runs only happen inside these folders |
-| `permission_modes` | `["plan", "acceptEdits"]` | Claude Code modes the UI may choose; add `bypassPermissions` only by hand — it also lets runs, terminal sessions and Assistant chats on this machine offer **Skip permissions** (`--dangerously-skip-permissions`) |
+| `permission_modes` | `["plan", "acceptEdits"]` | Claude Code modes the UI may choose; add `bypassPermissions` only by hand — it also lets runs, terminal sessions and Assistant chats on this machine offer **Skip permissions** (`--dangerously-skip-permissions`), and makes it their default |
 | `commands` | a few git commands | named shell commands: `"name": "cmd"` or `{"run", "description", "repos": [...], "confirm": true}` |
 | `terminal` | `false` | let Forge attach to this machine's tmux sessions |
 | `code` | off | `{"enabled": true, "listen": "10.0.0.5:7422"}` — VS Code in the browser; `listen` must be an address the **server** can reach (a private network/VPN), never a public one |

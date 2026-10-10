@@ -28,7 +28,8 @@ export function NewSessionDialog({ prefill, onClose }: { prefill: NewSessionPref
   const [start, setStart] = useState<"claude" | "shell">(prefill.start ?? "claude");
   const [prompt, setPrompt] = useState("");
   const [name, setName] = useState("");
-  const [skipPermissions, setSkipPermissions] = useState(false);
+  // On by default; it only applies where the machine allows bypassPermissions.
+  const [skipPermissions, setSkipPermissions] = useState(true);
 
   const project = useProject(projectKey || undefined);
   const hostList = (hosts.data?.hosts ?? []).filter((h) => h.terminal);

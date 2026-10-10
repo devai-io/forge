@@ -162,13 +162,24 @@ func (r *Runner) execute(ctx context.Context, run claimedRun) finishReport {
 	return finishReport{Status: "failed", Error: "unknown run kind " + run.Kind}
 }
 
+// permissionArgs are claude's flags for a permission mode. bypassPermissions
+// also takes the explicit --dangerously-skip-permissions: Claude Code wants
+// both before it skips every prompt.
+func permissionArgs(mode string) []string {
+	args := []string{"--permission-mode", mode}
+	if mode == "bypassPermissions" {
+		args = append(args, "--dangerously-skip-permissions")
+	}
+	return args
+}
+
 func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship *shipper) finishReport {
 	if !contains(r.cfg.PermissionModes, run.PermissionMode) {
 		msg := fmt.Sprintf("refused: permission mode %q is not enabled on this runner", run.PermissionMode)
 		ship.send(textEvent("system", msg))
 		return finishReport{Status: "failed", Error: msg}
 	}
-	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--permission-mode", run.PermissionMode}
+	args := append([]string{"-p", "--output-format", "stream-json", "--verbose"}, permissionArgs(run.PermissionMode)...)
 	interactive := run.Interactive && run.Assistant == nil
 	if interactive {
 		args = append(args, interactiveArgs...)

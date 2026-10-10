@@ -240,6 +240,15 @@ func TestAssistantClaudeCodeTurns(t *testing.T) {
 	}
 	finish(c.Run.ID, map[string]any{"status": "succeeded", "session_id": "s1", "result": "Done."})
 
+	// Where the machine allows it, a new chat skips permissions by default.
+	var fresh chatView
+	expect(t, "fresh", h.do("POST", "/api/chats", map[string]any{"content": "Anything new?", "engine": "claude"}, &fresh), 201)
+	if c := claimOne(); !fresh.Chat.SkipPermissions || c.Run.PermissionMode != "bypassPermissions" {
+		t.Fatalf("default = %+v, run mode %q", fresh.Chat.ChatSettings, c.Run.PermissionMode)
+	} else {
+		finish(c.Run.ID, map[string]any{"status": "succeeded", "result": "No."})
+	}
+
 	// Switching engine drops the other engine's model and effort.
 	var patched struct{ Chat store.Chat }
 	expect(t, "switch", h.do("PATCH", fmt.Sprintf("/api/chats/%d", started.Chat.ID), map[string]any{"engine": "deepseek"}, &patched), 200)

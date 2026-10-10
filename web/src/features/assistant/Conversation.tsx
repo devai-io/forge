@@ -43,7 +43,7 @@ export function NewChat() {
     model: "",
     effort: "",
     edits: false,
-    skip_permissions: false,
+    skip_permissions: !!status.data?.engines?.claude.skip_permissions,
   };
   const input = useRef<HTMLTextAreaElement>(null);
   const end = useRef<HTMLDivElement>(null);

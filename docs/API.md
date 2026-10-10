@@ -177,6 +177,8 @@ type Run = {
   prompt: string;               // agent runs
   command: string;              // command runs: the name from the runner's config
   permission_mode: string;      // agent runs: plan | acceptEdits | auto | dontAsk | bypassPermissions
+                                // (bypassPermissions: claude gets --dangerously-skip-permissions as well;
+                                // the web app picks it by default on machines that allow it)
   model: string;                // "" = runner default
   worktree: boolean;            // agent runs in a fresh git worktree (claude --worktree)
   resume_run_id: number | null; // continues that run's Claude session
@@ -946,7 +948,8 @@ type ChatSettings = {
   effort: string;                // "" = default; deepseek: off|low|high|max (thinking off / reasoning_effort)
   edits: boolean;                // claude: acceptEdits (files, Forge's task tools) instead of plan (reads only)
   skip_permissions: boolean;     // claude: bypassPermissions (no prompts at all; wins over edits). A turn is
-                                 // refused (422) unless the master's permission_modes list bypassPermissions
+                                 // refused (422) unless the master's permission_modes list bypassPermissions;
+                                 // a new chat defaults to true when they do
 };
 type UsageEntry = {                // one line of a turn's bill
   api: string;                     // "deepseek" | "jev" | "claude-code" | the provider's host

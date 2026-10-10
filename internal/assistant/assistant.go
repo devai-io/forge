@@ -119,10 +119,15 @@ func (a *Assistant) Models(ctx context.Context) []string {
 }
 
 // DefaultSettings are what a new chat starts with: the configured provider
-// model on DeepSeek.
+// model on DeepSeek, and — should it move to Claude Code — no permission
+// prompts when the master machine allows bypassPermissions.
 func (a *Assistant) DefaultSettings(ctx context.Context) store.ChatSettings {
 	set, _ := a.store.AssistantSettings(ctx)
-	return store.ChatSettings{Engine: "deepseek", Model: set.Model}
+	cs := store.ChatSettings{Engine: "deepseek", Model: set.Model}
+	if rn, err := a.store.MasterRunner(ctx); err == nil {
+		cs.SkipPermissions = store.OneOf("bypassPermissions", rn.Capabilities.PermissionModes)
+	}
+	return cs
 }
 
 // Start runs a turn for the chat's newest user message. On DeepSeek the
