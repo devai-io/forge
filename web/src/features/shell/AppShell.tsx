@@ -4,7 +4,7 @@
 
 import clsx from "clsx";
 import { Ellipsis, LogOut, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Sun } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useLogout, useProjects, useWaitingRuns } from "@/api/hooks";
 import { ColorDot, Kbd } from "@/components/ui/Badge";
@@ -62,6 +62,14 @@ function ShellFrame() {
   const { setPaletteOpen, newTask } = useShell();
   const location = useLocation();
   const [collapsed, toggleSidebar] = useSidebarCollapsed();
+
+  // A new page starts at the top: the window keeps its scroll across routes,
+  // so leaving a run page (which follows its tail) would land mid-list.
+  // A layout effect, so a page's own scrolling (a run following its tail)
+  // still runs after it.
+  useLayoutEffect(() => {
+    window.scrollTo(0, 0);
+  }, [location.pathname]);
 
   // Global shortcuts: ⌘/Ctrl+K opens the palette anywhere; "c" creates a task
   // and "[" collapses/expands the sidebar when focus is not in a field.

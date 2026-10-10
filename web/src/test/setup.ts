@@ -18,3 +18,6 @@ if (!window.matchMedia) {
       dispatchEvent: () => false,
     }) as unknown as MediaQueryList;
 }
+
+// jsdom does not scroll; the shell scrolls to the top on every new page.
+window.scrollTo = () => {};
