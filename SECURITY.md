@@ -48,10 +48,17 @@ vulnerability) on this repository. Do not open a public issue.
   read (projects, tasks, run results), to the LLM provider you configure. It
   queues runs with the same rules as the web app and cannot use
   `bypassPermissions` or confirm-only commands.
+- Skipping permissions (`bypassPermissions`, i.e.
+  `--dangerously-skip-permissions`) is something only you choose in the web
+  app — per run, per terminal session, or per Assistant chat on Claude Code —
+  and only on a machine whose own `permission_modes` list it. Leave it out
+  there unless you want everyone signed in to Forge to be able to run any
+  command on that machine.
 - An Assistant chat on Claude Code is a Claude Code session on the master
   machine, started in its first allowed root, under the same permission modes
   as any run (read-only `plan` unless the chat allows edits, then
-  `acceptEdits`); it may use Forge's own MCP tools and nothing else beyond
+  `acceptEdits`, or `bypassPermissions` when the chat skips permissions and
+  the machine allows it); it may use Forge's own MCP tools and nothing else beyond
   what that machine already allows.
 - Agent runs on DeepSeek (the default engine when a DeepSeek key is stored)
   send the run's prompt and everything Claude Code reads in the repo to

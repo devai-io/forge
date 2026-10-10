@@ -142,7 +142,7 @@ describe("Assistant engines", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "Effort" }), "xhigh");
     await user.type(screen.getByRole("textbox", { name: "Message" }), "What is open on SHOP?{Enter}");
     await waitFor(() =>
-      expect(created).toEqual({ content: "What is open on SHOP?", engine: "claude", model: "sonnet", effort: "xhigh", edits: false }),
+      expect(created).toEqual({ content: "What is open on SHOP?", engine: "claude", model: "sonnet", effort: "xhigh", edits: false, skip_permissions: false }),
     );
   });
 

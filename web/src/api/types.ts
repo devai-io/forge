@@ -662,6 +662,7 @@ export type TerminalHost = {
   hostname: string;
   online: boolean;
   terminal: boolean; // the runner allows terminals
+  skip_permissions?: boolean; // the runner allows bypassPermissions: Claude may start with --dangerously-skip-permissions
   sessions: TmuxSession[];
   updated_at: string | null;
   role: RunnerRole;
@@ -675,6 +676,7 @@ export type NewSessionInput = {
   project_key?: string;
   start: "claude" | "shell";
   prompt?: string;
+  skip_permissions?: boolean; // claude --dangerously-skip-permissions
 };
 
 // ── VS Code (web) on the master ────────────────────────────────────────────
@@ -825,7 +827,16 @@ export type AssistantStatus = {
   engines: {
     deepseek: { available: boolean; models: string[]; efforts: string[] };
     // Claude Code sessions on the master machine (its own login, no API key).
-    claude: { available: boolean; machine: string; online: boolean | null; reason: string; models: string[]; efforts: string[] };
+    // skip_permissions: the machine allows bypassPermissions (--dangerously-skip-permissions).
+    claude: {
+      available: boolean;
+      machine: string;
+      online: boolean | null;
+      reason: string;
+      models: string[];
+      efforts: string[];
+      skip_permissions?: boolean;
+    };
   };
 };
 
@@ -836,6 +847,7 @@ export type ChatSettings = {
   model: string; // "" = the default (the Assistant's model / Claude Code's)
   effort: string; // "" = the default; deepseek: off|low|high|max, claude: low|medium|high|xhigh|max
   edits: boolean; // Claude Code may edit files (acceptEdits instead of plan)
+  skip_permissions?: boolean; // Claude Code runs with no permission prompts (bypassPermissions)
 };
 
 /** One line of a turn's bill. */

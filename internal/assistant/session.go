@@ -51,7 +51,10 @@ func (a *Assistant) startSession(ctx context.Context, chat *store.Chat, turn *st
 	}
 
 	mode := "plan"
-	if chat.Edits {
+	switch {
+	case chat.SkipPermissions:
+		mode = "bypassPermissions" // CreateRun refuses it unless the machine allows it
+	case chat.Edits:
 		mode = "acceptEdits"
 	}
 	effort := chat.Effort
@@ -200,8 +203,11 @@ func sessionPrompt(user *store.User, machine, mode, publicURL string) string {
 	perm := "This chat is read-only (plan mode): you can read files and Forge (forge_projects, forge_tasks, forge_task, " +
 		"forge_context, forge_checkup) but change nothing — no files, no tasks. If a change is needed, say what you would do; " +
 		name + " can allow changes for this chat."
-	if mode == "acceptEdits" {
+	switch mode {
+	case "acceptEdits":
 		perm = "You may edit files and update Forge tasks. Shell commands this machine has not pre-approved will be refused."
+	case "bypassPermissions":
+		perm = "Permission prompts are off for this chat: every tool runs without asking, so take care with anything destructive."
 	}
 	return fmt.Sprintf(`You are the assistant in Forge's chat (%s), talking with %s through its web app. This is Claude Code on their machine %q, started in its home folder (their projects live under it). Forge tracks their projects, repos, servers, tasks, machines and daily check-up: use the forge MCP tools for it. Forge memory (forge_recall, forge_remember) keeps what earlier sessions learned per project and about the user: recall before answering how something works or what was decided, and remember what the user tells you that should outlast this chat. Messages come from the web app, not a terminal: nobody can approve a tool prompt, so a refused tool stays refused — say what you would need instead of retrying. %s Be concise and concrete, answer in the user's language, use Markdown. Today is %s.`,
 		publicURL, name, machine, perm, time.Now().In(loc).Format("Monday 2 January 2006"))

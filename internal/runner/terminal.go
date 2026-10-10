@@ -203,22 +203,24 @@ func (r *Runner) controlLoop(ctx context.Context) {
 }
 
 type controlMsg struct {
-	Type    string          `json:"type"`
-	ID      string          `json:"id"`
-	Channel string          `json:"channel"`
-	Session string          `json:"session"`
-	Window  *int            `json:"window"`
-	Cols    int             `json:"cols"`
-	Rows    int             `json:"rows"`
-	Lines   int             `json:"lines"`
-	Text    string          `json:"text"`
-	Enter   bool            `json:"enter"`
-	Cwd     string          `json:"cwd"`
-	Start   string          `json:"start"`
-	Prompt  string          `json:"prompt"`
-	Name    string          `json:"name"`
-	Folder  string          `json:"folder"`
-	Folders json.RawMessage `json:"folders"`
+	Type    string `json:"type"`
+	ID      string `json:"id"`
+	Channel string `json:"channel"`
+	Session string `json:"session"`
+	Window  *int   `json:"window"`
+	Cols    int    `json:"cols"`
+	Rows    int    `json:"rows"`
+	Lines   int    `json:"lines"`
+	Text    string `json:"text"`
+	Enter   bool   `json:"enter"`
+	Cwd     string `json:"cwd"`
+	Start   string `json:"start"`
+	Prompt  string `json:"prompt"`
+	// SkipPermissions starts Claude with --dangerously-skip-permissions.
+	SkipPermissions bool            `json:"skip_permissions"`
+	Name            string          `json:"name"`
+	Folder          string          `json:"folder"`
+	Folders         json.RawMessage `json:"folders"`
 }
 
 func (r *Runner) serveControl(ctx context.Context, c *websocket.Conn) {
@@ -332,6 +334,9 @@ func (r *Runner) createSession(ctx context.Context, m controlMsg) error {
 		}
 		dir = resolved
 	}
+	if m.SkipPermissions && (m.Start != "claude" || !contains(r.cfg.PermissionModes, "bypassPermissions")) {
+		return errors.New("skipping permissions is not enabled on this runner (bypassPermissions in its permission_modes)")
+	}
 	if _, err := r.tmux(ctx, "new-session", "-d", "-s", m.Session, "-c", dir, "-x", "200", "-y", "50"); err != nil {
 		return err
 	}
@@ -342,6 +347,9 @@ func (r *Runner) createSession(ctx context.Context, m controlMsg) error {
 	// apply — exactly as if they had opened the window themselves. Claude's
 	// SessionStart hook then injects the Forge context for this directory.
 	line := r.cfg.ClaudePath
+	if m.SkipPermissions {
+		line += " --dangerously-skip-permissions"
+	}
 	if strings.TrimSpace(m.Prompt) != "" {
 		line += " " + shellQuote(m.Prompt)
 	}

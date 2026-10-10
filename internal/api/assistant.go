@@ -69,12 +69,14 @@ func (s *Server) assistantStatus(ctx context.Context) (map[string]any, error) {
 		claude["machine"], claude["reason"] = rn.Name, rn.Name+" has no Claude Code"
 	} else {
 		claude["available"], claude["machine"], claude["online"] = true, rn.Name, rn.Online
+		claude["skip_permissions"] = store.OneOf("bypassPermissions", rn.Capabilities.PermissionModes)
 	}
 	return map[string]any{"settings": set, "key_configured": k != "", "models": models,
 		"engines": map[string]any{
 			"deepseek": map[string]any{"available": k != "", "models": models, "efforts": llm.Efforts},
 			"claude": map[string]any{"available": claude["available"], "machine": claude["machine"], "online": claude["online"],
-				"reason": claude["reason"], "models": claudeModels, "efforts": store.ClaudeEfforts},
+				"reason": claude["reason"], "models": claudeModels, "efforts": store.ClaudeEfforts,
+				"skip_permissions": claude["skip_permissions"] == true},
 		}}, nil
 }
 
@@ -84,7 +86,7 @@ var claudeModels = []string{"opus", "sonnet", "haiku", "fable"}
 var modelNameRe = regexp.MustCompile(`^[A-Za-z0-9._:/\[\]-]{1,100}$`)
 
 // chatSettings validates what a request asks for, on top of cur.
-func chatSettings(cur store.ChatSettings, engine, model, effort *string, edits *bool) (store.ChatSettings, error) {
+func chatSettings(cur store.ChatSettings, engine, model, effort *string, edits, skip *bool) (store.ChatSettings, error) {
 	set := cur
 	if engine != nil && *engine != set.Engine {
 		if !store.OneOf(*engine, store.Engines) {
@@ -100,6 +102,9 @@ func chatSettings(cur store.ChatSettings, engine, model, effort *string, edits *
 	}
 	if edits != nil {
 		set.Edits = *edits
+	}
+	if skip != nil {
+		set.SkipPermissions = *skip
 	}
 	if set.Model != "" && !modelNameRe.MatchString(set.Model) {
 		return set, &store.ValidationError{Field: "model", Message: "not a model name"}
@@ -119,6 +124,8 @@ type chatSettingsInput struct {
 	Model  *string `json:"model"`
 	Effort *string `json:"effort"`
 	Edits  *bool   `json:"edits"`
+	// SkipPermissions: bypassPermissions (--dangerously-skip-permissions).
+	SkipPermissions *bool `json:"skip_permissions"`
 }
 
 func (s *Server) getAssistant(w http.ResponseWriter, r *http.Request, u *store.User) {
@@ -244,7 +251,7 @@ func (s *Server) createChat(w http.ResponseWriter, r *http.Request, u *store.Use
 	if !ok {
 		return
 	}
-	set, err := chatSettings(s.assistant.DefaultSettings(r.Context()), in.Engine, in.Model, in.Effort, in.Edits)
+	set, err := chatSettings(s.assistant.DefaultSettings(r.Context()), in.Engine, in.Model, in.Effort, in.Edits, in.SkipPermissions)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -280,7 +287,7 @@ func (s *Server) sendChatMessage(w http.ResponseWriter, r *http.Request, u *stor
 		s.assistantErr(w, r, store.ErrConflict)
 		return
 	}
-	set, err := chatSettings(chat.ChatSettings, in.Engine, in.Model, in.Effort, in.Edits)
+	set, err := chatSettings(chat.ChatSettings, in.Engine, in.Model, in.Effort, in.Edits, in.SkipPermissions)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -397,7 +404,7 @@ func (s *Server) renameChat(w http.ResponseWriter, r *http.Request, u *store.Use
 			return
 		}
 	}
-	set, err := chatSettings(chat.ChatSettings, in.Engine, in.Model, in.Effort, in.Edits)
+	set, err := chatSettings(chat.ChatSettings, in.Engine, in.Model, in.Effort, in.Edits, in.SkipPermissions)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -438,7 +445,7 @@ func (s *Server) Ask(ctx context.Context, login, content string, set store.ChatS
 		}
 		return &v
 	}
-	set, err = chatSettings(s.assistant.DefaultSettings(ctx), opt(set.Engine), opt(set.Model), opt(set.Effort), &set.Edits)
+	set, err = chatSettings(s.assistant.DefaultSettings(ctx), opt(set.Engine), opt(set.Model), opt(set.Effort), &set.Edits, &set.SkipPermissions)
 	if err != nil {
 		return nil, err
 	}

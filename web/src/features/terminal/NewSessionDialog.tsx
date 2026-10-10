@@ -8,7 +8,7 @@ import { isElevationError } from "@/api/client";
 import { useCreateSession, useProject, useProjects, useTerminalHosts } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
-import { Field, Input, Select, Textarea } from "@/components/ui/Input";
+import { Field, Input, Select, Switch, Textarea } from "@/components/ui/Input";
 import { Segmented } from "@/components/ui/Tabs";
 import { useToast } from "@/components/ui/Toast";
 import type { NewSessionPrefill } from "@/features/shell/context";
@@ -28,6 +28,7 @@ export function NewSessionDialog({ prefill, onClose }: { prefill: NewSessionPref
   const [start, setStart] = useState<"claude" | "shell">(prefill.start ?? "claude");
   const [prompt, setPrompt] = useState("");
   const [name, setName] = useState("");
+  const [skipPermissions, setSkipPermissions] = useState(false);
 
   const project = useProject(projectKey || undefined);
   const hostList = (hosts.data?.hosts ?? []).filter((h) => h.terminal);
@@ -61,6 +62,7 @@ export function NewSessionDialog({ prefill, onClose }: { prefill: NewSessionPref
         project_key: projectKey || undefined,
         repo_id: repo ? repo.id : undefined,
         prompt: start === "claude" && prompt.trim() ? prompt.trim() : undefined,
+        skip_permissions: start === "claude" && host.skip_permissions && skipPermissions ? true : undefined,
       },
       {
         onSuccess: ({ session }) => {
@@ -177,6 +179,25 @@ export function NewSessionDialog({ prefill, onClose }: { prefill: NewSessionPref
                 />
               )}
             </Field>
+          ) : null}
+          {start === "claude" ? (
+            <div className="space-y-1">
+              <Switch
+                checked={!!host?.skip_permissions && skipPermissions}
+                onChange={setSkipPermissions}
+                disabled={!host?.skip_permissions}
+                label={
+                  <>
+                    Skip permissions <code className="font-mono text-[12px] text-fg-3">--dangerously-skip-permissions</code>
+                  </>
+                }
+              />
+              <p className="text-[12px] text-fg-3">
+                {host?.skip_permissions
+                  ? "Every tool runs without asking. Best in a worktree or a repo you can reset."
+                  : `Off on ${host?.runner_name ?? "this machine"}: add "bypassPermissions" to permission_modes in its agent.json.`}
+              </p>
+            </div>
           ) : null}
           <Field
             label="Session name"

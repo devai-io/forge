@@ -44,7 +44,7 @@ export const PERMISSION_MODE_HELP: Record<string, string> = {
   acceptEdits: "May edit files; shell commands that need approval are denied.",
   auto: "Claude decides per action using its safety classifier.",
   dontAsk: "Only pre-approved tools run; everything else is denied.",
-  bypassPermissions: "Everything runs without asking. Use with a worktree.",
+  bypassPermissions: "Everything runs without asking (--dangerously-skip-permissions). Use with a worktree.",
 };
 
 export function runTitle(run: Pick<Run, "kind" | "prompt" | "command">): string {

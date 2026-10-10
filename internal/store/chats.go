@@ -31,12 +31,15 @@ type Chat struct {
 // ChatSettings pick what answers a chat: the DeepSeek API loop on the
 // server ("deepseek") or a Claude Code session on the master machine
 // ("claude"), with a model and an effort ("" = the default). Edits lets a
-// Claude Code session change files (acceptEdits instead of plan).
+// Claude Code session change files (acceptEdits instead of plan);
+// SkipPermissions runs it with no permission prompts at all
+// (bypassPermissions), where the master machine allows that mode.
 type ChatSettings struct {
-	Engine string `json:"engine"`
-	Model  string `json:"model"`
-	Effort string `json:"effort"`
-	Edits  bool   `json:"edits"`
+	Engine          string `json:"engine"`
+	Model           string `json:"model"`
+	Effort          string `json:"effort"`
+	Edits           bool   `json:"edits"`
+	SkipPermissions bool   `json:"skip_permissions"`
 }
 
 // ChatToolCall is a tool call as stored and shown: arguments parsed.
@@ -61,12 +64,12 @@ type ChatMessage struct {
 }
 
 const chatCols = `id, title, busy, last_error, input_tokens, output_tokens, cached_tokens, created_at, updated_at,
-	engine, model, effort, edits`
+	engine, model, effort, edits, skip_permissions`
 
 func scanChat(row interface{ Scan(...any) error }) (*Chat, error) {
 	var c Chat
 	if err := row.Scan(&c.ID, &c.Title, &c.Busy, &c.LastError, &c.Usage.InputTokens, &c.Usage.OutputTokens,
-		&c.Usage.CachedTokens, &c.CreatedAt, &c.UpdatedAt, &c.Engine, &c.Model, &c.Effort, &c.Edits); err != nil {
+		&c.Usage.CachedTokens, &c.CreatedAt, &c.UpdatedAt, &c.Engine, &c.Model, &c.Effort, &c.Edits, &c.SkipPermissions); err != nil {
 		return nil, mapErr(err)
 	}
 	return &c, nil
@@ -94,14 +97,15 @@ func (s *Store) ChatByID(ctx context.Context, id int64) (*Chat, error) {
 }
 
 func (s *Store) CreateChat(ctx context.Context, title string, set ChatSettings) (*Chat, error) {
-	return scanChat(s.DB.QueryRow(ctx, `INSERT INTO chats (title, engine, model, effort, edits) VALUES ($1, $2, $3, $4, $5)
-		RETURNING `+chatCols, chatTitle(title), set.Engine, set.Model, set.Effort, set.Edits))
+	return scanChat(s.DB.QueryRow(ctx, `INSERT INTO chats (title, engine, model, effort, edits, skip_permissions)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING `+chatCols, chatTitle(title), set.Engine, set.Model, set.Effort, set.Edits, set.SkipPermissions))
 }
 
 // SetChatSettings changes what answers the chat from its next turn on.
 func (s *Store) SetChatSettings(ctx context.Context, id int64, set ChatSettings) (*Chat, error) {
-	return scanChat(s.DB.QueryRow(ctx, `UPDATE chats SET engine = $2, model = $3, effort = $4, edits = $5, updated_at = now()
-		WHERE id = $1 RETURNING `+chatCols, id, set.Engine, set.Model, set.Effort, set.Edits))
+	return scanChat(s.DB.QueryRow(ctx, `UPDATE chats SET engine = $2, model = $3, effort = $4, edits = $5, skip_permissions = $6,
+		updated_at = now() WHERE id = $1 RETURNING `+chatCols, id, set.Engine, set.Model, set.Effort, set.Edits, set.SkipPermissions))
 }
 
 // chatTitle is the first line of the first message, shortened.

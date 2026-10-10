@@ -43,6 +43,7 @@ export function NewChat() {
     model: "",
     effort: "",
     edits: false,
+    skip_permissions: false,
   };
   const input = useRef<HTMLTextAreaElement>(null);
   const end = useRef<HTMLDivElement>(null);

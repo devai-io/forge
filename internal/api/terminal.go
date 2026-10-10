@@ -453,7 +453,9 @@ func (s *Server) terminalKill(w http.ResponseWriter, r *http.Request, u *store.U
 
 // terminalCreate starts a detached session in a repo's directory, running
 // Claude Code (which picks up the Forge context through its SessionStart
-// hook) or a plain shell.
+// hook) or a plain shell. skip_permissions starts Claude with
+// --dangerously-skip-permissions; the machine refuses it unless its
+// permission_modes list bypassPermissions.
 func (s *Server) terminalCreate(w http.ResponseWriter, r *http.Request, u *store.User) {
 	var in struct {
 		Name       string `json:"name"`
@@ -461,6 +463,8 @@ func (s *Server) terminalCreate(w http.ResponseWriter, r *http.Request, u *store
 		ProjectKey string `json:"project_key"`
 		Start      string `json:"start"`
 		Prompt     string `json:"prompt"`
+		// SkipPermissions: claude --dangerously-skip-permissions.
+		SkipPermissions bool `json:"skip_permissions"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -470,6 +474,10 @@ func (s *Server) terminalCreate(w http.ResponseWriter, r *http.Request, u *store
 	}
 	if in.Start != "claude" && in.Start != "shell" {
 		writeErr(w, r, &store.ValidationError{Field: "start", Message: "must be claude or shell"})
+		return
+	}
+	if in.SkipPermissions && in.Start != "claude" {
+		writeErr(w, r, &store.ValidationError{Field: "skip_permissions", Message: "only a Claude session skips permissions"})
 		return
 	}
 	cwd, name := "", in.Name
@@ -508,9 +516,13 @@ func (s *Server) terminalCreate(w http.ResponseWriter, r *http.Request, u *store
 		return
 	}
 	if _, ok := s.terminalCall(w, r, map[string]any{"type": "create", "session": name, "cwd": cwd,
-		"start": in.Start, "prompt": in.Prompt}, 20*time.Second); ok {
-		slog.Info("terminal session created", "session", name, "start", in.Start, "ip", s.clientIP(r))
-		s.sec(r, "terminal_create", name+" ("+in.Start+")")
+		"start": in.Start, "prompt": in.Prompt, "skip_permissions": in.SkipPermissions}, 20*time.Second); ok {
+		what := in.Start
+		if in.SkipPermissions {
+			what += ", skipping permissions"
+		}
+		slog.Info("terminal session created", "session", name, "start", in.Start, "skip_permissions", in.SkipPermissions, "ip", s.clientIP(r))
+		s.sec(r, "terminal_create", name+" ("+what+")")
 		writeJSON(w, http.StatusCreated, map[string]string{"session": name})
 	}
 }

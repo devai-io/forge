@@ -209,9 +209,12 @@ func TestQueriesRunOnSQLite(t *testing.T) {
 	rn := must(st.CreateRunner(ctx, "desk", []byte("tok")))
 	ok(t, st.RotateRunnerToken(ctx, rn.ID, []byte("tok2")))
 	must(st.SetRunnerRole(ctx, rn.ID, "master"))
-	must(st.Heartbeat(ctx, rn.ID, store.HeartbeatInput{Hostname: "desk", Running: []int64{}}))
+	must(st.Heartbeat(ctx, rn.ID, store.HeartbeatInput{Hostname: "desk", Running: []int64{},
+		Capabilities: store.RunnerCapabilities{Terminal: true, PermissionModes: []string{"plan", "bypassPermissions"}}}))
 	ok(t, st.FailOrphanedRuns(ctx))
-	must(st.TerminalHosts(ctx))
+	if hosts := must(st.TerminalHosts(ctx)); len(hosts) != 1 || !hosts[0].Terminal || !hosts[0].SkipPermissions {
+		t.Fatalf("terminal hosts = %+v", hosts)
+	}
 	ok(t, st.DeleteRunner(ctx, rn.ID))
 
 	// Vault search and tag lookup.

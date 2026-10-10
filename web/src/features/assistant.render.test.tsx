@@ -131,7 +131,7 @@ describe("Assistant page", () => {
     const user = userEvent.setup();
     await user.type(screen.getByRole("textbox", { name: "Message" }), "Review the open SHOP bugs{Enter}");
     expect(await screen.findByText("at /assistant/7")).toBeInTheDocument();
-    expect(created).toEqual({ content: "Review the open SHOP bugs", engine: "deepseek", model: "", effort: "", edits: false });
+    expect(created).toEqual({ content: "Review the open SHOP bugs", engine: "deepseek", model: "", effort: "", edits: false, skip_permissions: false });
     expect(within(screen.getByRole("log")).getByText("Review the open SHOP bugs")).toBeInTheDocument();
     // The agent is on it: the composer waits.
     expect(screen.getByRole("status")).toHaveTextContent("Working…");

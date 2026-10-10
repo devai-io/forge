@@ -560,6 +560,7 @@ type TerminalHost = {
   runner_id: number; runner_name: string; hostname: string;
   online: boolean;
   terminal: boolean;          // the runner allows terminals
+  skip_permissions: boolean;  // its permission_modes list bypassPermissions: start: claude may skip permissions
   sessions: TmuxSession[];
   updated_at: string | null;  // when the session list was last reported
 };
@@ -568,7 +569,7 @@ type TerminalHost = {
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | /api/terminal/hosts | – | `{hosts: TerminalHost[], default_runner_id: number \| null}` (the master runner) |
-| POST | /api/terminal/{runner_id}/sessions | `{name?, repo_id?, project_key?, start: "claude" \| "shell", prompt?}` | `201 {session: string}` — detached session in the repo's directory; `start: claude` launches Claude Code with the Forge project context; `prompt` is typed into it once it starts |
+| POST | /api/terminal/{runner_id}/sessions | `{name?, repo_id?, project_key?, start: "claude" \| "shell", prompt?, skip_permissions?}` | `201 {session: string}` — detached session in the repo's directory; `start: claude` launches Claude Code with the Forge project context; `prompt` is typed into it once it starts; `skip_permissions` adds `--dangerously-skip-permissions` (claude only; the machine refuses it unless its `permission_modes` list `bypassPermissions`) |
 | DELETE | /api/terminal/{runner_id}/sessions/{name} | – | `204` (kills the session) |
 | GET | /api/terminal/{runner_id}/sessions/{name}/capture | query `lines` (default 60, max 400) | `{text: string}` — the visible screen + scrollback, no escape codes |
 | POST | /api/terminal/{runner_id}/sessions/{name}/keys | `{text, enter: boolean}` | `204` — types `text` literally (then Enter) — answer Claude from a phone without a terminal |
@@ -934,7 +935,8 @@ type AssistantStatus = {
   engines: {
     deepseek: { available: boolean; models: string[]; efforts: string[] };  // efforts: off|low|high|max
     claude: { available: boolean; machine: string; online: boolean | null; reason: string;
-              models: string[]; efforts: string[] };                        // efforts: low|medium|high|xhigh|max
+              models: string[]; efforts: string[];                          // efforts: low|medium|high|xhigh|max
+              skip_permissions: boolean };                                  // the master allows bypassPermissions
   };
 };
 // What answers a chat, per chat (changeable any time; applies from the next turn).
@@ -943,6 +945,8 @@ type ChatSettings = {
   model: string;                 // "" = default (AssistantSettings.model | Claude Code's own)
   effort: string;                // "" = default; deepseek: off|low|high|max (thinking off / reasoning_effort)
   edits: boolean;                // claude: acceptEdits (files, Forge's task tools) instead of plan (reads only)
+  skip_permissions: boolean;     // claude: bypassPermissions (no prompts at all; wins over edits). A turn is
+                                 // refused (422) unless the master's permission_modes list bypassPermissions
 };
 type UsageEntry = {                // one line of a turn's bill
   api: string;                     // "deepseek" | "jev" | "claude-code" | the provider's host

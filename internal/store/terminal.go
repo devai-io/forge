@@ -40,14 +40,18 @@ type TmuxSession struct {
 }
 
 type TerminalHost struct {
-	RunnerID   int64         `json:"runner_id"`
-	RunnerName string        `json:"runner_name"`
-	Role       string        `json:"role"`
-	Hostname   string        `json:"hostname"`
-	Online     bool          `json:"online"`
-	Terminal   bool          `json:"terminal"`
-	Sessions   []TmuxSession `json:"sessions"`
-	UpdatedAt  *time.Time    `json:"updated_at"`
+	RunnerID   int64  `json:"runner_id"`
+	RunnerName string `json:"runner_name"`
+	Role       string `json:"role"`
+	Hostname   string `json:"hostname"`
+	Online     bool   `json:"online"`
+	Terminal   bool   `json:"terminal"`
+	// SkipPermissions: the machine lists bypassPermissions in its
+	// permission_modes, so a Claude session may start with
+	// --dangerously-skip-permissions.
+	SkipPermissions bool          `json:"skip_permissions"`
+	Sessions        []TmuxSession `json:"sessions"`
+	UpdatedAt       *time.Time    `json:"updated_at"`
 }
 
 func (s *Store) saveTmux(ctx context.Context, runnerID int64, sessions []TmuxSession) error {
@@ -152,7 +156,9 @@ func (s *Store) TerminalHosts(ctx context.Context) ([]TerminalHost, error) {
 	}
 	rows, err := s.DB.Query(ctx, `SELECT id, name, role, hostname,
 		coalesce(last_seen_at > ts_add(now(), -`+onlineWindow+`), 0),
-		coalesce(capabilities->>'terminal', 0), tmux, tmux_at
+		coalesce(capabilities->>'terminal', 0),
+		EXISTS (SELECT 1 FROM json_each(capabilities, '$.permission_modes') WHERE value = 'bypassPermissions'),
+		tmux, tmux_at
 		FROM runners ORDER BY (role = 'master') DESC, name`)
 	if err != nil {
 		return nil, err
@@ -162,7 +168,7 @@ func (s *Store) TerminalHosts(ctx context.Context) ([]TerminalHost, error) {
 	for rows.Next() {
 		var h TerminalHost
 		var raw []byte
-		if err := rows.Scan(&h.RunnerID, &h.RunnerName, &h.Role, &h.Hostname, &h.Online, &h.Terminal, &raw, &h.UpdatedAt); err != nil {
+		if err := rows.Scan(&h.RunnerID, &h.RunnerName, &h.Role, &h.Hostname, &h.Online, &h.Terminal, &h.SkipPermissions, &raw, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
 		h.Sessions = []TmuxSession{}

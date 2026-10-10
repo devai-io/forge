@@ -1,7 +1,8 @@
 // What answers the chat, above the composer: the engine (the DeepSeek API
 // loop on the server, or a Claude Code session on the master machine), its
 // model and effort, and — for Claude Code — whether it may make changes
-// (edit files, update tasks; otherwise it only reads).
+// (edit files, update tasks; otherwise it only reads) and, where the
+// machine allows bypassPermissions, whether it skips permission prompts.
 // Changes apply from the next message.
 
 import { useAssistant } from "@/api/hooks";
@@ -68,6 +69,14 @@ export function ChatSettingsBar({
       </Select>
       {value.engine === "claude" ? (
         <Switch checked={value.edits} onChange={(v) => onChange({ edits: v })} label="Can make changes" disabled={disabled} />
+      ) : null}
+      {value.engine === "claude" && (claude?.skip_permissions || value.skip_permissions) ? (
+        <Switch
+          checked={!!value.skip_permissions}
+          onChange={(v) => onChange({ skip_permissions: v })}
+          label={<span title="claude --dangerously-skip-permissions: every tool runs without asking">Skip permissions</span>}
+          disabled={disabled}
+        />
       ) : null}
     </div>
   );

@@ -215,6 +215,29 @@ func TestAssistantClaudeCodeTurns(t *testing.T) {
 		t.Fatalf("failed turn: %+v %+v", v.Chat, v.Turns[2])
 	}
 
+	// Skipping permissions needs the machine to allow bypassPermissions.
+	expect(t, "skip refused", h.do("POST", fmt.Sprintf("/api/chats/%d/messages", started.Chat.ID),
+		map[string]any{"content": "Just do it", "skip_permissions": true}, nil), 422)
+	expect(t, "heartbeat", runner.do("POST", "/api/runner/heartbeat", map[string]any{
+		"hostname": "desk", "os": "linux/amd64", "version": "test",
+		"capabilities": map[string]any{"claude": true, "permission_modes": []string{"plan", "acceptEdits", "bypassPermissions"}, "max_concurrent": 1},
+		"running":      []int64{},
+	}, nil, bearer...), 200)
+	var skipStatus struct {
+		Engines map[string]struct{ SkipPermissions bool `json:"skip_permissions"` }
+	}
+	expect(t, "status", h.do("GET", "/api/assistant", nil, &skipStatus), 200)
+	if !skipStatus.Engines["claude"].SkipPermissions {
+		t.Fatalf("skip_permissions not advertised: %+v", skipStatus.Engines)
+	}
+	expect(t, "skip", h.do("POST", fmt.Sprintf("/api/chats/%d/messages", started.Chat.ID),
+		map[string]any{"content": "Just do it", "skip_permissions": true}, nil), 200)
+	c = claimOne()
+	if c.Run.PermissionMode != "bypassPermissions" || !strings.Contains(c.Assistant["append_system"], "Permission prompts are off") {
+		t.Fatalf("skip = %+v %v", c.Run, c.Assistant)
+	}
+	finish(c.Run.ID, map[string]any{"status": "succeeded", "session_id": "s1", "result": "Done."})
+
 	// Switching engine drops the other engine's model and effort.
 	var patched struct{ Chat store.Chat }
 	expect(t, "switch", h.do("PATCH", fmt.Sprintf("/api/chats/%d", started.Chat.ID), map[string]any{"engine": "deepseek"}, &patched), 200)
