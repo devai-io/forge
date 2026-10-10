@@ -13,11 +13,16 @@ One binary, one SQLite file, one folder. MIT licensed.
 
 - **Projects & tasks** — a kanban board per project, focus list, streaks,
   activity feed, and a folder of files per project.
-- **Machines (agents)** — `forge agent` runs on your laptop, desktop, build box
-  or Mac. It dials out to the server (no inbound ports), reports the git and CI
-  state of your repos, and runs what you queue: Claude Code sessions
-  (`claude -p`, streamed live) or named commands you allowed in its settings.
-  Adding one is a pairing code and one command.
+- **Machines** — `forge agent` runs on your laptop, desktop, build box or Mac.
+  It dials out to the server (no inbound ports), reports the git and CI state
+  of your repos, and runs what you queue. Adding one is a pairing code and one
+  command; each machine's own `agent.json` decides what it allows.
+- **Agents** — Claude Code sessions (streamed live) or named commands, queued
+  from a task, the Assistant or the New run dialog. Interactive sessions bring
+  Claude's questions, permission prompts and plans to the web app and take
+  follow-ups; on machines that allow it they can skip permissions
+  (`--dangerously-skip-permissions`). How many run at once per machine is a
+  setting (4 by default).
 - **Terminals** — attach to the agents' tmux sessions from the browser or a
   phone; peek and send keys to answer Claude without a full terminal.
 - **Claude context** — every Claude Code session in a registered repo starts
@@ -72,7 +77,7 @@ docker compose logs forge        # open the setup link it prints, create your ac
 
 …or without Docker: install the binary (below) and run `forge server`.
 
-**A machine** — on the Agents page choose **Add machine**, then run the command
+**A machine** — on the Machines page choose **Add machine**, then run the command
 it shows on that machine:
 
 ```bash
@@ -104,7 +109,7 @@ Everything Forge keeps is in one folder, on the server and on each machine:
 What a machine may do is decided **in its own `agent.json`**: allowed
 directories, Claude permission modes, named commands (optionally repo-scoped
 and confirm-only), terminals, VS Code. Mark your always-on machine as
-**master** on the Agents page: it is the source of repo state and hosts VS Code.
+**master** on the Machines page: it is the source of repo state and hosts VS Code.
 
 ## Build from source
 

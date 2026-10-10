@@ -148,7 +148,7 @@ VS Code in the browser (master only), the `code` CLI.
 
 ### 2a. Pair it
 
-1. In Forge: **Agents → Add machine**. Name it (e.g. `desk`), pick its role —
+1. In Forge: **Machines → Add machine**. Name it (e.g. `desk`), pick its role —
    **master** for the always-on machine that hosts VS Code and reports repo
    state, **ios** for a Mac that does Xcode builds, **worker** otherwise.
 2. Run the command the dialog shows, on that machine:
@@ -369,7 +369,7 @@ the server or agent, `mv ~/.forge ~/.config/forge`, then start it again
 (machines: `forge agent install`, which also rewrites the service).
 
 Database migrations run automatically at start. Check: the status URL shows
-the new version; each machine's version is on the Agents page.
+the new version; each machine's version is on the Machines page.
 
 ---
 
@@ -380,7 +380,7 @@ the new version; each machine's version is on the Agents page.
 | `cross-origin request refused` on every change | `PUBLIC_URL` differs from the address in the browser (scheme, host or port) |
 | Signed out right after signing in | serving over plain http while `PUBLIC_URL` is https (secure cookie), or the other way round |
 | Terminal / VS Code never connect behind nginx | missing `Upgrade`/`Connection` headers or a short `proxy_read_timeout` |
-| `unknown or expired pairing code` | codes last 15 minutes and work once — **Pair again** on the Agents page |
+| `unknown or expired pairing code` | codes last 15 minutes and work once — **Pair again** on the Machines page |
 | Machine shows "never connected" | the agent is not running (`systemctl --user status forge-agent`), or it cannot reach `api_url` in `~/.config/forge/agent.json` |
 | Runs fail with "outside allowed roots" | add the repo's folder to `allowed_roots` in that machine's `agent.json` |
 | "VS Code is not enabled on …" | set `code.enabled` + `code.listen` on the master and install the `code` CLI |
@@ -398,7 +398,7 @@ the new version; each machine's version is on the Agents page.
 3. Give the person the setup link (`forge setup-token`) — they create the
    account themselves; do not choose their password.
 4. Remind them to turn on two-factor and to store `vault.key` somewhere safe.
-5. For each machine: they create the pairing code on the Agents page; you run
+5. For each machine: they create the pairing code on the Machines page; you run
    the install command on that machine. Verify it shows as connected.
 6. On the master: set `"terminal": true` if they want terminals, and `code`
    if they want VS Code (needs a private address the server reaches). Run
