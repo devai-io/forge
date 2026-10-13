@@ -37,7 +37,7 @@ func PrintMatch(cfg *Config, in io.Reader, out io.Writer) {
 	}
 	refs, memories := splitSeen(known)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second) // the server asks Jev for up to 4.5 s
 	defer cancel()
 	var res struct {
 		Markdown string `json:"markdown"`

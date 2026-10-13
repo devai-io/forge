@@ -145,7 +145,9 @@ func (s *Server) jevMatch(ctx context.Context, prompt string, tasks []store.Task
 		questions[fmt.Sprintf("t%d", i)] = jev.Noul(fmt.Sprintf(
 			"Is the developer's request work on task T%d — doing it, continuing it, or directly part of it?", i))
 	}
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second) // the prompt waits for this
+	// The prompt waits for this; Jev through the router takes ~2-3 s, and
+	// agents before v0.1.23 give up on the whole request after 5 s.
+	ctx, cancel := context.WithTimeout(ctx, 4500*time.Millisecond)
 	defer cancel()
 	ans, err := s.jev.Ask(ctx, map[string]any{"developer_request": prompt, "open_tasks": list}, questions)
 	if err != nil {

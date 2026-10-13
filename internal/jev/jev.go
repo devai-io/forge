@@ -193,7 +193,10 @@ func (c *Client) ask(ctx context.Context, state any, questions map[string]Questi
 		return nil, fmt.Errorf("jev: %w", err)
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil { // e.g. the caller's deadline passed mid-answer
+		return nil, fmt.Errorf("jev: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		msg := string(raw)
 		var e struct {
@@ -216,18 +219,28 @@ func (c *Client) ask(ctx context.Context, state any, questions map[string]Questi
 	var out struct {
 		Model   string `json:"model"`
 		Choices []struct {
-			Message struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
 		Usage struct {
 			PromptTokens     int64    `json:"prompt_tokens"`
 			CompletionTokens int64    `json:"completion_tokens"`
 			Cost             *float64 `json:"cost"`
 		} `json:"usage"`
 	}
-	if err := json.Unmarshal(raw, &out); err != nil || len(out.Choices) == 0 {
+	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, errors.New("jev: malformed response")
+	}
+	if len(out.Choices) == 0 {
+		if out.Error != nil && out.Error.Message != "" { // an upstream failure, answered with 200
+			return nil, fmt.Errorf("jev: %.200s", out.Error.Message)
+		}
+		return nil, errors.New("jev: empty response")
 	}
 	c.mu.Lock() // billed, whether or not the answers are usable
 	c.stats.InputTokens += int(out.Usage.PromptTokens)
@@ -239,7 +252,14 @@ func (c *Client) ask(ctx context.Context, state any, questions map[string]Questi
 		e.Note = "Jev → " + out.Model
 	}
 	usage.From(ctx).Add(e)
-	return parse(out.Choices[0].Message.Content, questions)
+	answers, err := parse(out.Choices[0].Message.Content, questions)
+	if err != nil {
+		if out.Choices[0].FinishReason == "length" {
+			err = fmt.Errorf("%w (cut off)", err)
+		}
+		return nil, fmt.Errorf("%w — %s answered", err, out.Model)
+	}
+	return answers, nil
 }
 
 // parse reads the answers from the model's JSON (tolerating a code fence or

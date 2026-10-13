@@ -443,7 +443,7 @@ func PrintContext(cfg *Config, hook bool, in io.Reader, out io.Writer) {
 			cwd = h.Cwd
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second) // the server asks Jev for up to 3.5 s
 	defer cancel()
 	c := newClient(cfg.APIURL, cfg.Token)
 	var res struct {

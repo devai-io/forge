@@ -209,7 +209,9 @@ func (s *Server) jevRelevance(ctx context.Context, repo *store.Repo, tasks []sto
 			"Is task T%d likely to involve work in the repo %q, or be useful to know while working in it?", i, repo.Name))
 	}
 	state := map[string]any{"repo": fmt.Sprintf("%s (%s) %s", repo.Name, repo.Kind, repo.Notes), "tasks": list}
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second) // the SessionStart hook waits for this
+	// The SessionStart hook waits for this (agents before v0.1.23 for 4 s in
+	// all); answers are cached, so a miss only costs the first session.
+	ctx, cancel := context.WithTimeout(ctx, 3500*time.Millisecond)
 	defer cancel()
 	ans, err := s.jev.Ask(ctx, state, questions)
 	if err != nil {
