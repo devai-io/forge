@@ -16,18 +16,22 @@ func TestDeepSeekEnv(t *testing.T) {
 	if _, err := none.env(""); err == nil {
 		t.Fatal("a DeepSeek run without setup must be refused")
 	}
-	e := &engineSetup{Name: "deepseek", BaseURL: "https://api.deepseek.com/anthropic", APIKey: "k",
-		Model: "deepseek-flash", HeavyModel: "deepseek-v4-pro"}
+	e := &engineSetup{Name: "deepseek", BaseURL: "https://openrouter.example.com/api", APIKey: "k",
+		Model: "deepseek/deepseek-v4-flash", HeavyModel: "deepseek/deepseek-v4-pro"}
 	if _, err := (&engineSetup{Name: "deepseek", BaseURL: "http://evil.example.com", APIKey: "k"}).env(""); err == nil {
 		t.Fatal("plain http base URL accepted")
 	}
-	env, err := e.env("deepseek-v4-pro")
+	if _, err := (&engineSetup{Name: "deepseek", BaseURL: "https://openrouter.example.com/api"}).env(""); err == nil {
+		t.Fatal("no key accepted")
+	}
+	env, err := e.env("deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(env, "\n")
-	for _, want := range []string{"ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic", "ANTHROPIC_AUTH_TOKEN=k",
-		"ANTHROPIC_MODEL=deepseek-v4-pro[1m]", "ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-flash"} {
+	for _, want := range []string{"ANTHROPIC_BASE_URL=https://openrouter.example.com/api", "ANTHROPIC_AUTH_TOKEN=k",
+		"ANTHROPIC_API_KEY=\n", "ANTHROPIC_MODEL=deepseek/deepseek-v4-pro[1m]", "ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek/deepseek-v4-pro[1m]",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek/deepseek-v4-flash", "ENABLE_TOOL_SEARCH=false"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing %s in\n%s", want, joined)
 		}
@@ -39,6 +43,7 @@ func TestDeepSeekEnv(t *testing.T) {
 }
 
 func TestDeepSeekCost(t *testing.T) {
+	// DeepSeek's own API: peak hours cost double.
 	c := claudeResult{Usage: map[string]modelUsage{
 		"deepseek-flash":  {InputTokens: 1_000_000, OutputTokens: 1_000_000, CacheReadInputTokens: 1_000_000},
 		"deepseek-v4-pro": {OutputTokens: 1_000_000},
@@ -50,6 +55,13 @@ func TestDeepSeekCost(t *testing.T) {
 	peak := time.Date(2026, 9, 29, 7, 0, 0, 0, time.UTC) // Tuesday 07:00
 	if got := *c.deepseekCost(peak); got < 5.4659 || got > 5.4661 {
 		t.Fatalf("peak = %v", got)
+	}
+	// OpenRouter ids (as Claude Code reports them, with "[1m]"): its prices, no peak.
+	or := claudeResult{Usage: map[string]modelUsage{
+		"deepseek/deepseek-v4-flash[1m]": {InputTokens: 1_000_000, OutputTokens: 1_000_000, CacheReadInputTokens: 1_000_000},
+	}}
+	if got := *or.deepseekCost(peak); got < 0.2911 || got > 0.2913 {
+		t.Fatalf("openrouter = %v", got)
 	}
 	if (&claudeResult{}).deepseekCost(peak) != nil {
 		t.Fatal("no usage must give no cost")

@@ -41,14 +41,14 @@ export function ChatSettingsBar({
         // A new engine starts from its own defaults.
         onChange={(e) => onChange({ engine: e.target.value as ChatEngine, model: "", effort: "" })}
       >
-        <option value="deepseek" disabled={deepseek ? !deepseek.available : false}>
-          {ENGINE_NAME.deepseek}
-          {deepseek && !deepseek.available ? " (no key)" : ""}
-        </option>
         <option value="claude" disabled={claude ? !claude.available : false}>
           {ENGINE_NAME.claude}
           {claude?.machine ? ` · ${claude.machine}` : ""}
           {claude && !claude.available ? ` (${claude.reason})` : claude?.online === false ? " (offline)" : ""}
+        </option>
+        <option value="deepseek" disabled={deepseek ? !deepseek.available : false}>
+          {ENGINE_NAME.deepseek}
+          {deepseek && !deepseek.available ? " (no key)" : ""}
         </option>
       </Select>
       <Select compact aria-label="Model" className="w-auto" value={value.model} disabled={disabled} onChange={(e) => onChange({ model: e.target.value })}>

@@ -19,7 +19,6 @@ import (
 	"github.com/devai-io/forge/internal/checkup"
 	"github.com/devai-io/forge/internal/config"
 	"github.com/devai-io/forge/internal/jev"
-	"github.com/devai-io/forge/internal/llm"
 	"github.com/devai-io/forge/internal/mail"
 	"github.com/devai-io/forge/internal/monitor"
 	"github.com/devai-io/forge/internal/monitoring"
@@ -63,10 +62,6 @@ type Server struct {
 	assistant *assistant.Assistant
 	models    modelsCache
 
-	// deepseekAPI is where the run form's DeepSeek model list comes from.
-	deepseekAPI    string
-	deepseekModels modelsCache
-
 	// Telegram (telegram.go): the Bot API client, the loop's state, how long
 	// a poll waits and how often an Assistant turn is checked on.
 	tg            *telegram.Client
@@ -98,15 +93,15 @@ func New(cfg config.Config, st *store.Store, m *mail.Mailer, mon *monitor.Monito
 		terminals:     newTerminalHub(),
 		codes:         newCodeSessions(),
 		claimWait:     25 * time.Second,
-		deepseekAPI:   llm.DefaultBaseURL,
 		jevCache:      map[string]relevanceEntry{},
 		tgPoll:        25 * time.Second,
 		tgFollowEvery: 2 * time.Second,
 	}
 	s.tgs.following = map[int64]bool{}
 	s.tg = telegram.New(s.telegramToken)
-	s.jev = jev.New(s.jevKey)
-	s.assistant = assistant.New(st, assistant.Hooks{Key: s.assistantKey, Route: s.prepareRun, Queued: s.wakeups.notify})
+	s.jev = jev.New(s.providerKey, s.jevConfig)
+	s.jev.AppURL = cfg.PublicURL
+	s.assistant = assistant.New(st, assistant.Hooks{Key: s.providerKey, Route: s.prepareRun, Queued: s.wakeups.notify})
 	return s
 }
 
@@ -137,18 +132,20 @@ func (s *Server) Handler() http.Handler {
 	h("POST /api/auth/sessions/revoke-others", s.authed(s.revokeOtherSessions))
 	h("GET /api/auth/security", s.authed(s.securityLog))
 	h("GET /api/system", s.authed(s.systemFacts))
+	h("GET /api/provider", s.authed(s.getProvider))
+	h("PATCH /api/provider", s.authed(s.updateProvider))
+	h("PUT /api/provider/key", s.authed(s.elevated(s.setProviderKey)))
+	h("POST /api/provider/test", s.authed(s.testProvider))
+
 	h("GET /api/jev", s.authed(s.getJev))
 	h("PATCH /api/jev", s.authed(s.updateJev))
-	h("PUT /api/jev/key", s.authed(s.elevated(s.setJevKey)))
 	h("POST /api/jev/test", s.authed(s.testJev))
 
 	h("GET /api/engine", s.authed(s.getEngine))
 	h("PATCH /api/engine", s.authed(s.updateEngine))
-	h("PUT /api/engine/key", s.authed(s.elevated(s.setDeepseekKey)))
 
 	h("GET /api/assistant", s.authed(s.getAssistant))
 	h("PATCH /api/assistant", s.authed(s.updateAssistant))
-	h("PUT /api/assistant/key", s.authed(s.elevated(s.setAssistantKey)))
 	h("GET /api/telegram", s.authed(s.getTelegram))
 	h("PATCH /api/telegram", s.authed(s.updateTelegram))
 	h("PUT /api/telegram/token", s.authed(s.elevated(s.setTelegramToken)))

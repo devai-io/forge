@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -17,19 +16,6 @@ import (
 )
 
 // The Assistant (internal/assistant): its settings, and the chats it works in.
-
-const assistantTag = "integration:assistant"
-
-func (s *Server) assistantKey(ctx context.Context) (string, error) {
-	if !s.box.Available() {
-		return "", errors.New("vault unavailable")
-	}
-	k, err := s.store.IntegrationSecret(ctx, s.box, assistantTag)
-	if errors.Is(err, store.ErrNotFound) {
-		return "", nil
-	}
-	return k, err
-}
 
 // modelsCache keeps the provider's model list for a while: the Settings page
 // asks on every load.
@@ -45,23 +31,8 @@ func (s *Server) assistantStatus(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	k, _ := s.assistantKey(ctx)
-	models := []string{}
-	if k != "" {
-		c := &s.models
-		c.mu.Lock()
-		cacheKey := set.BaseURL + "|" + k
-		if c.key == cacheKey && time.Since(c.at) < 10*time.Minute {
-			models = c.models
-		}
-		c.mu.Unlock()
-		if len(models) == 0 {
-			models = s.assistant.Models(ctx)
-			c.mu.Lock()
-			c.key, c.at, c.models = cacheKey, time.Now(), models
-			c.mu.Unlock()
-		}
-	}
+	k, _ := s.providerKey(ctx)
+	models := s.providerModels(ctx)
 	claude := map[string]any{"available": false, "machine": "", "reason": ""}
 	if rn, err := s.store.MasterRunner(ctx); err != nil {
 		claude["reason"] = "no master machine"
@@ -90,7 +61,7 @@ func chatSettings(cur store.ChatSettings, engine, model, effort *string, edits, 
 	set := cur
 	if engine != nil && *engine != set.Engine {
 		if !store.OneOf(*engine, store.Engines) {
-			return set, &store.ValidationError{Field: "engine", Message: "must be deepseek or claude"}
+			return set, &store.ValidationError{Field: "engine", Message: "must be claude or deepseek"}
 		}
 		set.Engine, set.Model, set.Effort = *engine, "", "" // another engine's model and effort mean nothing here
 	}
@@ -145,19 +116,18 @@ func (s *Server) updateAssistant(w http.ResponseWriter, r *http.Request, u *stor
 	}
 	var in struct {
 		Enabled *bool   `json:"enabled"`
-		BaseURL *string `json:"base_url"`
+		Engine  *string `json:"engine"`
 		Model   *string `json:"model"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	if in.BaseURL != nil {
-		v := strings.TrimRight(strings.TrimSpace(*in.BaseURL), "/")
-		if p, err := url.Parse(v); err != nil || (p.Scheme != "https" && p.Scheme != "http") || p.Host == "" {
-			writeErr(w, r, &store.ValidationError{Field: "base_url", Message: "must be an http(s) URL"})
+	if in.Engine != nil {
+		if !store.OneOf(*in.Engine, store.Engines) {
+			writeErr(w, r, &store.ValidationError{Field: "engine", Message: "must be claude or deepseek"})
 			return
 		}
-		set.BaseURL = v
+		set.Engine = *in.Engine
 	}
 	if in.Model != nil {
 		v := strings.TrimSpace(*in.Model)
@@ -174,30 +144,7 @@ func (s *Server) updateAssistant(w http.ResponseWriter, r *http.Request, u *stor
 		writeErr(w, r, err)
 		return
 	}
-	s.sec(r, "assistant_settings", set.BaseURL+" "+set.Model)
-	s.getAssistant(w, r, u)
-}
-
-func (s *Server) setAssistantKey(w http.ResponseWriter, r *http.Request, u *store.User) {
-	var in struct {
-		APIKey string `json:"api_key"`
-	}
-	if !decode(w, r, &in) {
-		return
-	}
-	in.APIKey = strings.TrimSpace(in.APIKey)
-	if len(in.APIKey) < 16 || strings.ContainsAny(in.APIKey, " \t\n") {
-		writeErr(w, r, &store.ValidationError{Field: "api_key", Message: "that does not look like an API key"})
-		return
-	}
-	if err := s.store.SaveIntegrationSecret(r.Context(), s.box, "LLM API key (Assistant)", assistantTag, in.APIKey, s.clientIP(r)); err != nil {
-		writeErr(w, r, err)
-		return
-	}
-	s.models.mu.Lock()
-	s.models.key = ""
-	s.models.mu.Unlock()
-	s.sec(r, "assistant_key", "Assistant API key replaced")
+	s.sec(r, "assistant_settings", set.Engine+" "+set.Model)
 	s.getAssistant(w, r, u)
 }
 
@@ -210,6 +157,10 @@ func (s *Server) assistantErr(w http.ResponseWriter, r *http.Request, err error)
 	}
 	if errors.Is(err, assistant.ErrOff) {
 		writeError(w, http.StatusServiceUnavailable, "assistant_off", err.Error())
+		return
+	}
+	if errors.Is(err, assistant.ErrNoKey) {
+		writeError(w, http.StatusServiceUnavailable, "no_provider_key", err.Error())
 		return
 	}
 	if errors.Is(err, store.ErrConflict) {

@@ -637,8 +637,8 @@ func (s *Server) tgAssistant(ctx context.Context, set store.TelegramSettings, ch
 func tgAssistantErr(err error) string {
 	switch {
 	case errors.Is(err, assistant.ErrOff):
-		return "The Assistant is not set up: add a key and turn it on in Settings → Assistant."
-	case errors.Is(err, assistant.ErrNoMachine):
+		return "The Assistant is off: turn it on in Settings → Assistant."
+	case errors.Is(err, assistant.ErrNoMachine), errors.Is(err, assistant.ErrNoKey):
 		return err.Error()
 	case errors.Is(err, store.ErrConflict):
 		return "Still working on your last message. /stop to cancel it."

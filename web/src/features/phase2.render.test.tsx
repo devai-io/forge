@@ -228,7 +228,7 @@ describe("NewRunDialog confirm-commands", () => {
     qc.setQueryData(["tasks", { project: "SHOP", open: true }], []);
     qc.setQueryData(["engine"], {
       settings: { default: "deepseek", model: "deepseek-flash", heavy_model: "deepseek-v4-pro", max_concurrent: 4 },
-      deepseek_key: true,
+      provider_key: true,
       models: { deepseek: ["deepseek-flash", "deepseek-v4-pro"], claude: ["claude-opus-5-5", "claude-sonnet-5-5"] },
       efforts: ["low", "medium", "high", "xhigh", "max"],
     });

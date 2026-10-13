@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -41,30 +40,5 @@ func TestClaudeEnv(t *testing.T) {
 	_ = setClaudeEnv(other, nil)
 	if raw, _ := os.ReadFile(other); !strings.Contains(string(raw), "theirs") {
 		t.Fatalf("removed a key Forge did not set: %s", raw)
-	}
-}
-
-func TestCheckoutPinned(t *testing.T) {
-	f := newGitFixture(t)
-	f.push("second")
-	out, err := git(context.Background(), f.other, "rev-parse", "HEAD~1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	first := strings.TrimSpace(out)
-	origin := filepath.Join(filepath.Dir(f.checkout), "origin.git")
-	dir := filepath.Join(t.TempDir(), "plugins", "p")
-	if err := checkoutPinned(context.Background(), origin, first, dir); err != nil {
-		t.Fatal(err)
-	}
-	if head, _ := git(context.Background(), dir, "rev-parse", "HEAD"); strings.TrimSpace(head) != first {
-		t.Fatalf("HEAD %s, want the pinned %s", head, first)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "second.txt")); err == nil {
-		t.Fatal("checked out a newer commit than the pin")
-	}
-	// Idempotent.
-	if err := checkoutPinned(context.Background(), origin, first, dir); err != nil {
-		t.Fatal(err)
 	}
 }

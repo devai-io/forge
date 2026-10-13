@@ -30,6 +30,7 @@ import { groupSecret } from "@/lib/vault";
 import { AccentPicker } from "./AccentPicker";
 import { AssistantPanel } from "./AssistantPanel";
 import { EnginePanel } from "./EnginePanel";
+import { ProviderPanel } from "./ProviderPanel";
 import { TokenSavingPanel } from "./TokenSaving";
 import { TelegramPanel } from "./TelegramPanel";
 import { MemoryPanel } from "@/features/memory/MemoryPanel";
@@ -44,6 +45,7 @@ export function SettingsPage() {
       <PasswordPanel />
       <TwoFactorPanel />
       <CheckupPanel />
+      <ProviderPanel />
       <EnginePanel />
       <TokenSavingPanel />
       <AssistantPanel />

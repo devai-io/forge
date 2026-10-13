@@ -10,7 +10,7 @@ import (
 	"github.com/devai-io/forge/internal/store"
 )
 
-func TestAgentRunsDefaultToDeepSeek(t *testing.T) {
+func TestAgentRunEngines(t *testing.T) {
 	h := setup(t)
 	h.login()
 	ctx := context.Background()
@@ -32,70 +32,73 @@ func TestAgentRunsDefaultToDeepSeek(t *testing.T) {
 		return run
 	}
 
-	// No DeepSeek key yet: the run falls back to Claude and says why.
-	if run := queue(map[string]any{}); run.Engine != "claude" || !strings.Contains(run.ModelNote, "DeepSeek") {
+	// Claude (the machine's own login) is the default and needs no key.
+	if run := queue(map[string]any{}); run.Engine != "claude" || run.ModelNote != "" {
+		t.Fatalf("default: %+v", run)
+	}
+	// DeepSeek without the provider key falls back to Claude and says why.
+	expect(t, "default deepseek", h.do("PATCH", "/api/engine", map[string]any{"default": "deepseek"}, nil), 200)
+	if run := queue(map[string]any{}); run.Engine != "claude" || !strings.Contains(run.ModelNote, "OpenRouter") {
 		t.Fatalf("no key: %+v", run)
 	}
 
-	// With the key (here: the Assistant's, pointed at DeepSeek) runs default
-	// to DeepSeek's fast model.
-	if err := h.store.SaveIntegrationSecret(ctx, h.api.box, "LLM API key (Assistant)", assistantTag, "not-a-real-key-for-tests", "test"); err != nil {
-		t.Fatal(err)
-	}
+	// With the key, runs on DeepSeek get its fast model (OpenRouter ids).
+	h.providerKey()
 	ds := queue(map[string]any{})
-	if ds.Engine != "deepseek" || ds.Model != "deepseek-flash" || ds.ModelNote != "" {
-		t.Fatalf("default: %+v", ds)
+	if ds.Engine != "deepseek" || ds.Model != "deepseek/deepseek-v4-flash" || ds.ModelNote != "" {
+		t.Fatalf("deepseek: %+v", ds)
 	}
-	// Claude only when asked for.
 	if run := queue(map[string]any{"engine": "claude"}); run.Engine != "claude" || run.Model != "" {
 		t.Fatalf("explicit claude: %+v", run)
 	}
 	expect(t, "unknown engine", h.do("POST", "/api/runs", map[string]any{"runner_id": created.Runner.ID, "repo_id": repoID,
 		"kind": "agent", "prompt": "hi", "engine": "gpt"}, nil), 422)
-	// A picked model and effort are kept, on either engine.
+	// A picked model and effort are kept, on either engine; DeepSeek's own
+	// names (from before OpenRouter) become OpenRouter ids.
 	if run := queue(map[string]any{"engine": "claude", "model": "claude-opus-5-5", "effort": "xhigh"}); run.Model != "claude-opus-5-5" || run.Effort != "xhigh" {
 		t.Fatalf("claude model+effort: %+v", run)
 	}
-	if run := queue(map[string]any{"engine": "deepseek", "model": "deepseek-v4-pro", "effort": "high"}); run.Model != "deepseek-v4-pro" || run.Effort != "high" {
+	if run := queue(map[string]any{"engine": "deepseek", "model": "deepseek-v4-pro", "effort": "high"}); run.Model != "deepseek/deepseek-v4-pro" || run.Effort != "high" {
 		t.Fatalf("deepseek model+effort: %+v", run)
 	}
 	expect(t, "bad effort", h.do("POST", "/api/runs", map[string]any{"runner_id": created.Runner.ID, "repo_id": repoID,
 		"kind": "agent", "prompt": "hi", "effort": "extreme"}, nil), 422)
 
-	// The run form's choices: each engine's models (DeepSeek's as it lists
-	// them for the key, then the known ones), and the efforts.
+	// The run form's choices: each engine's models (the provider's DeepSeek
+	// ones as it lists them for the key, then the known ones), and the efforts.
 	var offered struct {
 		Models  map[string][]string
 		Efforts []string
 	}
 	expect(t, "engine status", h.do("GET", "/api/engine", nil, &offered), 200)
-	if !store.OneOf("claude-opus-5-5", offered.Models["claude"]) || strings.Join(offered.Models["deepseek"], ",") != "deepseek-flash,deepseek-v4-pro" ||
+	if !store.OneOf("claude-opus-5-5", offered.Models["claude"]) ||
+		strings.Join(offered.Models["deepseek"], ",") != "deepseek/deepseek-v4-flash,deepseek/deepseek-v4-pro" ||
 		!store.OneOf("max", offered.Efforts) {
 		t.Fatalf("offered = %+v", offered)
 	}
 	listing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/models" || r.Header.Get("Authorization") != "Bearer not-a-real-key-for-tests" {
+		if r.URL.Path != "/api/v1/models" || r.Header.Get("Authorization") != "Bearer not-a-real-key-for-tests" {
 			http.Error(w, "no", http.StatusUnauthorized)
 			return
 		}
-		_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v5"},{"id":"deepseek-flash"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"deepseek/deepseek-v5"},{"id":"openai/gpt-x"},{"id":"deepseek/deepseek-v4-flash"}]}`))
 	}))
 	defer listing.Close()
-	h.api.deepseekAPI = listing.URL
+	h.setProvider(listing.URL + "/api/v1")
 	expect(t, "engine status (listed)", h.do("GET", "/api/engine", nil, &offered), 200)
-	if strings.Join(offered.Models["deepseek"], ",") != "deepseek-flash,deepseek-v4-pro,deepseek-v5" {
+	if strings.Join(offered.Models["deepseek"], ",") != "deepseek/deepseek-v4-flash,deepseek/deepseek-v4-pro,deepseek/deepseek-v5" {
 		t.Fatalf("listed = %+v", offered.Models["deepseek"])
 	}
 
 	// A heavy task (Jev, confident) moves up to the heavy DeepSeek model.
 	srv, _ := fakeJev(t, "heavy", 0.9, 0.5, nil)
 	h.enableJev(srv.URL)
-	if run := queue(map[string]any{}); run.Engine != "deepseek" || run.Model != "deepseek-v4-pro" || !strings.Contains(run.ModelNote, "Jev") {
+	if run := queue(map[string]any{}); run.Engine != "deepseek" || run.Model != "deepseek/deepseek-v4-pro" || !strings.Contains(run.ModelNote, "Jev") {
 		t.Fatalf("heavy: %+v", run)
 	}
 	light, _ := fakeJev(t, "light", 0.95, 0.5, nil)
-	h.api.jev.URL = light.URL
-	if run := queue(map[string]any{}); run.Model != "deepseek-flash" {
+	h.setProvider(light.URL + "/api/v1")
+	if run := queue(map[string]any{}); run.Model != "deepseek/deepseek-v4-flash" {
 		t.Fatalf("light on deepseek: %+v", run)
 	}
 
@@ -111,8 +114,8 @@ func TestAgentRunsDefaultToDeepSeek(t *testing.T) {
 	}
 	expect(t, "default deepseek", h.do("PATCH", "/api/engine", map[string]any{"default": "deepseek"}, nil), 200)
 
-	// The machine gets DeepSeek's endpoint and key with the run — and only
-	// for DeepSeek runs. Drain the queue in order.
+	// The machine gets the provider's Anthropic endpoint and key with the
+	// run — and only for DeepSeek runs. Drain the queue in order.
 	runner := &harness{t: t, srv: h.srv, client: &http.Client{}}
 	bearer := []string{"Authorization", "Bearer " + created.Token}
 	for {
@@ -127,7 +130,8 @@ func TestAgentRunsDefaultToDeepSeek(t *testing.T) {
 		expect(t, "claim", code, 200)
 		switch claimed.Run.Engine {
 		case "deepseek":
-			if claimed.Engine["api_key"] != "not-a-real-key-for-tests" || !strings.HasPrefix(claimed.Engine["base_url"], "https://api.deepseek.com") {
+			if claimed.Engine["api_key"] != "not-a-real-key-for-tests" || claimed.Engine["base_url"] != light.URL+"/api" ||
+				claimed.Engine["model"] != "deepseek/deepseek-v4-flash" || !strings.HasPrefix(claimed.Run.Model, "deepseek/") {
 				t.Fatalf("deepseek setup = %+v", claimed.Engine)
 			}
 		case "claude":

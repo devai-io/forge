@@ -1,7 +1,8 @@
 // Package usage records what a piece of work spent, per API and model: an
 // Assistant turn carries a Meter in its context, and every client that
 // calls a paid API on its behalf (the chat model, Jev) adds to it. It also
-// holds the DeepSeek price list Forge estimates costs with.
+// holds the DeepSeek price lists Forge estimates costs with when the
+// provider does not report them.
 package usage
 
 import (
@@ -13,7 +14,7 @@ import (
 
 // Entry is one API/model line of a bill.
 type Entry struct {
-	API          string   `json:"api"`   // "deepseek" | "jev" | "claude-code" | an API host
+	API          string   `json:"api"`   // "openrouter" | "deepseek" | "claude-code" | an API host
 	Model        string   `json:"model"` // as the API named it
 	Calls        int      `json:"calls"`
 	InputTokens  int64    `json:"input_tokens"` // not read from cache
@@ -106,13 +107,20 @@ func Total(es []Entry) (total float64, unpriced bool) {
 
 // ── DeepSeek prices ───────────────────────────────────────────────────────
 
-// DeepSeek's list prices, USD per million tokens, off-peak; peak hours
-// (01-04 and 06-10 UTC on weekdays) cost double.
+// USD per million tokens: cache hits, misses, output.
 type price struct{ hit, miss, out float64 }
 
+// DeepSeek's own API, off-peak; peak hours (01-04 and 06-10 UTC on
+// weekdays) cost double.
 var deepseekPrices = map[string]price{
 	"flash": {0.003, 0.15, 0.6},
 	"pro":   {0.022, 0.66, 1.98},
+}
+
+// The same models on OpenRouter (ids "deepseek/…"), no peak hours.
+var openrouterPrices = map[string]price{
+	"flash": {0.0182, 0.091, 0.182},
+	"pro":   {0.036337, 0.436044, 0.872088},
 }
 
 // DeepSeekPeak says whether at falls in DeepSeek's double-price hours.
@@ -126,32 +134,28 @@ func DeepSeekPeak(at time.Time) bool {
 }
 
 // DeepSeekCost prices one call's tokens (cached = cache hits, input =
-// misses) for a DeepSeek model at the time it ran; nil for a model this
-// list does not know.
+// misses) for a DeepSeek model at the time it ran: OpenRouter's prices for
+// an OpenRouter id ("deepseek/deepseek-v4-flash"), DeepSeek's own for a bare
+// name; nil for a model these lists do not know.
 func DeepSeekCost(model string, input, cached, output int64, at time.Time) *float64 {
 	m := strings.ToLower(model)
+	m, _, _ = strings.Cut(m, "[") // Claude Code's "[1m]" suffix
+	list, peak := deepseekPrices, DeepSeekPeak(at)
+	if rest, ok := strings.CutPrefix(m, "deepseek/"); ok {
+		list, peak, m = openrouterPrices, false, rest
+	}
 	var p price
 	switch {
 	case !strings.HasPrefix(m, "deepseek"):
 		return nil
 	case strings.Contains(m, "pro"):
-		p = deepseekPrices["pro"]
+		p = list["pro"]
 	default:
-		p = deepseekPrices["flash"]
+		p = list["flash"]
 	}
 	c := (float64(cached)*p.hit + float64(input)*p.miss + float64(output)*p.out) / 1e6
-	if DeepSeekPeak(at) {
+	if peak {
 		c *= 2
 	}
-	return &c
-}
-
-// JevPerMillion is Jev's input price at its smallest prepaid packs (larger
-// packs cost less; output is free), so Jev costs are upper estimates.
-const JevPerMillion = 0.42
-
-// JevCost prices a Jev call's input tokens.
-func JevCost(input int64) *float64 {
-	c := float64(input) * JevPerMillion / 1e6
 	return &c
 }

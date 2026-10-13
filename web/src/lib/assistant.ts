@@ -242,11 +242,16 @@ export function usageLabel(usage: ChatUsage | null | undefined): string {
 
 // ── Engines and spend ──────────────────────────────────────────────────────
 
-export const ENGINE_NAME: Record<ChatEngine, string> = { deepseek: "DeepSeek API", claude: "Claude Code" };
+export const ENGINE_NAME: Record<ChatEngine, string> = { deepseek: "DeepSeek (OpenRouter)", claude: "Claude Code" };
 
 export { EFFORT_LABEL } from "@/lib/agents";
 
-const API_NAME: Record<string, string> = { deepseek: "DeepSeek API", jev: "Jev", "claude-code": "Claude Code" };
+const API_NAME: Record<string, string> = {
+  openrouter: "OpenRouter",
+  deepseek: "DeepSeek API",
+  jev: "Jev",
+  "claude-code": "Claude Code",
+};
 export const apiName = (api: string) => API_NAME[api] ?? api;
 
 /** Small amounts matter here: "$0.0021", "$0.13", "$4.20". */
@@ -260,12 +265,12 @@ export function formatSpend(usd: number | null | undefined): string {
 
 export type SpendLine = {
   key: string;
-  label: string; // "DeepSeek API · deepseek-flash", "Run #12 · DeepSeek"
+  label: string; // "OpenRouter · deepseek/deepseek-v4-flash", "Run #12 · DeepSeek"
   detail: string; // calls and tokens, or the run's state
   cost: number | null;
   // Billed to an API account, or what a Claude subscription covered (priced at API rates).
   kind: "billed" | "subscription";
-  approx: boolean; // an estimate (DeepSeek runs, Jev's pack price)
+  approx: boolean; // an estimate (DeepSeek runs, older Jev lines at its pack price, calls the provider did not price)
   runId: number | null;
   pending: boolean; // a run still going: its cost is not in yet
 };
@@ -282,7 +287,7 @@ function entryLine(e: UsageEntry, i: number): SpendLine {
     detail: `${calls} · ${formatTokens(e.input_tokens)} in${cached}${out}`,
     cost: e.cost_usd,
     kind: e.api === "claude-code" ? "subscription" : "billed",
-    approx: e.api === "jev",
+    approx: e.api === "jev" || (e.api !== "claude-code" && e.api !== "openrouter"),
     runId: null,
     pending: false,
   };

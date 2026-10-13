@@ -9,22 +9,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
-// Jev compaction in this machine's Claude Code, as the server's Settings say
-// (Jev on + "compaction"). When on, the agent:
-//
-//   - checks out the compaction plugin at the commit the server pins, into
-//     <Home>/claude-plugins/fast-jev-compaction, and installs it from there
-//     (a local marketplace: nothing is fetched from the plugin's repo later);
-//   - sets TYPESAFE_API_KEY and CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 in
-//     ~/.claude/settings.json "env", marking them as Forge's.
-//
-// When off it disables the plugin and removes only the env keys it added.
-// The heartbeat carries a revision, so this runs at start and on change.
-// "claude_jev": false in agent.json keeps Forge out of Claude Code entirely.
+// Jev compaction in this machine's Claude Code. Forge used to install
+// TypeSafe's fast-jev-compaction plugin and put TYPESAFE_API_KEY and
+// CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 into ~/.claude/settings.json "env".
+// The plugin calls TypeSafe's own API with its own key; Forge now reaches
+// Jev through OpenRouter, so the server always answers "off" and the agent
+// undoes what it set up: it disables the plugin and removes only the env
+// keys it added (marked FORGE_MANAGES_JEV). The heartbeat carries a
+// revision, so this runs at start and on change. "claude_jev": false in
+// agent.json keeps Forge out of Claude Code entirely.
 
 const (
 	jevPlugin      = "fast-jev-compaction"
@@ -35,11 +31,8 @@ const (
 )
 
 type jevConfig struct {
-	Compaction   bool   `json:"compaction"`
-	APIKey       string `json:"api_key"`
-	PluginRepo   string `json:"plugin_repo"`
-	PluginCommit string `json:"plugin_commit"`
-	Rev          string `json:"rev"`
+	Compaction bool   `json:"compaction"`
+	Rev        string `json:"rev"`
 }
 
 // syncJev applies the server's Jev settings when its revision changed.
@@ -71,7 +64,7 @@ func (r *Runner) syncJev(ctx context.Context, rev string) {
 	r.mu.Lock()
 	r.jevRev = rev
 	r.mu.Unlock()
-	slog.Info("jev: Claude Code compaction " + map[bool]string{true: "on", false: "off"}[cfg.Compaction])
+	slog.Info("jev: Claude Code compaction off")
 }
 
 func (r *Runner) jevBackoff() {
@@ -80,63 +73,46 @@ func (r *Runner) jevBackoff() {
 	r.mu.Unlock()
 }
 
+// applyJev removes Forge's Jev compaction from Claude Code (the only state
+// the server asks for now; see the top of this file).
 func applyJev(ctx context.Context, claude string, cfg jevConfig) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
 	settings := filepath.Join(home, ".claude", "settings.json")
-	if !cfg.Compaction {
-		if _, err := exec.LookPath(claude); err == nil {
-			_ = exec.CommandContext(ctx, claude, "plugin", "disable", jevPluginID).Run() // not installed is fine
-		}
-		return setClaudeEnv(settings, nil)
-	}
-	if cfg.APIKey == "" || cfg.PluginRepo == "" || cfg.PluginCommit == "" {
-		return errors.New("incomplete settings from the server")
-	}
-	if _, err := exec.LookPath(claude); err != nil {
-		return fmt.Errorf("claude not found: %w", err)
-	}
-	dir := filepath.Join(Home(), "claude-plugins", jevPlugin)
-	if err := checkoutPinned(ctx, cfg.PluginRepo, cfg.PluginCommit, dir); err != nil {
+	env, err := readClaudeEnv(settings)
+	if err != nil {
 		return err
 	}
-	// Idempotent enough: "already added/installed" is an error we can ignore;
-	// whether the plugin ends up enabled is checked below.
-	_ = exec.CommandContext(ctx, claude, "plugin", "marketplace", "add", dir).Run()
-	_ = exec.CommandContext(ctx, claude, "plugin", "marketplace", "update", jevPlugin).Run()
-	_ = exec.CommandContext(ctx, claude, "plugin", "install", jevPluginID).Run()
-	_ = exec.CommandContext(ctx, claude, "plugin", "enable", jevPluginID).Run()
-	if out, err := exec.CommandContext(ctx, claude, "plugin", "list").CombinedOutput(); err == nil &&
-		!strings.Contains(string(out), jevPlugin) {
-		return fmt.Errorf("%s did not install: %s", jevPlugin, firstLine(string(out)))
+	if env[jevMarkerEnv] == nil {
+		return nil // Forge never set it up here
 	}
-	return setClaudeEnv(settings, map[string]string{jevKeyEnv: cfg.APIKey, jevFunctionEnv: "1"})
+	if _, err := exec.LookPath(claude); err == nil {
+		_ = exec.CommandContext(ctx, claude, "plugin", "disable", jevPluginID).Run() // not installed is fine
+	}
+	return setClaudeEnv(settings, nil)
 }
 
-// checkoutPinned makes dir a checkout of repo at exactly commit.
-func checkoutPinned(ctx context.Context, repo, commit, dir string) error {
-	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
-		if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
-			return err
-		}
-		if _, err := git(ctx, filepath.Dir(dir), "clone", "--quiet", repo, dir); err != nil {
-			return fmt.Errorf("cloning %s: %w", repo, err)
-		}
+// readClaudeEnv is settings.json's "env" (empty when there is none).
+func readClaudeEnv(path string) (map[string]any, error) {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]any{}, nil
 	}
-	if head, _ := git(ctx, dir, "rev-parse", "HEAD"); strings.TrimSpace(head) == commit {
-		return nil
+	if err != nil {
+		return nil, err
 	}
-	if _, err := git(ctx, dir, "cat-file", "-e", commit+"^{commit}"); err != nil {
-		if _, err := git(ctx, dir, "fetch", "--quiet", "origin"); err != nil {
-			return fmt.Errorf("fetching %s: %w", repo, err)
-		}
+	var settings struct {
+		Env map[string]any `json:"env"`
 	}
-	if _, err := git(ctx, dir, "checkout", "--quiet", "--detach", commit); err != nil {
-		return fmt.Errorf("checking out %s: %w", commit, err)
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	return nil
+	if settings.Env == nil {
+		settings.Env = map[string]any{}
+	}
+	return settings.Env, nil
 }
 
 // setClaudeEnv puts vars into settings.json "env" (marking them Forge's), or

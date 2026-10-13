@@ -33,6 +33,8 @@ export const SECURITY_KINDS: Record<SecurityKind, KindMeta> = {
   assistant_key: { label: "Assistant API key replaced", tone: "warning", group: "sensitive" },
   engine_settings: { label: "Agent engine settings changed", tone: "neutral", group: "account" },
   deepseek_key: { label: "DeepSeek API key replaced", tone: "warning", group: "sensitive" },
+  provider_settings: { label: "AI provider changed", tone: "neutral", group: "account" },
+  provider_key: { label: "OpenRouter API key replaced", tone: "warning", group: "sensitive" },
   runner_rotated: { label: "Machine token rotated", tone: "neutral", group: "machines" },
 };
 

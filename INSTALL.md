@@ -209,28 +209,47 @@ changes, ahead/behind and CI; runs and terminals open there.
 
 Check: the project page shows git state for each repo within 5 minutes.
 
+### 2c′. The AI provider: one OpenRouter key
+
+Everything Forge pays for besides your Claude login — the DeepSeek engine (the
+Assistant's and agent runs') and Jev — goes through one OpenAI-compatible
+gateway with one key: [OpenRouter](https://openrouter.ai) by default.
+**Settings → AI provider**, or on the server:
+
+```bash
+forge openrouter set-key < key.txt    # sealed in the vault (tag integration:openrouter)
+forge openrouter test                 # one tiny call with the DeepSeek model
+forge openrouter url https://…/v1     # optional: another OpenAI-compatible gateway
+```
+
+Requests carry `X-Title: Forge` and your public URL as `HTTP-Referer`, so
+OpenRouter's dashboard shows Forge's spend on its own. Without a key, Claude
+still works everywhere; DeepSeek and Jev are off. (Before this release each
+feature had its own key — `integration:assistant`, `integration:deepseek`,
+`integration:jev` — and those vault items are no longer read.)
+
 ### 2d. Optional: the Assistant
 
 A chat in Forge that answers from your projects, tasks and machines and
 delegates work to Claude Code (it queues runs exactly like the New run dialog,
 in `plan` or `acceptEdits` mode — never `bypassPermissions`; commands that need
-confirmation are left to you). It needs an OpenAI-compatible API key —
-[DeepSeek](https://platform.deepseek.com) by default. **Settings → Assistant**,
-or on the server:
+confirmation are left to you). **Settings → Assistant**, or on the server:
 
 ```bash
-forge assistant set-key < key.txt            # stored sealed in the vault
-forge assistant model deepseek-flash          # optional: model [base-url]
 forge assistant on
+forge assistant engine claude                  # what a new chat starts on (claude | deepseek)
+forge assistant model deepseek/deepseek-v4-flash   # the DeepSeek engine's model
 forge assistant ask "What needs my attention today?"   # one turn from the shell, with what it spent
+forge assistant ask -engine deepseek "…"       # the same on DeepSeek
 ```
 
-Each chat picks its engine above the message box: **DeepSeek API** (the agent
-loop on the server, with a model and thinking effort) or **Claude Code** (a
-session on the master machine, on that machine's Claude login, with a model
-and effort; read-only unless "Can make changes" is on). Under every answer, the
-turn's spend: the chat model's calls, Jev's, the Claude Code session's tokens
-(at API prices), and each run it queued.
+Each chat picks its engine above the message box: **Claude Code** (the
+default: a session on the master machine, on that machine's Claude login, with
+a model and effort; read-only unless "Can make changes" is on) or **DeepSeek
+(OpenRouter)** (the agent loop on the server with the provider key, a model
+and a thinking effort — off unless you pick one). Under every answer, the
+turn's spend: the chat model's calls and Jev's (as OpenRouter priced them), the
+Claude Code session's tokens (at API prices), and each run it queued.
 
 ### 2d′. Claude Code and your tasks
 
@@ -250,41 +269,49 @@ and edit memory on a project's **Memory** tab, and the memories about you under
 **Settings**. Keep `CLAUDE.md` for the stable rules of a repo; memory is for
 what is learned along the way.
 
-### 2e. Agent engine: DeepSeek by default
+### 2e. Agent engine: Claude, or DeepSeek through OpenRouter
 
-Agent runs start Claude Code on a machine. By default it talks to
-[DeepSeek](https://platform.deepseek.com)'s Anthropic-compatible API
-(`deepseek-flash`; `deepseek-v4-pro` when Jev judges a task heavy) instead of
-Anthropic. Claude is used for a run only when you pick it in the New run dialog
-(or ask the Assistant for Claude), or when there is no DeepSeek key (the run
-says so). **Settings → Agent engine**, or on the server:
+Agent runs start Claude Code on a machine. By default it uses that machine's
+own Claude login (your subscription). On **DeepSeek** the same `claude` talks
+to OpenRouter's Anthropic-compatible endpoint (the provider URL without
+`/v1`) with the provider key: `deepseek/deepseek-v4-flash`, and
+`deepseek/deepseek-v4-pro` when Jev judges a task heavy. Pick it per run in
+the New run dialog, or make it the default; without a provider key a DeepSeek
+run falls back to Claude (the run says so). **Settings → Agent engine**, or on
+the server:
 
 ```bash
-forge engine set-key < key.txt   # sealed in the vault (tag integration:deepseek)
-forge engine status              # the Assistant's key is used when it points at DeepSeek
-forge engine claude              # make Claude the default instead (forge engine deepseek to undo)
+forge engine deepseek            # make DeepSeek the default (forge engine claude to undo)
+forge engine model deepseek/deepseek-v4-flash deepseek/deepseek-v4-pro
+forge engine status
 ```
 
 The machine receives the key with each DeepSeek run and sets
-`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` for that `claude` process only (any
-Anthropic credentials in its environment are dropped for it). Machines need
-Forge ≥ the release that added this; older agents fail DeepSeek runs.
+`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` (with `ANTHROPIC_API_KEY` empty),
+the model variables and `ENABLE_TOOL_SEARCH=false` for that `claude` process
+only (any Anthropic credentials in its environment are dropped for it). Agents
+older than this release don't turn tool search off, and OpenRouter refuses
+their DeepSeek runs: upgrade the machines before using DeepSeek.
 
 ### 2f. Optional: token saving with Jev
 
-With a [TypeSafe](https://jevtypesafeai.com) API key, Forge uses Jev (a small
-decision model) instead of Claude for routine judgements: **Settings → Token
-saving**, paste the key, switch on. Or on the server:
+With the provider key, Forge asks Jev (TypeSafe's decision model,
+`typesafe/jev-router` on OpenRouter) instead of Claude for routine
+judgements — the model a run needs, which tasks a session should hear about,
+which task a request is about. Each answer is JSON in a fixed schema; any
+error leaves things as they would be without Jev. **Settings → Token saving**,
+or on the server:
 
 ```bash
-forge jev set-key < key.txt     # stored sealed in the vault
 forge jev on
 forge jev status
 ```
 
-With "compaction" on, each machine's agent installs the pinned
-`fast-jev-compaction` Claude Code plugin within a heartbeat or two. Opt a
-machine out with `"claude_jev": false` in its `agent.json`.
+Earlier releases could also install TypeSafe's `fast-jev-compaction` Claude
+Code plugin on every machine. It calls TypeSafe's own API with its own key, so
+it cannot run through OpenRouter: agents of this release remove it (and the
+`TYPESAFE_API_KEY` / `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` entries Forge had put
+in `~/.claude/settings.json`) on their next heartbeat.
 
 ### 2g. Optional: Telegram
 

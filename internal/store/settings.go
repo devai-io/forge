@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 )
 
 // Server-wide settings edited in the web app, one JSON value per key.
@@ -30,28 +31,84 @@ func (s *Store) putSetting(ctx context.Context, key string, v any) error {
 	return err
 }
 
+// AI provider: one OpenAI-compatible gateway (OpenRouter by default) and one
+// key for everything Forge pays for itself — the Assistant's DeepSeek engine,
+// agent runs on DeepSeek, and Jev. The key is the vault item tagged
+// integration:openrouter.
+
+const (
+	// OpenRouterTag is the vault tag of the provider key.
+	OpenRouterTag = "integration:openrouter"
+	// DefaultProviderURL is OpenRouter's OpenAI-compatible API.
+	DefaultProviderURL = "https://openrouter.ai/api/v1"
+	// DefaultModel and DefaultHeavyModel are the DeepSeek models (OpenRouter ids).
+	DefaultModel      = "deepseek/deepseek-v4-flash"
+	DefaultHeavyModel = "deepseek/deepseek-v4-pro"
+	// DefaultJevModel is TypeSafe's Jev router on OpenRouter.
+	DefaultJevModel = "typesafe/jev-router"
+)
+
+// ProviderSettings say where the provider's API is. Claude Code (agent runs
+// on DeepSeek) talks to the same gateway's Anthropic-compatible endpoint.
+type ProviderSettings struct {
+	BaseURL string `json:"base_url"`
+}
+
+// AnthropicURL is the base URL Claude Code gets as ANTHROPIC_BASE_URL: the
+// OpenAI-compatible base without its /v1 (OpenRouter serves /api/v1/messages).
+func (p ProviderSettings) AnthropicURL() string {
+	return strings.TrimSuffix(strings.TrimRight(p.BaseURL, "/"), "/v1")
+}
+
+func (s *Store) ProviderSettings(ctx context.Context) (ProviderSettings, error) {
+	v := ProviderSettings{BaseURL: DefaultProviderURL}
+	_, err := s.getSetting(ctx, "provider", &v)
+	if v.BaseURL == "" {
+		v.BaseURL = DefaultProviderURL
+	}
+	return v, err
+}
+
+func (s *Store) SetProviderSettings(ctx context.Context, v ProviderSettings) error {
+	return s.putSetting(ctx, "provider", v)
+}
+
+// ModelID maps the DeepSeek API's own model names, which settings and chats
+// from before the switch to OpenRouter may still carry, to OpenRouter ids.
+// Anything else is returned as it is.
+func ModelID(m string) string {
+	switch strings.TrimSpace(m) {
+	case "deepseek-flash", "deepseek-chat", "deepseek-v4-flash":
+		return DefaultModel
+	case "deepseek-pro", "deepseek-reasoner", "deepseek-v4-pro":
+		return DefaultHeavyModel
+	}
+	return m
+}
+
 // JevSettings says where Forge spends Jev calls to save frontier-model
-// tokens. Nothing happens unless Enabled and a key is in the vault
-// (tag integration:jev).
+// tokens. Nothing happens unless Enabled and the provider key is in the vault.
 type JevSettings struct {
 	Enabled bool `json:"enabled"`
+	// Model is the Jev model asked through the provider.
+	Model string `json:"model"`
 	// Routing: an agent run queued without a model gets one picked by how
 	// hard the prompt looks (haiku / sonnet / the machine's default).
 	Routing bool `json:"routing"`
 	// Context: the context a Claude session starts with lists only the open
 	// tasks Jev judges relevant to the repo it was opened in.
 	Context bool `json:"context"`
-	// Compaction: every machine's Claude Code gets the Jev compaction plugin,
-	// which drops tool results that no longer matter instead of summarising.
-	Compaction bool `json:"compaction"`
 	// Match: each request typed into Claude Code is matched against the open
 	// tasks, so the session knows which one it is working on.
 	Match bool `json:"match"`
 }
 
 func (s *Store) JevSettings(ctx context.Context) (JevSettings, error) {
-	v := JevSettings{Routing: true, Context: true, Compaction: true, Match: true}
+	v := JevSettings{Model: DefaultJevModel, Routing: true, Context: true, Match: true}
 	_, err := s.getSetting(ctx, "jev", &v)
+	if v.Model == "" || v.Model == "jev-latest" {
+		v.Model = DefaultJevModel
+	}
 	return v, err
 }
 
@@ -59,30 +116,41 @@ func (s *Store) SetJevSettings(ctx context.Context, v JevSettings) error {
 	return s.putSetting(ctx, "jev", v)
 }
 
-// AssistantSettings configure the Assistant's LLM provider (any
-// OpenAI-compatible chat-completions API). The key is the vault item tagged
-// integration:assistant.
+// AssistantSettings configure the Assistant. Engine is what a new chat
+// starts on: "claude" (a Claude Code session on the master machine, on the
+// subscription logged in there) or "deepseek" (Model through the provider).
+// BaseURL is the provider's, filled in when read.
 type AssistantSettings struct {
 	Enabled bool   `json:"enabled"`
+	Engine  string `json:"engine"`
 	BaseURL string `json:"base_url"`
 	Model   string `json:"model"`
 }
 
 func (s *Store) AssistantSettings(ctx context.Context) (AssistantSettings, error) {
-	v := AssistantSettings{BaseURL: "https://api.deepseek.com", Model: "deepseek-flash"}
-	_, err := s.getSetting(ctx, "assistant", &v)
+	v := AssistantSettings{Engine: "claude", Model: DefaultModel}
+	if _, err := s.getSetting(ctx, "assistant", &v); err != nil {
+		return v, err
+	}
+	if !OneOf(v.Engine, Engines) {
+		v.Engine = "claude"
+	}
+	v.Model = ModelID(v.Model)
+	p, err := s.ProviderSettings(ctx)
+	v.BaseURL = p.BaseURL
 	return v, err
 }
 
 func (s *Store) SetAssistantSettings(ctx context.Context, v AssistantSettings) error {
+	v.BaseURL = "" // the provider's; see ProviderSettings
 	return s.putSetting(ctx, "assistant", v)
 }
 
 // EngineSettings say which backend agent runs use when the run does not pick
-// one. "deepseek" runs Claude Code against DeepSeek's Anthropic-compatible
-// API with Model (HeavyModel when Jev judges the task heavy); "claude" is
-// Anthropic. The DeepSeek key is the vault item tagged integration:deepseek,
-// else the Assistant's key when the Assistant talks to DeepSeek.
+// one. "claude" is Claude Code as logged in on the machine (the
+// subscription); "deepseek" runs the same Claude Code against the provider's
+// Anthropic-compatible endpoint with Model (HeavyModel when Jev judges the
+// task heavy).
 //
 // MaxConcurrent is how many runs each machine works on at once (an
 // interactive run holds its slot while it waits for a reply); a machine's
@@ -98,11 +166,12 @@ type EngineSettings struct {
 const DefaultMaxConcurrent = 4
 
 func (s *Store) EngineSettings(ctx context.Context) (EngineSettings, error) {
-	v := EngineSettings{Default: "deepseek", Model: "deepseek-flash", HeavyModel: "deepseek-v4-pro", MaxConcurrent: DefaultMaxConcurrent}
+	v := EngineSettings{Default: "claude", Model: DefaultModel, HeavyModel: DefaultHeavyModel, MaxConcurrent: DefaultMaxConcurrent}
 	_, err := s.getSetting(ctx, "engine", &v)
 	if v.MaxConcurrent <= 0 {
 		v.MaxConcurrent = DefaultMaxConcurrent
 	}
+	v.Model, v.HeavyModel = ModelID(v.Model), ModelID(v.HeavyModel)
 	return v, err
 }
 

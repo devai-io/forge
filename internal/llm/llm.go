@@ -1,6 +1,6 @@
 // Package llm is a small client for OpenAI-compatible chat-completions APIs
-// with tool calling (DeepSeek by default). It sends a whole conversation and
-// returns one assistant message; the caller runs the tools and loops.
+// with tool calling (OpenRouter by default). It sends a whole conversation
+// and returns one assistant message; the caller runs the tools and loops.
 package llm
 
 import (
@@ -16,10 +16,11 @@ import (
 	"time"
 )
 
-// DefaultBaseURL and DefaultModel are DeepSeek's API and its fast model.
+// DefaultBaseURL and DefaultModel are OpenRouter's API and DeepSeek's fast
+// model there.
 const (
-	DefaultBaseURL = "https://api.deepseek.com"
-	DefaultModel   = "deepseek-flash"
+	DefaultBaseURL = "https://openrouter.ai/api/v1"
+	DefaultModel   = "deepseek/deepseek-v4-flash"
 )
 
 var ErrNoKey = errors.New("no API key configured")
@@ -27,9 +28,11 @@ var ErrNoKey = errors.New("no API key configured")
 type Message struct {
 	Role    string `json:"role"` // system | user | assistant | tool
 	Content string `json:"content"`
-	// ReasoningContent is DeepSeek's thinking; with tools it must be sent
-	// back on every earlier assistant message.
+	// ReasoningContent is the model's thinking (DeepSeek's field; OpenRouter
+	// answers it as Reasoning). With tools DeepSeek wants it sent back on
+	// every earlier assistant message.
 	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	Reasoning        string     `json:"reasoning,omitempty"`
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string     `json:"tool_call_id,omitempty"`
 }
@@ -55,12 +58,23 @@ type Usage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
 	CachedTokens int `json:"cached_tokens"`
+	// CostUSD is what the provider says the call cost (OpenRouter does), or nil.
+	CostUSD *float64 `json:"cost_usd,omitempty"`
 }
 
 type Client struct {
 	BaseURL string
 	Key     func(context.Context) (string, error)
 	HTTP    *http.Client
+	// AppName and AppURL go out as X-Title and HTTP-Referer, so OpenRouter
+	// splits the key's spend per app.
+	AppName, AppURL string
+}
+
+// App sets the attribution headers and returns c.
+func (c *Client) App(name, url string) *Client {
+	c.AppName, c.AppURL = name, url
+	return c
 }
 
 func New(baseURL string, key func(context.Context) (string, error)) *Client {
@@ -89,6 +103,12 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
+	if c.AppName != "" {
+		req.Header.Set("X-Title", c.AppName)
+	}
+	if c.AppURL != "" {
+		req.Header.Set("HTTP-Referer", c.AppURL)
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return fmt.Errorf("llm: %w", err)
@@ -117,20 +137,21 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	return json.Unmarshal(raw, out)
 }
 
-// Efforts are the thinking settings DeepSeek takes: "off" disables thinking,
-// the others set reasoning_effort; "" leaves the provider's default.
+// Efforts are the thinking settings a chat can pick: "off" (also what ""
+// means: DeepSeek on OpenRouter reasons by default, which a chat rarely
+// needs) or how hard to think.
 var Efforts = []string{"off", "low", "high", "max"}
 
 // Chat sends the conversation and returns the model's next message.
 func (c *Client) Chat(ctx context.Context, model, effort string, messages []Message, tools []Tool) (Message, Usage, error) {
 	body := map[string]any{"model": model, "messages": messages}
 	switch effort {
-	case "":
-	case "off":
-		body["thinking"] = map[string]string{"type": "disabled"}
+	case "", "off":
+		body["reasoning"] = map[string]any{"enabled": false}
+	case "max":
+		body["reasoning"] = map[string]any{"effort": "xhigh"}
 	default:
-		body["thinking"] = map[string]string{"type": "enabled"}
-		body["reasoning_effort"] = effort
+		body["reasoning"] = map[string]any{"effort": effort}
 	}
 	if len(tools) > 0 {
 		ts := make([]map[string]any, len(tools))
@@ -151,6 +172,7 @@ func (c *Client) Chat(ctx context.Context, model, effort string, messages []Mess
 			Details          struct {
 				Cached int `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
+			Cost *float64 `json:"cost"`
 		} `json:"usage"`
 	}
 	if err := c.do(ctx, http.MethodPost, "/chat/completions", body, &out); err != nil {
@@ -160,8 +182,13 @@ func (c *Client) Chat(ctx context.Context, model, effort string, messages []Mess
 		return Message{}, Usage{}, errors.New("llm: empty answer")
 	}
 	u := Usage{InputTokens: out.Usage.PromptTokens, OutputTokens: out.Usage.CompletionTokens,
-		CachedTokens: max(out.Usage.CacheHit, out.Usage.Details.Cached)}
-	return out.Choices[0].Message, u, nil
+		CachedTokens: max(out.Usage.CacheHit, out.Usage.Details.Cached), CostUSD: out.Usage.Cost}
+	msg := out.Choices[0].Message
+	if msg.ReasoningContent == "" {
+		msg.ReasoningContent = msg.Reasoning
+	}
+	msg.Reasoning = ""
+	return msg, u, nil
 }
 
 // Models lists the model ids the provider offers for this key.

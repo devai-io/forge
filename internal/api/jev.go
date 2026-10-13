@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -16,30 +15,11 @@ import (
 	"github.com/devai-io/forge/internal/store"
 )
 
-// Jev (TypeSafe's decision model) where Forge can trade a cheap typed
-// judgement for frontier-model tokens. Off unless enabled in Settings and a
-// key is in the vault (tag integration:jev). Every use fails open: an error
-// or an unsure answer leaves things exactly as they would be without Jev.
-
-const jevTag = "integration:jev"
-
-// The compaction plugin the machines install, pinned to a reviewed commit
-// (it sees whole Claude Code transcripts, so it is not tracked blindly).
-const (
-	jevPluginRepo   = "https://github.com/tamaratran/fast-jev-compaction.git"
-	jevPluginCommit = "e3f262a7f4d42bd8dd32ced30d26176f7cb545b0"
-)
-
-func (s *Server) jevKey(ctx context.Context) (string, error) {
-	if !s.box.Available() {
-		return "", jev.ErrNoKey
-	}
-	k, err := s.store.IntegrationSecret(ctx, s.box, jevTag)
-	if errors.Is(err, store.ErrNotFound) {
-		return "", jev.ErrNoKey
-	}
-	return k, err
-}
+// Jev (TypeSafe's decision model, asked through the provider) where Forge
+// can trade a cheap typed judgement for frontier-model tokens. Off unless
+// enabled in Settings and the provider key is in the vault. Every use fails
+// open: an error or an unsure answer leaves things exactly as they would be
+// without Jev.
 
 // jevOn returns the settings when Jev is enabled and has a key.
 func (s *Server) jevOn(ctx context.Context) (store.JevSettings, bool) {
@@ -47,7 +27,7 @@ func (s *Server) jevOn(ctx context.Context) (store.JevSettings, bool) {
 	if err != nil || !set.Enabled {
 		return set, false
 	}
-	if k, err := s.jevKey(ctx); err != nil || k == "" {
+	if k, err := s.providerKey(ctx); err != nil || k == "" {
 		return set, false
 	}
 	return set, true
@@ -59,7 +39,7 @@ func (s *Server) getJev(w http.ResponseWriter, r *http.Request, u *store.User) {
 		writeErr(w, r, err)
 		return
 	}
-	k, _ := s.jevKey(r.Context())
+	k, _ := s.providerKey(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{"settings": set, "key_configured": k != "", "stats": s.jev.Stats()})
 }
 
@@ -70,43 +50,34 @@ func (s *Server) updateJev(w http.ResponseWriter, r *http.Request, u *store.User
 		return
 	}
 	var in struct {
-		Enabled, Routing, Context, Compaction, Match *bool
+		Enabled, Routing, Context, Match *bool
+		Model                            *string
 	}
 	if !decode(w, r, &in) {
 		return
 	}
 	for dst, v := range map[*bool]*bool{&set.Enabled: in.Enabled, &set.Routing: in.Routing, &set.Context: in.Context,
-		&set.Compaction: in.Compaction, &set.Match: in.Match} {
+		&set.Match: in.Match} {
 		if v != nil {
 			*dst = *v
 		}
+	}
+	if in.Model != nil {
+		v := strings.TrimSpace(*in.Model)
+		if v == "" {
+			v = store.DefaultJevModel
+		}
+		if !modelNameRe.MatchString(v) {
+			writeErr(w, r, &store.ValidationError{Field: "model", Message: "not a model name"})
+			return
+		}
+		set.Model = v
 	}
 	if err := s.store.SetJevSettings(r.Context(), set); err != nil {
 		writeErr(w, r, err)
 		return
 	}
-	s.sec(r, "jev_settings", fmt.Sprintf("enabled=%t routing=%t context=%t compaction=%t match=%t", set.Enabled, set.Routing, set.Context, set.Compaction, set.Match))
-	s.getJev(w, r, u)
-}
-
-// setJevKey stores the API key as the vault item Forge reads it from.
-func (s *Server) setJevKey(w http.ResponseWriter, r *http.Request, u *store.User) {
-	var in struct {
-		APIKey string `json:"api_key"`
-	}
-	if !decode(w, r, &in) {
-		return
-	}
-	in.APIKey = strings.TrimSpace(in.APIKey)
-	if len(in.APIKey) < 16 || strings.ContainsAny(in.APIKey, " \t\n") {
-		writeErr(w, r, &store.ValidationError{Field: "api_key", Message: "that does not look like an API key"})
-		return
-	}
-	if err := s.store.SaveIntegrationSecret(r.Context(), s.box, "TypeSafe Jev API key", jevTag, in.APIKey, s.clientIP(r)); err != nil {
-		writeErr(w, r, err)
-		return
-	}
-	s.sec(r, "jev_key", "Jev API key replaced")
+	s.sec(r, "jev_settings", fmt.Sprintf("enabled=%t model=%s routing=%t context=%t match=%t", set.Enabled, set.Model, set.Routing, set.Context, set.Match))
 	s.getJev(w, r, u)
 }
 
@@ -140,7 +111,7 @@ func (s *Server) jevRoute(ctx context.Context, in *store.RunInput, eng store.Eng
 	if len(prompt) > 4000 {
 		prompt = prompt[:4000] + " …"
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second) // a router call, usually ~2 s
 	defer cancel()
 	ans, err := s.jev.Ask(ctx, map[string]string{"coding_agent_task": prompt},
 		map[string]jev.Question{"effort": jev.Choice(
@@ -259,19 +230,13 @@ func (s *Server) jevRelevance(ctx context.Context, repo *store.Repo, tasks []sto
 
 // ── Machines ──────────────────────────────────────────────────────────────
 
-// runnerJev tells a machine whether to wire Jev compaction into its Claude
-// Code, with the key and the pinned plugin. rev changes whenever any of it
-// does; the heartbeat carries it so machines re-apply only on change.
+// runnerJevConfig is what machines are told about Jev in their Claude Code.
+// Forge used to wire TypeSafe's compaction plugin in, which calls TypeSafe's
+// own API with its own key; with Jev reached through OpenRouter that cannot
+// work, so the answer is always "off" and machines that had it remove the
+// plugin and the settings.json keys Forge added. The heartbeat carries rev.
 func (s *Server) runnerJevConfig(ctx context.Context) map[string]any {
-	set, on := s.jevOn(ctx)
-	out := map[string]any{"compaction": false, "plugin_repo": jevPluginRepo, "plugin_commit": jevPluginCommit}
-	if on && set.Compaction {
-		k, _ := s.jevKey(ctx)
-		out["compaction"], out["api_key"] = true, k
-	}
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%v|%v|%s", out["compaction"], out["api_key"], jevPluginCommit)))
-	out["rev"] = hex.EncodeToString(sum[:8])
-	return out
+	return map[string]any{"compaction": false, "rev": "off"}
 }
 
 func (s *Server) runnerJev(w http.ResponseWriter, r *http.Request, rn *store.Runner) {

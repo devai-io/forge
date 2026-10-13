@@ -1,11 +1,14 @@
-// Package assistant is Forge's main agent: a chat with an LLM (any
-// OpenAI-compatible API) that reads and updates Forge through tools and
+// Package assistant is Forge's main agent: a chat that reads and updates
+// Forge through tools and
 // delegates real work to Claude Code on the user's machines by queuing runs —
 // the same runs the "New run" dialog creates, under the same machine rules.
 //
-// The loop runs on the server, one turn per user message: call the model,
-// run the tools it asks for, append everything to the chat, repeat until it
-// answers without tools. The web app only posts messages and polls.
+// A chat runs on one of two engines. "claude" (the default) is a Claude Code
+// session on the master machine, on the subscription logged in there
+// (session.go). "deepseek" is a loop on the server through the provider's
+// OpenAI-compatible API (OpenRouter): call the model, run the tools it asks
+// for, append everything to the chat, repeat until it answers without tools.
+// The web app only posts messages and polls.
 package assistant
 
 import (
@@ -31,14 +34,17 @@ const (
 	freshToolLimit = 16000            // chars kept of a recent tool result
 )
 
-var ErrOff = errors.New("the assistant is not set up: add an API key and turn it on in Settings → Assistant")
+var ErrOff = errors.New("the assistant is off: turn it on in Settings → Assistant")
+
+// ErrNoKey: a DeepSeek turn needs the provider key.
+var ErrNoKey = errors.New("the DeepSeek engine needs an OpenRouter key: add one in Settings → AI provider, or use Claude")
 
 // ErrNoMachine: a Claude Code turn needs a machine that runs claude.
 var ErrNoMachine = errors.New("no machine can run Claude Code for the assistant: pair one (the master) and install Claude Code there")
 
 // Hooks are what the assistant needs from the API layer.
 type Hooks struct {
-	// Key returns the provider API key (vault, tag integration:assistant).
+	// Key returns the provider API key (vault, tag integration:openrouter).
 	Key func(context.Context) (string, error)
 	// Route may pick a model for a new agent run (Jev); may be nil.
 	Route func(context.Context, *store.RunInput)
@@ -59,7 +65,7 @@ func New(st *store.Store, h Hooks) *Assistant {
 }
 
 // client builds the provider client from the current settings; ErrOff when
-// the assistant is off or has no key.
+// the assistant is off, ErrNoKey without a provider key.
 func (a *Assistant) client(ctx context.Context) (*llm.Client, store.AssistantSettings, error) {
 	set, err := a.store.AssistantSettings(ctx)
 	if err != nil {
@@ -69,9 +75,9 @@ func (a *Assistant) client(ctx context.Context) (*llm.Client, store.AssistantSet
 		return nil, set, ErrOff
 	}
 	if k, err := a.hooks.Key(ctx); err != nil || k == "" {
-		return nil, set, ErrOff
+		return nil, set, ErrNoKey
 	}
-	return llm.New(set.BaseURL, a.hooks.Key), set, nil
+	return llm.New(set.BaseURL, a.hooks.Key).App("Forge", a.store.PublicURL), set, nil
 }
 
 // Ready says whether a turn on this engine could start now.
@@ -111,19 +117,23 @@ func (a *Assistant) Models(ctx context.Context) []string {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	ids, err := llm.New(set.BaseURL, a.hooks.Key).Models(ctx)
+	ids, err := llm.New(set.BaseURL, a.hooks.Key).App("Forge", a.store.PublicURL).Models(ctx)
 	if err != nil {
 		return []string{}
 	}
 	return ids
 }
 
-// DefaultSettings are what a new chat starts with: the configured provider
-// model on DeepSeek, and — should it move to Claude Code — no permission
-// prompts when the master machine allows bypassPermissions.
+// DefaultSettings are what a new chat starts with: the configured engine
+// (Claude unless Settings say DeepSeek; DeepSeek with its model), and — on
+// Claude Code — no permission prompts when the master machine allows
+// bypassPermissions.
 func (a *Assistant) DefaultSettings(ctx context.Context) store.ChatSettings {
 	set, _ := a.store.AssistantSettings(ctx)
-	cs := store.ChatSettings{Engine: "deepseek", Model: set.Model}
+	cs := store.ChatSettings{Engine: set.Engine}
+	if cs.Engine == "deepseek" {
+		cs.Model = set.Model
+	}
 	if rn, err := a.store.MasterRunner(ctx); err == nil {
 		cs.SkipPermissions = store.OneOf("bypassPermissions", rn.Capabilities.PermissionModes)
 	}
@@ -239,7 +249,7 @@ func (a *Assistant) turn(ctx context.Context, chat *store.Chat, turn *store.Chat
 	if err != nil {
 		return err
 	}
-	model := turn.Model
+	model := store.ModelID(turn.Model)
 	if model == "" {
 		model = set.Model
 	}
@@ -259,8 +269,12 @@ func (a *Assistant) turn(ctx context.Context, chat *store.Chat, turn *store.Chat
 			return err
 		}
 		miss := int64(u.InputTokens - u.CachedTokens)
+		cost := u.CostUSD // as the provider reports it, else estimated
+		if cost == nil {
+			cost = usage.DeepSeekCost(model, miss, int64(u.CachedTokens), int64(u.OutputTokens), time.Now())
+		}
 		meter.Add(usage.Entry{API: api, Model: model, Calls: 1, InputTokens: miss, CachedTokens: int64(u.CachedTokens),
-			OutputTokens: int64(u.OutputTokens), CostUSD: usage.DeepSeekCost(model, miss, int64(u.CachedTokens), int64(u.OutputTokens), time.Now())})
+			OutputTokens: int64(u.OutputTokens), CostUSD: cost})
 		_ = a.store.SetChatTurnUsage(ctx, turn.ID, meter.Entries())
 		_ = a.store.AddChatUsage(ctx, chat.ID, store.ChatUsage{InputTokens: u.InputTokens,
 			OutputTokens: u.OutputTokens, CachedTokens: u.CachedTokens})
@@ -300,16 +314,20 @@ func (a *Assistant) turn(ctx context.Context, chat *store.Chat, turn *store.Chat
 	return fmt.Errorf("stopped after %d steps without a final answer", maxSteps)
 }
 
-// apiName names a provider for the bill: "deepseek" for DeepSeek, else its host.
+// apiName names a provider for the bill: "openrouter", "deepseek", else its host.
 func apiName(baseURL string) string {
 	u, err := url.Parse(baseURL)
 	if err != nil || u.Hostname() == "" {
 		return "llm"
 	}
-	if strings.HasSuffix(u.Hostname(), "deepseek.com") {
+	switch h := u.Hostname(); {
+	case h == "openrouter.ai" || strings.HasSuffix(h, ".openrouter.ai"):
+		return "openrouter"
+	case strings.HasSuffix(h, "deepseek.com"):
 		return "deepseek"
+	default:
+		return h
 	}
-	return u.Hostname()
 }
 
 // conversation is what the model sees: the system prompt and the stored
@@ -361,7 +379,7 @@ func systemPrompt(user *store.User, publicURL string) string {
 How to work:
 - Look things up with the tools instead of guessing. Project keys, repo names and machine names come from list_projects / list_machines.
 - Real work on code — reading it, answering questions about it, reviewing, fixing bugs, writing tests or features — is delegated to Claude Code with delegate_to_claude. Claude starts in the repo with the project's Forge context but NOT this conversation, so write a complete, self-contained prompt: the goal, relevant details from the chat, constraints, and what to report back.
-- Engine: runs use Forge's default engine (normally DeepSeek, which costs a fraction of Claude). Only pass engine: "claude" when %s explicitly asks for Claude for that work; never pick it on your own because a task looks hard.
+- Engine: runs use Forge's default engine (Settings → Agent engine). Only pass engine ("claude" or "deepseek") when %s explicitly asks for one for that work.
 - Permission modes: "plan" (read-only) for questions, investigation and reviews; "acceptEdits" only when %s asked for changes. For changes, prefer worktree: true (an isolated branch) unless they want the edit in their checkout. Never try to bypass permissions.
 - After delegating you may wait_for_runs (at most 10 minutes per call) and summarise the outcome with the key findings. For longer work, say what you queued and give the run link (%s/agents/runs/<id>); they can ask you to check later.
 - Machines: omit machine to use the master. Commands marked confirm (store uploads, deploys) cannot be run from here — tell the user to run them from the Agents page.

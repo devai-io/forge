@@ -35,10 +35,10 @@ One binary, one SQLite file, one folder. MIT licensed.
 - **Vault** — keys, keystores and service accounts, encrypted with a key kept
   outside the database; revealing needs your password again; everything audited.
 - **Assistant (optional)** — a chat that reads and updates your projects and
-  tasks: answered by an OpenAI-compatible model (DeepSeek by default, delegating
-  real work to Claude Code on your machines) or by a Claude Code session on your
-  main machine — engine, model and effort per chat, and what each turn spent,
-  per API.
+  tasks: answered by a Claude Code session on your main machine (its own login,
+  the default) or by DeepSeek through OpenRouter, delegating real work to Claude
+  Code on your machines — engine, model and effort per chat, and what each turn
+  spent, per API.
 - **Memory** — durable notes per project (decisions, conventions, gotchas,
   how-tos) and about you. Claude sessions start with them, recall more as a
   request needs them, and save what they learn through the `forge` MCP server;
@@ -48,13 +48,16 @@ One binary, one SQLite file, one folder. MIT licensed.
   prompts and plans to your phone with buttons, tells you when runs finish or
   wait for a reply (reply to continue), posts the daily check-up, and passes
   everything else to the Assistant. Long-polling: nothing to expose.
-- **Agent engine** — agent runs drive Claude Code against DeepSeek's
-  Anthropic-compatible API by default (with a DeepSeek key), at a fraction of the
-  price; pick Claude per run, or make it the default.
-- **Token saving (optional)** — with a TypeSafe key, Jev picks the model for
-  agent runs (DeepSeek's heavy model only for heavy tasks; Haiku/Sonnet for light
-  Claude runs), trims the context Claude sessions start with, and compacts long
-  Claude Code sessions on every machine.
+- **One AI provider key** — an [OpenRouter](https://openrouter.ai) key (any
+  OpenAI-compatible gateway works) pays for everything Forge runs besides your
+  Claude login: DeepSeek for the Assistant and agent runs, and Jev.
+- **Agent engine** — agent runs drive Claude Code with the machine's own login
+  by default; pick DeepSeek (through OpenRouter's Anthropic-compatible API, at a
+  fraction of the price) per run, or make it the default.
+- **Token saving (optional)** — Jev (TypeSafe's decision model, through
+  OpenRouter) picks the model for agent runs (DeepSeek's heavy model only for
+  heavy tasks; Haiku/Sonnet for light Claude runs), trims the context Claude
+  sessions start with, and matches requests to your open tasks.
 - **Security** — password + optional TOTP, step-up confirmation for sensitive
   actions, security log, new-device sign-in e-mails.
 

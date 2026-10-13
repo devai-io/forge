@@ -712,11 +712,13 @@ export type SecurityKind =
   | "runner_paired"
   | "runner_rotated"
   | "jev_settings"
-  | "jev_key"
+  | "jev_key" // before the provider key
   | "assistant_settings"
-  | "assistant_key"
+  | "assistant_key" // before the provider key
   | "engine_settings"
-  | "deepseek_key";
+  | "deepseek_key" // before the provider key
+  | "provider_settings"
+  | "provider_key";
 
 export type SecurityEvent = {
   id: number;
@@ -774,18 +776,32 @@ export type SystemFacts = {
   seeded_at: string | null;
 };
 
+// ── AI provider ───────────────────────────────────────────────────────────
+
+/** One OpenAI-compatible gateway (OpenRouter by default) and one key for the DeepSeek engine and Jev. */
+export type ProviderSettings = {
+  base_url: string; // default "https://openrouter.ai/api/v1"
+};
+
+export type ProviderStatus = {
+  settings: ProviderSettings;
+  key_configured: boolean; // vault item tagged integration:openrouter; never returned
+  anthropic_url: string; // what Claude Code gets as ANTHROPIC_BASE_URL for DeepSeek runs
+  default_url: string;
+};
+
 // ── Agent engine ──────────────────────────────────────────────────────────
 
 export type EngineSettings = {
   default: Engine; // used by runs that do not pick an engine
-  model: string; // DeepSeek model for ordinary runs
-  heavy_model: string; // DeepSeek model when Jev judges a task heavy
+  model: string; // DeepSeek model for ordinary runs (OpenRouter id, default "deepseek/deepseek-v4-flash")
+  heavy_model: string; // DeepSeek model when Jev judges a task heavy (default "deepseek/deepseek-v4-pro")
   max_concurrent: number; // runs each machine works on at once (1–16; agent.json can only lower it)
 };
 
 export type EngineStatus = {
   settings: EngineSettings;
-  deepseek_key: boolean;
+  provider_key: boolean; // DeepSeek runs need it; without it they fall back to Claude
   models: Record<Engine, string[]>; // what the run form offers per engine
   efforts: string[]; // claude --effort values
 };
@@ -794,15 +810,15 @@ export type EngineStatus = {
 
 export type JevSettings = {
   enabled: boolean;
+  model: string; // the Jev model on the provider, default "typesafe/jev-router"
   routing: boolean; // pick haiku/sonnet for agent runs queued without a model
   context: boolean; // session context lists only tasks relevant to the repo
-  compaction: boolean; // machines wire Jev compaction into Claude Code
   match: boolean; // requests typed into Claude Code are matched to open tasks
 };
 
 export type JevStatus = {
   settings: JevSettings;
-  key_configured: boolean;
+  key_configured: boolean; // the provider key
   stats: {
     calls: number;
     errors: number;
@@ -817,13 +833,14 @@ export type JevStatus = {
 
 export type AssistantSettings = {
   enabled: boolean;
-  base_url: string; // OpenAI-compatible API base, default "https://api.deepseek.com"
-  model: string; // default "deepseek-flash"
+  engine: ChatEngine; // what a new chat starts on, default "claude"
+  base_url: string; // the provider's (read-only here; see ProviderSettings)
+  model: string; // the DeepSeek engine's model, default "deepseek/deepseek-v4-flash"
 };
 
 export type AssistantStatus = {
   settings: AssistantSettings;
-  key_configured: boolean; // the key itself is never returned
+  key_configured: boolean; // the provider key (DeepSeek engine); never returned
   models: string[]; // what the provider lists for this key ([] if unknown/unreachable)
   engines: {
     deepseek: { available: boolean; models: string[]; efforts: string[] };
@@ -853,7 +870,7 @@ export type ChatSettings = {
 
 /** One line of a turn's bill. */
 export type UsageEntry = {
-  api: string; // "deepseek" | "jev" | "claude-code" | a provider host
+  api: string; // "openrouter" | "deepseek" | "claude-code" | a provider host (older turns: "jev")
   model: string;
   calls: number;
   input_tokens: number; // not from cache

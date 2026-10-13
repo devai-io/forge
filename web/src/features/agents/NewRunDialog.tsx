@@ -51,7 +51,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   const [interactive, setInteractive] = useState(resume ? resume.interactive : true);
   // "" = the server's default engine.
   const [engine, setEngine] = useState<Engine | "">("");
-  const defaultEngine = engineStatus.data?.settings.default ?? "deepseek";
+  const defaultEngine = engineStatus.data?.settings.default ?? "claude";
   const runEngine: Engine = resume ? resume.engine || "claude" : engine || defaultEngine;
   const models = [...(engineStatus.data?.models?.[runEngine] ?? [])];
   if (model && !customModel && !models.includes(model)) models.unshift(model);
@@ -285,8 +285,8 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                     ) : (
                       <>
                         <option value="">Default ({ENGINE_LABEL[defaultEngine]})</option>
-                        <option value="deepseek">DeepSeek</option>
-                        <option value="claude">Claude (Anthropic)</option>
+                        <option value="claude">Claude</option>
+                        <option value="deepseek">DeepSeek (OpenRouter)</option>
                       </>
                     )}
                   </Select>

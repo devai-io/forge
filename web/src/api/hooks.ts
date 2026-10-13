@@ -75,6 +75,8 @@ import type {
   MemoryList,
   MemoryPatch,
   MemorySaved,
+  ProviderSettings,
+  ProviderStatus,
   TelegramSettings,
   TelegramStatus,
   TelegramTest,
@@ -1112,15 +1114,46 @@ export function useUpdateEngine() {
   });
 }
 
-/** Stores the DeepSeek key agent runs use (needs a recent password confirmation). */
-export function useSetDeepseekKey() {
+// ── AI provider (OpenRouter: one key for DeepSeek and Jev) ───────────────
+
+export function useProvider() {
+  return useQuery({ queryKey: ["provider"], queryFn: () => api.get<ProviderStatus>("/provider") });
+}
+
+/** Everything that shows whether the provider key is there. */
+function invalidateProviderUsers(qc: QueryClient) {
+  for (const key of [["provider"], ["engine"], ["jev"], keys.assistant, ["vault"]]) {
+    void qc.invalidateQueries({ queryKey: key });
+  }
+}
+
+export function useUpdateProvider() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (apiKey: string) => api.put<EngineStatus>("/engine/key", { api_key: apiKey }),
+    mutationFn: (patch: Partial<ProviderSettings>) => api.patch<ProviderStatus>("/provider", patch),
     onSuccess: (s) => {
-      qc.setQueryData(["engine"], s);
-      void qc.invalidateQueries({ queryKey: ["vault"] });
+      qc.setQueryData(["provider"], s);
+      invalidateProviderUsers(qc);
     },
+  });
+}
+
+/** Stores the provider key in the vault (needs a recent password confirmation). */
+export function useSetProviderKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (apiKey: string) => api.put<ProviderStatus>("/provider/key", { api_key: apiKey }),
+    onSuccess: (s) => {
+      qc.setQueryData(["provider"], s);
+      invalidateProviderUsers(qc);
+    },
+  });
+}
+
+export function useTestProvider() {
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ ok: boolean; ms?: number; model?: string; answer?: string; cost_usd?: number; error?: string }>("/provider/test"),
   });
 }
 
@@ -1135,18 +1168,6 @@ export function useUpdateJev() {
   return useMutation({
     mutationFn: (patch: Partial<JevSettings>) => api.patch<JevStatus>("/jev", patch),
     onSuccess: (s) => qc.setQueryData(["jev"], s),
-  });
-}
-
-/** Stores the TypeSafe key in the vault (needs a recent password confirmation). */
-export function useSetJevKey() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (apiKey: string) => api.put<JevStatus>("/jev/key", { api_key: apiKey }),
-    onSuccess: (s) => {
-      qc.setQueryData(["jev"], s);
-      void qc.invalidateQueries({ queryKey: ["vault"] });
-    },
   });
 }
 
@@ -1171,18 +1192,6 @@ export function useUpdateAssistant() {
   return useMutation({
     mutationFn: (patch: Partial<AssistantSettings>) => api.patch<AssistantStatus>("/assistant", patch),
     onSuccess: (s) => qc.setQueryData(keys.assistant, s),
-  });
-}
-
-/** Stores the provider key in the vault (needs a recent password confirmation). */
-export function useSetAssistantKey() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (apiKey: string) => api.put<AssistantStatus>("/assistant/key", { api_key: apiKey }),
-    onSuccess: (s) => {
-      qc.setQueryData(keys.assistant, s);
-      void qc.invalidateQueries({ queryKey: ["vault"] });
-    },
   });
 }
 

@@ -38,23 +38,29 @@ func TestAssistantDeepSeekTurnIsMetered(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A provider that thinks: each answer carries reasoning_content, which
-	// must come back on the next request.
+	// A provider that thinks: each answer carries reasoning (OpenRouter's
+	// field), which must come back on the next request. The same provider
+	// answers Jev's questions.
 	var mu sync.Mutex
 	var bodies []map[string]any
 	steps := []map[string]any{
-		{"role": "assistant", "content": "", "reasoning_content": "think-1", "tool_calls": []any{map[string]any{
+		{"role": "assistant", "content": "", "reasoning": "think-1", "tool_calls": []any{map[string]any{
 			"id": "c1", "type": "function", "function": map[string]any{"name": "delegate_to_claude",
 				"arguments": `{"project":"SHOP","repo":"shop_api","prompt":"Summarise the README"}`}}}},
-		{"role": "assistant", "content": "Queued.", "reasoning_content": "think-2"},
+		{"role": "assistant", "content": "Queued.", "reasoning": "think-2"},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/models" {
-			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-flash"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek/deepseek-v4-flash"}]}`))
 			return
 		}
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["model"] == store.DefaultJevModel {
+			_ = json.NewEncoder(w).Encode(map[string]any{"model": "routed/model", "choices": []any{map[string]any{"message": map[string]any{
+				"content": `{"effort":{"choice":"light","confidence":0.9}}`}}}, "usage": map[string]any{"prompt_tokens": 30, "cost": 0.00002}})
+			return
+		}
 		mu.Lock()
 		bodies = append(bodies, body)
 		step := steps[0]
@@ -65,8 +71,7 @@ func TestAssistantDeepSeekTurnIsMetered(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	h.enableAssistant(srv.URL)
-	jevSrv, _ := fakeJev(t, "light", 0.9, 0.5, nil)
-	h.enableJev(jevSrv.URL)
+	expect(t, "enable jev", h.do("PATCH", "/api/jev", map[string]bool{"enabled": true}, nil), 200)
 
 	expect(t, "bad effort", h.do("POST", "/api/chats", map[string]any{"content": "hi", "effort": "xhigh"}, nil), 422)
 	var started chatView
@@ -83,7 +88,7 @@ func TestAssistantDeepSeekTurnIsMetered(t *testing.T) {
 	mu.Lock()
 	first, second := bodies[0], bodies[1]
 	mu.Unlock()
-	if first["reasoning_effort"] != "high" || fmt.Sprint(first["thinking"]) != "map[type:enabled]" || first["model"] != "deepseek-flash" {
+	if fmt.Sprint(first["reasoning"]) != "map[effort:high]" || first["model"] != "deepseek/deepseek-v4-flash" {
 		t.Fatalf("request = %v", first)
 	}
 	raw, _ := json.Marshal(second["messages"])
@@ -103,10 +108,10 @@ func TestAssistantDeepSeekTurnIsMetered(t *testing.T) {
 	for _, e := range turn.Usage {
 		switch e.API {
 		case "127.0.0.1":
-			llmLine = e.Model == "deepseek-flash" && e.Calls == 2 && e.InputTokens == 120 && e.CachedTokens == 80 &&
+			llmLine = e.Model == "deepseek/deepseek-v4-flash" && e.Calls == 2 && e.InputTokens == 120 && e.CachedTokens == 80 &&
 				e.OutputTokens == 20 && e.CostUSD != nil && *e.CostUSD > 0
-		case "jev":
-			jevLine = e.Calls == 1 && e.CostUSD != nil
+		case "openrouter":
+			jevLine = e.Model == store.DefaultJevModel && e.Calls == 1 && e.CostUSD != nil && *e.CostUSD == 0.00002
 		}
 	}
 	if !llmLine || !jevLine {

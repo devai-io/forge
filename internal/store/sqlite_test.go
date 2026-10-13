@@ -258,3 +258,36 @@ func TestRepoSyncActivity(t *testing.T) {
 		t.Fatalf("stored sync = %+v", got.Git)
 	}
 }
+
+func TestProviderSettingsAndLegacyModels(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+	p := must(st.ProviderSettings(ctx))
+	if p.BaseURL != store.DefaultProviderURL || p.AnthropicURL() != "https://openrouter.ai/api" {
+		t.Fatalf("provider = %+v (%s)", p, p.AnthropicURL())
+	}
+	// Defaults: Claude everywhere, DeepSeek models as OpenRouter ids.
+	a := must(st.AssistantSettings(ctx))
+	e := must(st.EngineSettings(ctx))
+	if a.Engine != "claude" || a.Model != store.DefaultModel || a.BaseURL != store.DefaultProviderURL ||
+		e.Default != "claude" || e.Model != store.DefaultModel || e.HeavyModel != store.DefaultHeavyModel {
+		t.Fatalf("defaults: %+v %+v", a, e)
+	}
+	// Settings saved before OpenRouter (DeepSeek's own names and URL) read as OpenRouter ones.
+	ok(t, st.SetAssistantSettings(ctx, store.AssistantSettings{Enabled: true, BaseURL: "https://api.deepseek.com", Model: "deepseek-flash"}))
+	ok(t, st.SetEngineSettings(ctx, store.EngineSettings{Default: "deepseek", Model: "deepseek-flash", HeavyModel: "deepseek-v4-pro"}))
+	ok(t, st.SetJevSettings(ctx, store.JevSettings{Enabled: true, Model: "jev-latest"}))
+	a, e = must(st.AssistantSettings(ctx)), must(st.EngineSettings(ctx))
+	j := must(st.JevSettings(ctx))
+	if a.Engine != "claude" || a.Model != store.DefaultModel || a.BaseURL != store.DefaultProviderURL ||
+		e.Model != store.DefaultModel || e.HeavyModel != store.DefaultHeavyModel || j.Model != store.DefaultJevModel {
+		t.Fatalf("legacy: %+v %+v %+v", a, e, j)
+	}
+	ok(t, st.SetProviderSettings(ctx, store.ProviderSettings{BaseURL: "https://gateway.example.com/v1/"}))
+	if p := must(st.ProviderSettings(ctx)); p.AnthropicURL() != "https://gateway.example.com" {
+		t.Fatalf("anthropic url = %s", p.AnthropicURL())
+	}
+	if store.ModelID("vendor/other") != "vendor/other" {
+		t.Fatal("ModelID changed an unknown model")
+	}
+}

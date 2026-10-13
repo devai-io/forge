@@ -64,10 +64,9 @@ func toolCall(id, name string, args any) map[string]any {
 
 func (h *harness) enableAssistant(url string) {
 	h.t.Helper()
-	if err := h.store.SaveIntegrationSecret(context.Background(), h.api.box, "LLM", assistantTag, "not-a-real-key-for-tests", "test"); err != nil {
-		h.t.Fatal(err)
-	}
-	expect(h.t, "enable", h.do("PATCH", "/api/assistant", map[string]any{"enabled": true, "base_url": url, "model": "fake-small"}, nil), 200)
+	h.setProvider(url)
+	h.providerKey()
+	expect(h.t, "enable", h.do("PATCH", "/api/assistant", map[string]any{"enabled": true, "engine": "deepseek", "model": "fake-small"}, nil), 200)
 }
 
 func (h *harness) waitChat(id int64) (store.Chat, []store.ChatMessage) {
@@ -184,7 +183,7 @@ func TestAssistantDelegatesToClaude(t *testing.T) {
 
 	// A follow-up in the same chat; a second message while busy is refused.
 	llm2 := newFakeLLM(t, map[string]any{"role": "assistant", "content": "It is still running."})
-	expect(t, "base url", h.do("PATCH", "/api/assistant", map[string]any{"base_url": llm2.srv.URL}, nil), 200)
+	h.setProvider(llm2.srv.URL)
 	expect(t, "follow-up", h.do("POST", fmt.Sprintf("/api/chats/%d/messages", chat.ID), map[string]string{"content": "Status?"}, nil), 200)
 	chat, msgs = h.waitChat(chat.ID)
 	if msgs[len(msgs)-1].Content != "It is still running." {

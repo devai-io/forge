@@ -12,7 +12,7 @@ afterEach(() => vi.unstubAllGlobals());
 const AT = "2026-09-29T10:00:00Z";
 
 const status: AssistantStatus = {
-  settings: { enabled: true, base_url: "https://llm.example.com", model: "demo-flash" },
+  settings: { enabled: true, engine: "deepseek", base_url: "https://llm.example.com", model: "demo-flash" },
   key_configured: true,
   models: ["demo-flash", "demo-pro"],
   engines: {
@@ -167,7 +167,7 @@ describe("Assistant engines", () => {
     );
     renderChat("/assistant/7");
     const user = userEvent.setup();
-    const summary = await screen.findByRole("button", { name: /DeepSeek API · demo-flash · High · \$0\.0053 API/ });
+    const summary = await screen.findByRole("button", { name: /DeepSeek \(OpenRouter\) · demo-flash · High · \$0\.0053 API/ });
     await user.click(summary);
     expect(screen.getByText("Jev · jev-1")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Run #12 · DeepSeek deepseek-flash" })).toHaveAttribute("href", "/agents/runs/12");

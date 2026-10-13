@@ -214,7 +214,7 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 			ship.send(textEvent("system", msg))
 			return finishReport{Status: "failed", Error: msg}
 		}
-		ship.send(textEvent("system", "engine: DeepSeek ("+run.Setup.BaseURL+")"))
+		ship.send(textEvent("system", "engine: DeepSeek via "+run.Setup.BaseURL))
 	}
 
 	cmd := exec.Command(r.cfg.ClaudePath, args...)
@@ -262,7 +262,7 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 	rep := finishReport{ExitCode: code, SessionID: res.SessionID, Result: res.Result,
 		CostUSD: res.CostUSD, NumTurns: res.NumTurns, DurationMS: res.DurationMS, Usage: res.RawUsage}
 	if run.Engine == "deepseek" {
-		// Claude Code prices tokens at Anthropic's rates; DeepSeek's are not.
+		// Claude Code prices tokens at Anthropic's rates; the provider's are not.
 		rep.CostUSD = res.deepseekCost(time.Now())
 	}
 	switch {

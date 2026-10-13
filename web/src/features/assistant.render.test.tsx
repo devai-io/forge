@@ -12,7 +12,7 @@ afterEach(() => vi.unstubAllGlobals());
 const AT = "2026-09-28T10:00:00Z";
 
 const status = (over: Partial<AssistantStatus> = {}): AssistantStatus => ({
-  settings: { enabled: true, base_url: "https://llm.example.com", model: "demo-model" },
+  settings: { enabled: true, engine: "deepseek", base_url: "https://llm.example.com", model: "demo-model" },
   key_configured: true,
   models: [],
   engines: {
@@ -222,7 +222,7 @@ describe("Assistant page", () => {
     vi.stubGlobal(
       "fetch",
       routeFetch({
-        "GET /assistant": () => jsonResponse(200, status({ settings: { enabled: false, base_url: "", model: "" }, key_configured: false })),
+        "GET /assistant": () => jsonResponse(200, status({ settings: { enabled: false, engine: "claude", base_url: "", model: "" }, key_configured: false })),
         "GET /chats": () => jsonResponse(503, { error: { code: "assistant_off", message: "The assistant is off." } }),
       }),
     );
@@ -234,18 +234,17 @@ describe("Assistant page", () => {
 });
 
 describe("Settings → Assistant", () => {
-  it("stays off until a key is stored, then saves the key and the model", async () => {
+  it("switches on, picks the engine new chats start on, and the DeepSeek model", async () => {
     const sent: unknown[] = [];
-    let current = status({ settings: { enabled: false, base_url: "https://llm.example.com", model: "demo-model" }, key_configured: false });
+    let current = status({
+      settings: { enabled: false, engine: "claude", base_url: "https://llm.example.com", model: "deepseek/deepseek-v4-flash" },
+      key_configured: false,
+      models: [],
+    });
     vi.stubGlobal(
       "fetch",
       routeFetch({
         "GET /assistant": () => jsonResponse(200, current),
-        "PUT /assistant/key": (init) => {
-          sent.push(JSON.parse(String(init.body)));
-          current = { ...current, key_configured: true, models: ["demo-model", "demo-model-large"] };
-          return jsonResponse(200, current);
-        },
         "PATCH /assistant": (init) => {
           const patch = JSON.parse(String(init.body));
           sent.push(patch);
@@ -255,22 +254,22 @@ describe("Settings → Assistant", () => {
       }),
     );
     renderWithProviders(<AssistantPanel />);
-    expect(await screen.findByText("no key yet")).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: "Use the assistant" })).toBeDisabled();
-    // No model list yet: a free-text field.
-    expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("demo-model");
+    // Claude needs no key: the switch works without one.
+    expect(await screen.findByText("no OpenRouter key: DeepSeek is off")).toBeInTheDocument();
+    expect(screen.getByText("Claude Code on desk")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Claude" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.queryByLabelText(/API key/)).not.toBeInTheDocument();
+    // No model list: a free-text field.
+    expect(screen.getByRole("textbox", { name: "DeepSeek model" })).toHaveValue("deepseek/deepseek-v4-flash");
 
     const user = userEvent.setup();
-    await user.type(screen.getByLabelText("Provider API key"), "not-a-real-key-for-tests");
-    await user.click(screen.getByRole("button", { name: "Save key" }));
-    expect(await screen.findByText("key in the vault")).toBeInTheDocument();
-    expect(screen.queryByDisplayValue("not-a-real-key-for-tests")).not.toBeInTheDocument();
-
-    // The provider's models arrive with the key: now a list.
-    await user.selectOptions(screen.getByRole("combobox", { name: "Model" }), "demo-model-large");
     await user.click(screen.getByRole("switch", { name: "Use the assistant" }));
+    await user.click(screen.getByRole("radio", { name: "DeepSeek (OpenRouter)" }));
+    const model = screen.getByRole("textbox", { name: "DeepSeek model" });
+    await user.clear(model);
+    await user.type(model, "deepseek/deepseek-v4-pro{Enter}");
     await waitFor(() =>
-      expect(sent).toEqual([{ api_key: "not-a-real-key-for-tests" }, { model: "demo-model-large" }, { enabled: true }]),
+      expect(sent).toEqual([{ enabled: true }, { engine: "deepseek" }, { model: "deepseek/deepseek-v4-pro" }]),
     );
   });
 });

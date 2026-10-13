@@ -61,10 +61,13 @@ vulnerability) on this repository. Do not open a public issue.
   `acceptEdits`, or `bypassPermissions` when the chat skips permissions and
   the machine allows it); it may use Forge's own MCP tools and nothing else beyond
   what that machine already allows.
-- Agent runs on DeepSeek (the default engine when a DeepSeek key is stored)
-  send the run's prompt and everything Claude Code reads in the repo to
-  DeepSeek instead of Anthropic. The machine receives the DeepSeek key with
-  each such run (only over the agent's authenticated connection) and passes it
-  to that `claude` process only; it is never written to disk.
+- Agent runs on DeepSeek (an engine you pick per run or as the default) send
+  the run's prompt and everything Claude Code reads in the repo to the AI
+  provider (OpenRouter by default, which forwards it to a DeepSeek host)
+  instead of Anthropic. The machine receives the provider key with each such
+  run (only over the agent's authenticated connection) and passes it to that
+  `claude` process only; it is never written to disk. Assistant chats on
+  DeepSeek and Jev's questions (task titles, run prompts) go to the same
+  provider from the server.
 - Project files are always served as downloads (`application/octet-stream`,
   sandboxed), never rendered in the app's origin.

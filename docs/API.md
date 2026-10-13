@@ -808,12 +808,44 @@ ids are kept there as `"m12"`, including those the SessionStart context listed �
 `GET /api/runner/context` returns them as `memory_ids`), so a session hears
 about each task and memory once. Errors print nothing.
 
+## AI provider
+
+One OpenAI-compatible gateway — OpenRouter by default — and one key pay for
+everything Forge runs besides the machines' own Claude login: the DeepSeek
+engine (Assistant chats and agent runs) and Jev. The key is the `value` secret
+of the newest vault item tagged `integration:openrouter`. Requests carry
+`X-Title: Forge` and the public URL as `HTTP-Referer`. (Earlier releases read
+per-feature keys tagged `integration:assistant`, `integration:deepseek` and
+`integration:jev`; those are ignored now.)
+
+```ts
+type ProviderSettings = { base_url: string };   // default "https://openrouter.ai/api/v1"; must be https
+type ProviderStatus = {
+  settings: ProviderSettings;
+  key_configured: boolean;     // the key itself is never returned
+  anthropic_url: string;       // base_url without "/v1": what Claude Code gets for DeepSeek runs
+  default_url: string;
+};
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | /api/provider | – | `ProviderStatus` |
+| PATCH | /api/provider | `Partial<ProviderSettings>` (`""` = the default) | `ProviderStatus` |
+| PUT | /api/provider/key | `{api_key}` | `ProviderStatus` (elevation; creates/updates the vault item) |
+| POST | /api/provider/test | – | `{ok, ms?, model?, answer?, cost_usd?, error?}` — one tiny chat call with the engine's DeepSeek model, reasoning off |
+
+Model ids are the provider's (`deepseek/deepseek-v4-flash`). Settings and chats
+saved with DeepSeek's own names (`deepseek-flash`, `deepseek-chat`,
+`deepseek-v4-flash` → `deepseek/deepseek-v4-flash`; `deepseek-v4-pro`,
+`deepseek-pro`, `deepseek-reasoner` → `deepseek/deepseek-v4-pro`) are read as
+the OpenRouter ids.
+
 ## Agent engine
 
-An agent run's Claude Code talks to Anthropic (`claude`) or to DeepSeek's
-Anthropic-compatible API (`deepseek`). The DeepSeek key is the vault item tagged
-`integration:deepseek`, else the Assistant's key when its `base_url` is on
-`deepseek.com`.
+An agent run's Claude Code uses the machine's own Claude login (`claude`, the
+default) or the provider's Anthropic-compatible endpoint with the provider key
+and DeepSeek's models (`deepseek`).
 
 ```ts
 type Engine = "deepseek" | "claude";
@@ -821,9 +853,9 @@ type EngineSettings = {
   default: Engine; model: string; heavy_model: string;
   max_concurrent: number;        // runs per machine at once, 1–16 (default 4); PATCH validates the range
 };
-// defaults: "deepseek", "deepseek-flash", "deepseek-v4-pro"
-type EngineStatus = { settings: EngineSettings; deepseek_key: boolean;
-  models: Record<Engine, string[]>;  // the run form's choices; deepseek: settings, then what DeepSeek lists for the key, then the known ones
+// defaults: "claude", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"
+type EngineStatus = { settings: EngineSettings; provider_key: boolean;
+  models: Record<Engine, string[]>;  // the run form's choices; deepseek: settings, then the provider's deepseek/* models, then the known ones
   efforts: string[] };               // claude --effort: low|medium|high|xhigh|max
 type Run = { /* … */ engine: Engine | "";     // "" for command runs
               effort: string;                // claude --effort, "" = default
@@ -834,37 +866,43 @@ type RunInput = { /* … */ engine?: Engine;   // omitted = settings.default
 ```
 
 - `GET /api/engine` → `EngineStatus`. `PATCH /api/engine` `Partial<EngineSettings>` → `EngineStatus`.
-- `PUT /api/engine/key` `{api_key}` → `EngineStatus` (elevation; creates/updates the vault item).
 - `POST /api/runs` (agent): no `engine` → `settings.default`; `deepseek` without a
-  key → `claude` with `model_note` saying so. Then Jev routing (below), then a
-  DeepSeek run without a model gets `settings.model`. `resume_run_id` keeps the
-  original run's engine. Unknown engines → 422.
+  provider key → `claude` with `model_note` saying so. Then Jev routing (below), then
+  a DeepSeek run without a model gets `settings.model` (DeepSeek's own names become
+  OpenRouter ids). `resume_run_id` keeps the original run's engine. Unknown engines → 422.
 - `POST /api/runner/claim` → `{run, engine}`: `engine` is `null` for Claude runs,
-  `{name: "deepseek", base_url, api_key, model, heavy_model}` for DeepSeek runs. The
-  agent drops `ANTHROPIC_*`/`CLAUDE_CODE_OAUTH_TOKEN` from that process's environment,
-  sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL` (+ `[1m]`) and
-  the default/sub-agent model variables, and reports `cost_usd` estimated from the
-  result's `modelUsage` at DeepSeek's list prices (doubled in its peak hours).
+  `{name: "deepseek", base_url, api_key, model, heavy_model}` for DeepSeek runs
+  (`base_url` = `ProviderStatus.anthropic_url`). The agent drops
+  `ANTHROPIC_*`/`CLAUDE_CODE_OAUTH_TOKEN` from that process's environment, sets
+  `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY=` (empty),
+  `ANTHROPIC_MODEL` (+ `[1m]`), the default/sub-agent model variables and
+  `ENABLE_TOOL_SEARCH=false` (OpenRouter refuses Claude Code's deferred tools), and
+  reports `cost_usd` estimated from the result's `modelUsage` at OpenRouter's
+  DeepSeek prices (DeepSeek's own list prices, doubled in its peak hours, for bare
+  `deepseek-*` names).
 
 ## Jev (token saving)
 
-TypeSafe's Jev answers typed questions (yes/no probabilities, pick-one) for a
-fraction of Claude's tokens. Off until enabled; the key is the `value` secret of
-the newest vault item tagged `integration:jev`. Every use fails open.
+TypeSafe's Jev answers typed questions (yes/no probabilities, pick-one with a
+confidence) for a fraction of Claude's tokens. Forge asks it through the
+provider's chat completions (`model`, default `typesafe/jev-router`, reasoning
+off) with a strict JSON schema: a number 0–1 per yes/no question, `{choice,
+confidence}` per pick-one. Off until enabled; needs the provider key. Every use
+fails open.
 
 ```ts
-type JevSettings = { enabled: boolean; routing: boolean; context: boolean; compaction: boolean; match: boolean };
+type JevSettings = { enabled: boolean; model: string; routing: boolean; context: boolean; match: boolean };
 type JevStatus = {
   settings: JevSettings;
-  key_configured: boolean;                   // the key itself is never returned
+  key_configured: boolean;                   // the provider key; never returned
   stats: { calls: number; errors: number; input_tokens: number; last_at: string | null;
-           last_error: string; last_model: string };  // since the server started
+           last_error: string; last_model: string };  // since the server started; last_model: what the router picked
 };
 type Run = { /* … */ model_note: string };   // "Jev: light task (91% sure) → haiku", else ""
 ```
 
-- `GET /api/jev` → `JevStatus`. `PATCH /api/jev` `Partial<JevSettings>` → `JevStatus`.
-- `PUT /api/jev/key` `{api_key}` → `JevStatus` (elevation; creates/updates the vault item).
+- `GET /api/jev` → `JevStatus`. `PATCH /api/jev` `Partial<JevSettings>` → `JevStatus`
+  (`model: ""` = the default).
 - `POST /api/jev/test` → `{ok, ms?, error?}` — one tiny call.
 - **Routing**: `POST /api/runs` for `kind: "agent"` with no `model` (and not a resume)
   asks Jev light / medium / heavy. On `claude`: ≥ 70 % confident light → `haiku`,
@@ -876,10 +914,11 @@ type Run = { /* … */ model_note: string };   // "Jev: light task (91% sure) �
   says so. Scores are cached 30 minutes per task set.
 - **Match**: see *Task matching* below — Jev scores the candidates when on.
 - **Machines**: the heartbeat answer carries `jev_rev`; when it changes the agent
-  reads `GET /api/runner/jev` → `{compaction, api_key?, plugin_repo, plugin_commit,
-  rev}` and, with compaction on, installs the plugin at exactly `plugin_commit` and
-  sets `TYPESAFE_API_KEY` + `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` in
-  `~/.claude/settings.json` (marked `FORGE_MANAGES_JEV`); off undoes only that.
+  reads `GET /api/runner/jev` → `{compaction: false, rev}`. Earlier releases could
+  install TypeSafe's compaction plugin, which calls TypeSafe's own API and so cannot
+  work through the provider; the agent now disables it and removes the
+  `TYPESAFE_API_KEY` / `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` entries it had put in
+  `~/.claude/settings.json` (marked `FORGE_MANAGES_JEV`), leaving everything else.
   `"claude_jev": false` in `agent.json` opts a machine out.
 
 ## Accent
@@ -922,21 +961,22 @@ and deletes need `X-Forge-Client: web` like every other write.
 
 ## Assistant
 
-A chat with an LLM "main agent" (any OpenAI-compatible API; DeepSeek by
-default) that can read and update Forge and delegate work to Claude Code by
-queuing runs. The agent loop runs on the server; the web app posts messages
-and polls. Off until enabled; the key is the `value` secret of the newest vault
-item tagged `integration:assistant`.
+A chat "main agent" that can read and update Forge and delegate work to
+Claude Code by queuing runs: a Claude Code session on the master machine
+(`claude`, its own login — the default), or a loop on the server through the
+provider with the provider key (`deepseek`). The web app posts messages and
+polls. Off until enabled.
 
 ```ts
 type AssistantSettings = {
   enabled: boolean;
-  base_url: string;   // OpenAI-compatible API base, default "https://api.deepseek.com"
-  model: string;      // default "deepseek-flash"
+  engine: "claude" | "deepseek"; // what a new chat starts on, default "claude"
+  base_url: string;   // the provider's (read-only here; PATCH /api/provider changes it)
+  model: string;      // the DeepSeek engine's model, default "deepseek/deepseek-v4-flash"
 };
 type AssistantStatus = {
   settings: AssistantSettings;
-  key_configured: boolean;       // the key itself is never returned
+  key_configured: boolean;       // the provider key; never returned
   models: string[];              // models the provider lists for this key ([] if unknown/unreachable)
   engines: {
     deepseek: { available: boolean; models: string[]; efforts: string[] };  // efforts: off|low|high|max
@@ -947,21 +987,23 @@ type AssistantStatus = {
 };
 // What answers a chat, per chat (changeable any time; applies from the next turn).
 type ChatSettings = {
-  engine: "deepseek" | "claude"; // the DeepSeek API loop on the server | a Claude Code session on the master
+  engine: "deepseek" | "claude"; // the DeepSeek loop on the server (through the provider) | a Claude Code session on the master
   model: string;                 // "" = default (AssistantSettings.model | Claude Code's own)
-  effort: string;                // "" = default; deepseek: off|low|high|max (thinking off / reasoning_effort)
+  effort: string;                // "" = default; deepseek: off|low|high|max (reasoning off — also the default — or
+                                 // OpenRouter's reasoning.effort low|high|xhigh)
   edits: boolean;                // claude: acceptEdits (files, Forge's task tools) instead of plan (reads only)
   skip_permissions: boolean;     // claude: bypassPermissions (no prompts at all; wins over edits). A turn is
                                  // refused (422) unless the master's permission_modes list bypassPermissions;
                                  // a new chat defaults to true when they do
 };
 type UsageEntry = {                // one line of a turn's bill
-  api: string;                     // "deepseek" | "jev" | "claude-code" | the provider's host
+  api: string;                     // "openrouter" | "deepseek" | "claude-code" | the provider's host (older turns: "jev")
   model: string; calls: number;
   input_tokens: number;            // not from cache
   cached_tokens: number; output_tokens: number;
-  cost_usd: number | null;         // null: no public price. DeepSeek: list price (peak hours ×2);
-                                   // Jev: $0.42/M input (smallest pack); claude-code: Claude Code's figure at API
+  cost_usd: number | null;         // null: no price. openrouter: what OpenRouter reported for the call (Jev's
+                                   // line has model "typesafe/jev-router", note "Jev → <routed model>");
+                                   // else an estimate at list prices; claude-code: Claude Code's figure at API
                                    // prices (the session runs on the machine's Claude login)
   note?: string;
 };
@@ -1004,7 +1046,6 @@ type ChatMessage = {
 |---|---|---|---|
 | GET | /api/assistant | – | `AssistantStatus` |
 | PATCH | /api/assistant | `Partial<AssistantSettings>` | `AssistantStatus` |
-| PUT | /api/assistant/key | `{api_key}` | `AssistantStatus` (elevation; creates/updates the vault item) |
 | GET | /api/chats | – | `{chats: Chat[]}`, newest first |
 | POST | /api/chats | `{content, ...Partial<ChatSettings>}` | `201 {chat, messages, turns}` — the chat with its first user message; the agent starts (`busy: true`) |
 | GET | /api/chats/{id}?after=N | – | `{chat, messages, turns}` — only messages with `seq > N` (no `after` → all); `turns` always whole |
@@ -1013,7 +1054,8 @@ type ChatMessage = {
 | PATCH | /api/chats/{id} | `{title?, ...Partial<ChatSettings>}` | `{chat}` — changing `engine` resets `model` and `effort` |
 | DELETE | /api/chats/{id} | – | `204` |
 
-- `503 assistant_off` when the assistant is not enabled, or (deepseek) has no key;
+- `503 assistant_off` when the assistant is not enabled; `503 no_provider_key`
+  (deepseek) without the provider key;
   `503 no_machine` (claude) without a master machine that has Claude Code. A
   bad engine/model/effort → `422`.
 - **Claude Code turns** (`engine: "claude"`): each turn is an agent run on the

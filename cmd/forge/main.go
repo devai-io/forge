@@ -15,6 +15,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"regexp"
@@ -30,6 +31,7 @@ import (
 	"github.com/devai-io/forge/internal/checkup"
 	"github.com/devai-io/forge/internal/config"
 	"github.com/devai-io/forge/internal/db"
+	"github.com/devai-io/forge/internal/llm"
 	"github.com/devai-io/forge/internal/mail"
 	"github.com/devai-io/forge/internal/monitor"
 	"github.com/devai-io/forge/internal/monitoring"
@@ -52,15 +54,16 @@ Server (workspace: FORGE_HOME, default ~/.config/forge):
   forge reset-password <username>        set a new random password
   forge disable-2fa <username>           turn two-factor off
   forge backup                           snapshot the database into backups/ now
-  forge jev status | on | off            token saving with Jev (TypeSafe)
-  forge jev set-key < key.txt            store the TypeSafe API key in the vault
-  forge assistant status | on | off      the Assistant (LLM chat that delegates to Claude Code)
-  forge assistant set-key < key.txt      store its provider API key in the vault
-  forge assistant model <id> [base-url]  pick the model (and provider URL)
-  forge assistant ask [-engine claude] [-model M] [-effort E] <message>
+  forge openrouter status | test         the AI provider (OpenRouter): key, URL, one tiny call
+  forge openrouter set-key < key.txt     store the one provider key (DeepSeek engine, Jev)
+  forge openrouter url <base-url>        another OpenAI-compatible gateway (default OpenRouter)
+  forge jev status | on | off            token saving with Jev (through the provider)
+  forge assistant status | on | off      the Assistant (a chat that runs Forge and delegates)
+  forge assistant engine claude|deepseek what a new chat starts on (default claude)
+  forge assistant model <id>             the DeepSeek engine's model
+  forge assistant ask [-engine E] [-model M] [-effort E] <message>
                                          one turn from the shell: the answer and what it spent
-  forge engine status | deepseek | claude  default engine for agent runs
-  forge engine set-key < key.txt         store the DeepSeek API key agent runs use
+  forge engine status | claude | deepseek  default engine for agent runs (default claude)
   forge engine model <id> [heavy-id]     DeepSeek models (default / heavy tasks)
   forge telegram status | on | off | set-token | chat <id> | test
                                          the Telegram bot (token on stdin for set-token)
@@ -245,6 +248,8 @@ func runServer(args []string) error {
 				rep.ServersAdded, rep.ProjectsAdded, rep.NotesAppended, len(rep.VaultAdded), rep.Skipped)
 		}
 		return err
+	case "openrouter", "provider":
+		return providerCommand(ctx, cfg, st, args[1:])
 	case "jev":
 		return jevCommand(ctx, cfg, st, args[1:])
 	case "assistant":
@@ -414,10 +419,95 @@ func addMachine(ctx context.Context, cfg config.Config, st *store.Store, name, r
 	return nil
 }
 
+// readKey reads one API key from stdin.
+func readKey() (string, error) {
+	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 4096))
+	if err != nil {
+		return "", err
+	}
+	key := strings.TrimSpace(string(raw))
+	if len(key) < 16 || strings.ContainsAny(key, " \t\n") {
+		return "", errors.New("expected one API key on stdin")
+	}
+	return key, nil
+}
+
+// errMovedKey answers the per-feature set-key commands that one provider key replaced.
+var errMovedKey = errors.New("one OpenRouter key serves the Assistant, agent runs and Jev now: forge openrouter set-key < key.txt")
+
+// providerKeyed says whether the provider key is in the vault.
+func providerKeyed(ctx context.Context, st *store.Store, box *vault.Box) bool {
+	if !box.Available() {
+		return false
+	}
+	k, _ := st.IntegrationSecret(ctx, box, store.OpenRouterTag)
+	return k != ""
+}
+
+// providerCommand is Settings → AI provider, for a server without a browser.
+func providerCommand(ctx context.Context, cfg config.Config, st *store.Store, args []string) error {
+	if len(args) == 0 || len(args) > 2 {
+		return errors.New("usage: forge openrouter status | set-key (key on stdin) | url <base-url> | test")
+	}
+	p, err := st.ProviderSettings(ctx)
+	if err != nil {
+		return err
+	}
+	box, err := vault.Load(cfg.Home)
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "set-key":
+		key, err := readKey()
+		if err != nil {
+			return err
+		}
+		if err := st.SaveIntegrationSecret(ctx, box, "OpenRouter API key", store.OpenRouterTag, key, "cli"); err != nil {
+			return err
+		}
+		fmt.Println("key stored in the vault (tag " + store.OpenRouterTag + ")")
+	case "url":
+		if len(args) != 2 {
+			return errors.New("usage: forge openrouter url <base-url>")
+		}
+		v := strings.TrimRight(strings.TrimSpace(args[1]), "/")
+		if u, err := url.Parse(v); err != nil || u.Scheme != "https" || u.Host == "" {
+			return errors.New("the base URL must be https")
+		}
+		p.BaseURL = v
+		if err := st.SetProviderSettings(ctx, p); err != nil {
+			return err
+		}
+	case "test":
+		set, _ := st.EngineSettings(ctx)
+		key := func(ctx context.Context) (string, error) { return st.IntegrationSecret(ctx, box, store.OpenRouterTag) }
+		tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		start := time.Now()
+		msg, u, err := llm.New(p.BaseURL, key).App("Forge", cfg.PublicURL).Chat(tctx, set.Model, "off",
+			[]llm.Message{{Role: "user", Content: "Reply with: ok"}}, nil)
+		if err != nil {
+			return err
+		}
+		cost := "?"
+		if u.CostUSD != nil {
+			cost = fmt.Sprintf("$%.6f", *u.CostUSD)
+		}
+		fmt.Printf("%s answered %q in %dms (%d in, %d out, %s)\n", set.Model, strings.TrimSpace(msg.Content),
+			time.Since(start).Milliseconds(), u.InputTokens, u.OutputTokens, cost)
+	case "status":
+	default:
+		return fmt.Errorf("unknown openrouter command %q", args[0])
+	}
+	fmt.Printf("provider: base_url=%s anthropic_url=%s key=%t\n", p.BaseURL, p.AnthropicURL(), providerKeyed(ctx, st, box))
+	return nil
+}
+
 // jevCommand is Settings → Token saving, for a server without a browser.
 func jevCommand(ctx context.Context, cfg config.Config, st *store.Store, args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: forge jev status | on | off | set-key (key on stdin)")
+		return errors.New("usage: forge jev status | on | off")
 	}
 	set, err := st.JevSettings(ctx)
 	if err != nil {
@@ -434,36 +524,20 @@ func jevCommand(ctx context.Context, cfg config.Config, st *store.Store, args []
 			return err
 		}
 	case "set-key":
-		raw, err := io.ReadAll(io.LimitReader(os.Stdin, 4096))
-		if err != nil {
-			return err
-		}
-		key := strings.TrimSpace(string(raw))
-		if len(key) < 16 || strings.ContainsAny(key, " \t\n") {
-			return errors.New("expected one API key on stdin")
-		}
-		if err := st.SaveIntegrationSecret(ctx, box, "TypeSafe Jev API key", "integration:jev", key, "cli"); err != nil {
-			return err
-		}
-		fmt.Println("key stored in the vault (tag integration:jev)")
+		return errMovedKey
 	case "status":
 	default:
 		return fmt.Errorf("unknown jev command %q", args[0])
 	}
-	keyed := false
-	if box.Available() {
-		k, _ := st.IntegrationSecret(ctx, box, "integration:jev")
-		keyed = k != ""
-	}
-	fmt.Printf("jev: enabled=%t key=%t routing=%t context=%t compaction=%t\n",
-		set.Enabled, keyed, set.Routing, set.Context, set.Compaction)
+	fmt.Printf("jev: enabled=%t key=%t model=%s routing=%t context=%t match=%t\n",
+		set.Enabled, providerKeyed(ctx, st, box), set.Model, set.Routing, set.Context, set.Match)
 	return nil
 }
 
 // assistantCommand is Settings → Assistant, for a server without a browser.
 func assistantCommand(ctx context.Context, cfg config.Config, st *store.Store, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: forge assistant status | on | off | set-key (key on stdin) | model <id> [base-url] | ask [flags] <message>")
+		return errors.New("usage: forge assistant status | on | off | engine claude|deepseek | model <id> | ask [flags] <message>")
 	}
 	if args[0] == "ask" {
 		return assistantAsk(ctx, cfg, st, args[1:])
@@ -479,49 +553,36 @@ func assistantCommand(ctx context.Context, cfg config.Config, st *store.Store, a
 	switch args[0] {
 	case "on", "off":
 		set.Enabled = args[0] == "on"
+	case "engine":
+		if len(args) != 2 || !store.OneOf(args[1], store.Engines) {
+			return errors.New("usage: forge assistant engine claude|deepseek")
+		}
+		set.Engine = args[1]
 	case "model":
-		if len(args) < 2 || len(args) > 3 {
-			return errors.New("usage: forge assistant model <id> [base-url]")
+		if len(args) != 2 {
+			return errors.New("usage: forge assistant model <id>")
 		}
 		set.Model = args[1]
-		if len(args) == 3 {
-			set.BaseURL = strings.TrimRight(args[2], "/")
-		}
 	case "set-key":
-		raw, err := io.ReadAll(io.LimitReader(os.Stdin, 4096))
-		if err != nil {
-			return err
-		}
-		key := strings.TrimSpace(string(raw))
-		if len(key) < 16 || strings.ContainsAny(key, " \t\n") {
-			return errors.New("expected one API key on stdin")
-		}
-		if err := st.SaveIntegrationSecret(ctx, box, "LLM API key (Assistant)", "integration:assistant", key, "cli"); err != nil {
-			return err
-		}
-		fmt.Println("key stored in the vault (tag integration:assistant)")
+		return errMovedKey
 	case "status":
 	default:
 		return fmt.Errorf("unknown assistant command %q", args[0])
 	}
-	if args[0] != "status" && args[0] != "set-key" {
+	if args[0] != "status" {
 		if err := st.SetAssistantSettings(ctx, set); err != nil {
 			return err
 		}
 	}
-	keyed := false
-	if box.Available() {
-		k, _ := st.IntegrationSecret(ctx, box, "integration:assistant")
-		keyed = k != ""
-	}
-	fmt.Printf("assistant: enabled=%t key=%t model=%s base_url=%s\n", set.Enabled, keyed, set.Model, set.BaseURL)
+	fmt.Printf("assistant: enabled=%t engine=%s deepseek_model=%s provider=%s key=%t\n",
+		set.Enabled, set.Engine, set.Model, set.BaseURL, providerKeyed(ctx, st, box))
 	return nil
 }
 
 // engineCommand is Settings → Agent engine, for a server without a browser.
 func engineCommand(ctx context.Context, cfg config.Config, st *store.Store, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: forge engine status | deepseek | claude | set-key (key on stdin) | model <id> [heavy-id]")
+		return errors.New("usage: forge engine status | claude | deepseek | model <id> [heavy-id]")
 	}
 	set, err := st.EngineSettings(ctx)
 	if err != nil {
@@ -543,38 +604,17 @@ func engineCommand(ctx context.Context, cfg config.Config, st *store.Store, args
 			set.HeavyModel = args[2]
 		}
 	case "set-key":
-		raw, err := io.ReadAll(io.LimitReader(os.Stdin, 4096))
-		if err != nil {
-			return err
-		}
-		key := strings.TrimSpace(string(raw))
-		if len(key) < 16 || strings.ContainsAny(key, " \t\n") {
-			return errors.New("expected one API key on stdin")
-		}
-		if err := st.SaveIntegrationSecret(ctx, box, "DeepSeek API key (agent runs)", "integration:deepseek", key, "cli"); err != nil {
-			return err
-		}
-		fmt.Println("key stored in the vault (tag integration:deepseek)")
+		return errMovedKey
 	case "status":
 	default:
 		return fmt.Errorf("unknown engine command %q", args[0])
 	}
-	if args[0] != "status" && args[0] != "set-key" {
+	if args[0] != "status" {
 		if err := st.SetEngineSettings(ctx, set); err != nil {
 			return err
 		}
 	}
-	key := "none"
-	if box.Available() {
-		if k, _ := st.IntegrationSecret(ctx, box, "integration:deepseek"); k != "" {
-			key = "integration:deepseek"
-		} else if a, _ := st.AssistantSettings(ctx); strings.Contains(a.BaseURL, "deepseek.com") {
-			if k, _ := st.IntegrationSecret(ctx, box, "integration:assistant"); k != "" {
-				key = "integration:assistant"
-			}
-		}
-	}
-	fmt.Printf("engine: default=%s model=%s heavy_model=%s deepseek_key=%s\n", set.Default, set.Model, set.HeavyModel, key)
+	fmt.Printf("engine: default=%s deepseek_model=%s heavy_model=%s provider_key=%t\n", set.Default, set.Model, set.HeavyModel, providerKeyed(ctx, st, box))
 	return nil
 }
 
@@ -583,7 +623,7 @@ func engineCommand(ctx context.Context, cfg config.Config, st *store.Store, args
 func assistantAsk(ctx context.Context, cfg config.Config, st *store.Store, args []string) error {
 	fs := flag.NewFlagSet("forge assistant ask", flag.ContinueOnError)
 	user := fs.String("user", "", "account to ask as (default: the first one)")
-	engine := fs.String("engine", "", "deepseek | claude (default deepseek)")
+	engine := fs.String("engine", "", "claude | deepseek (default: Settings → Assistant)")
 	model := fs.String("model", "", "model (default: the engine's)")
 	effort := fs.String("effort", "", "deepseek: off|low|high|max; claude: low|medium|high|xhigh|max")
 	edits := fs.Bool("edits", false, "claude: may edit files")
@@ -592,7 +632,7 @@ func assistantAsk(ctx context.Context, cfg config.Config, st *store.Store, args 
 	}
 	content := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if content == "" {
-		return errors.New("usage: forge assistant ask [-engine claude] [-model M] [-effort E] [-edits] <message>")
+		return errors.New("usage: forge assistant ask [-engine claude|deepseek] [-model M] [-effort E] [-edits] <message>")
 	}
 	box, err := vault.Load(cfg.Home)
 	if err != nil {

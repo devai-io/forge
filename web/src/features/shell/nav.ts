@@ -4,7 +4,7 @@ import { BookOpen, Bot, ClipboardCheck, Code, Cpu, FolderKanban, Gauge, LayoutDa
 // (AppShell's grid-cols-6); the rest live under "More".
 export const NAV = [
   { to: "/", label: "Dashboard", short: "Home", icon: LayoutDashboard, end: true, mobile: true },
-  { to: "/assistant", label: "Assistant", short: "Chat", icon: Sparkles, end: false, mobile: true, keywords: "chat ai deepseek delegate llm ask" },
+  { to: "/assistant", label: "Assistant", short: "Chat", icon: Sparkles, end: false, mobile: true, keywords: "chat ai claude deepseek openrouter delegate llm ask" },
   { to: "/terminal", label: "Terminal", short: "Terminal", icon: SquareTerminal, end: false, mobile: true, keywords: "tmux shell claude sessions attach" },
   { to: "/editor", label: "Editor", short: "Editor", icon: Code, end: false, mobile: false, keywords: "vs code vscode ide edit" },
   { to: "/checkup", label: "Check-up", short: "Check-up", icon: ClipboardCheck, end: false, mobile: false, keywords: "daily health checkup actions" },

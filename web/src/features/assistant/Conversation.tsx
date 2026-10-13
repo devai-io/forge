@@ -37,9 +37,11 @@ export function NewChat() {
   const [draft, setDraft] = useState("");
   const status = useAssistant();
   const [picked, setSettings] = useState<ChatSettings | null>(null);
-  // DeepSeek unless it has no key and Claude Code can answer.
+  // The configured engine (Claude by default), unless it cannot answer and the other can.
+  const configured = status.data?.settings.engine ?? "claude";
+  const other = configured === "claude" ? "deepseek" : "claude";
   const settings: ChatSettings = picked ?? {
-    engine: status.data && !status.data.key_configured && status.data.engines?.claude.available ? "claude" : "deepseek",
+    engine: status.data && !status.data.engines?.[configured].available && status.data.engines?.[other].available ? other : configured,
     model: "",
     effort: "",
     edits: false,
