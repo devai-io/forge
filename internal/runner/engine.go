@@ -57,6 +57,12 @@ func (e *engineSetup) env(runModel string) ([]string, error) {
 	}, nil
 }
 
+// deepseekArgs keep tool search off for a DeepSeek run even when the
+// user's ~/.claude/settings.json turns it on ("env" there beats the process
+// environment; --settings beats the user's settings). Nothing secret goes
+// here: argv shows in ps.
+var deepseekArgs = []string{"--settings", `{"env":{"ENABLE_TOOL_SEARCH":"false"}}`}
+
 func orDefault(v, def string) string {
 	if v == "" {
 		return def

@@ -876,7 +876,9 @@ type RunInput = { /* … */ engine?: Engine;   // omitted = settings.default
   `ANTHROPIC_*`/`CLAUDE_CODE_OAUTH_TOKEN` from that process's environment, sets
   `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY=` (empty),
   `ANTHROPIC_MODEL` (+ `[1m]`), the default/sub-agent model variables and
-  `ENABLE_TOOL_SEARCH=false` (OpenRouter refuses Claude Code's deferred tools), and
+  `ENABLE_TOOL_SEARCH=false` (OpenRouter refuses Claude Code's deferred tools; also
+  passed as `--settings '{"env":{"ENABLE_TOOL_SEARCH":"false"}}'`, since the env in
+  `~/.claude/settings.json` beats the process environment), and
   reports `cost_usd` estimated from the result's `modelUsage` at OpenRouter's
   DeepSeek prices (DeepSeek's own list prices, doubled in its peak hours, for bare
   `deepseek-*` names).

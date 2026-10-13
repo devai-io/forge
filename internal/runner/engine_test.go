@@ -36,6 +36,9 @@ func TestDeepSeekEnv(t *testing.T) {
 			t.Fatalf("missing %s in\n%s", want, joined)
 		}
 	}
+	if strings.Join(deepseekArgs, " ") != `--settings {"env":{"ENABLE_TOOL_SEARCH":"false"}}` {
+		t.Fatalf("deepseek args = %v", deepseekArgs)
+	}
 	kept := withoutClaudeAuth([]string{"PATH=/bin", "ANTHROPIC_API_KEY=sk-ant", "CLAUDE_CODE_OAUTH_TOKEN=t", "HOME=/h"})
 	if strings.Join(kept, " ") != "PATH=/bin HOME=/h" {
 		t.Fatalf("kept = %v", kept)

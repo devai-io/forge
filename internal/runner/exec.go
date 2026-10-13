@@ -187,6 +187,9 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 	if run.Model != "" && run.Engine != "deepseek" { // DeepSeek's model goes in the env, with its 1M window
 		args = append(args, "--model", run.Model)
 	}
+	if run.Engine == "deepseek" {
+		args = append(args, deepseekArgs...)
+	}
 	if run.ResumeSession != "" {
 		args = append(args, "--resume", run.ResumeSession)
 	}

@@ -288,8 +288,9 @@ forge engine status
 
 The machine receives the key with each DeepSeek run and sets
 `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` (with `ANTHROPIC_API_KEY` empty),
-the model variables and `ENABLE_TOOL_SEARCH=false` for that `claude` process
-only (any Anthropic credentials in its environment are dropped for it). Agents
+the model variables and `ENABLE_TOOL_SEARCH=false` (also as `--settings`, so
+a `~/.claude/settings.json` that turns tool search on cannot win) for that
+`claude` process only (any Anthropic credentials in its environment are dropped for it). Agents
 older than this release don't turn tool search off, and OpenRouter refuses
 their DeepSeek runs: upgrade the machines before using DeepSeek.
 
