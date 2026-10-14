@@ -68,6 +68,12 @@ type Server struct {
 	tgs           tgState
 	tgPoll        time.Duration
 	tgFollowEvery time.Duration
+
+	// Focus (focus.go): per-project locks, and how often the loop looks for
+	// changed projects and how long a change settles first.
+	focusLocks  focusLocks
+	focusTick   time.Duration
+	focusSettle time.Duration
 }
 
 // Deps are the optional collaborators; a zero value turns the feature off
@@ -96,6 +102,8 @@ func New(cfg config.Config, st *store.Store, m *mail.Mailer, mon *monitor.Monito
 		jevCache:      map[string]relevanceEntry{},
 		tgPoll:        25 * time.Second,
 		tgFollowEvery: 2 * time.Second,
+		focusTick:     focusTick,
+		focusSettle:   focusSettle,
 	}
 	s.tgs.following = map[int64]bool{}
 	s.tg = telegram.New(s.telegramToken)
@@ -196,6 +204,8 @@ func (s *Server) Handler() http.Handler {
 	h("PATCH /api/projects/{key}", s.authed(s.updateProject))
 	h("DELETE /api/projects/{key}", s.authed(s.deleteProject))
 	h("GET /api/projects/{key}/activity", s.authed(s.projectActivity))
+	h("GET /api/projects/{key}/focus", s.authed(s.getFocus))
+	h("POST /api/projects/{key}/focus/refresh", s.authed(s.refreshFocus))
 	h("GET /api/projects/{key}/files", s.authed(s.listFiles))
 	h("POST /api/projects/{key}/files", s.authed(s.uploadFile))
 	h("GET /api/projects/{key}/files/{name}", s.authed(s.downloadFile))

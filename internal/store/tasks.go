@@ -190,9 +190,9 @@ func (s *Store) CreateTask(ctx context.Context, in TaskInput) (*Task, error) {
 	if err := in.normalize(); err != nil {
 		return nil, err
 	}
-	var id int64
+	var id, pid int64
+	var ref string
 	err := s.tx(ctx, func(tx pgxTx) error {
-		var pid int64
 		var number int
 		var key string
 		err := tx.QueryRow(ctx, `UPDATE projects SET next_task_number = next_task_number + 1
@@ -219,13 +219,14 @@ func (s *Store) CreateTask(ctx context.Context, in TaskInput) (*Task, error) {
 		if err != nil {
 			return mapErr(err)
 		}
-		ref := fmt.Sprintf("%s-%d", key, number)
+		ref = fmt.Sprintf("%s-%d", key, number)
 		return logActivity(ctx, tx, ActivityInput{ProjectID: &pid, TaskID: &id, TaskRef: &ref,
 			Kind: "task.created", Summary: fmt.Sprintf("Created %s %s", ref, in.Title)})
 	})
 	if err != nil {
 		return nil, err
 	}
+	s.MarkFocusDirty(ctx, pid, ref+" created")
 	return s.TaskByID(ctx, id)
 }
 
@@ -295,12 +296,16 @@ func (s *Store) UpdateTask(ctx context.Context, id int64, p Patch) (*Task, error
 		return nil, err
 	}
 
+	var fromProject, toProject int64
+	var dirtyRef string
 	err = s.tx(ctx, func(tx pgxTx) error {
 		cur, err := scanTask(tx.QueryRow(ctx, taskSelect+` WHERE t.id = $1`, id))
 		if err != nil {
 			return err
 		}
 		projectID, ref := cur.ProjectID, cur.Ref
+		fromProject, dirtyRef = cur.ProjectID, cur.Ref
+		defer func() { toProject = projectID }()
 
 		if moveTo != "" && moveTo != cur.ProjectKey {
 			var number int
@@ -375,17 +380,20 @@ func (s *Store) UpdateTask(ctx context.Context, id int64, p Patch) (*Task, error
 	if err != nil {
 		return nil, err
 	}
+	s.MarkFocusDirty(ctx, fromProject, dirtyRef+" updated")
+	if toProject != 0 && toProject != fromProject {
+		s.MarkFocusDirty(ctx, toProject, dirtyRef+" moved here")
+	}
 	return s.TaskByID(ctx, id)
 }
 
 func (s *Store) DeleteTask(ctx context.Context, id int64) error {
-	tag, err := s.DB.Exec(ctx, `DELETE FROM tasks WHERE id = $1`, id)
-	if err != nil {
-		return err
+	var projectID int64
+	var number int
+	if err := s.DB.QueryRow(ctx, `DELETE FROM tasks WHERE id = $1 RETURNING project_id, number`, id).Scan(&projectID, &number); err != nil {
+		return mapErr(err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
+	s.MarkFocusDirty(ctx, projectID, fmt.Sprintf("task #%d deleted", number))
 	return nil
 }
 
@@ -433,6 +441,7 @@ func (s *Store) CreateComment(ctx context.Context, taskID int64, body string) (*
 	if err != nil {
 		return nil, err
 	}
+	s.MarkFocusDirty(ctx, t.ProjectID, "comment on "+t.Ref)
 	return &c, nil
 }
 

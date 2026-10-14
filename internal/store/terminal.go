@@ -321,6 +321,23 @@ func (s *Store) ContextForPath(ctx context.Context, cwd string, trim TaskTrimmer
 	}
 	memIDs := s.writeMemories(ctx, &b, key, repoID)
 
+	if f, err := s.FocusByProject(ctx, p.ID); err == nil && (f.Focus.Headline != "" || len(f.Focus.Now) > 0) {
+		w("\n## Focus now (Forge's take, %s)\n", f.Source)
+		if f.Focus.Headline != "" {
+			w("%s\n", f.Focus.Headline)
+		}
+		for i, it := range f.Focus.Now {
+			ref := ""
+			if it.Ref != nil {
+				ref = " [" + *it.Ref + "]"
+			}
+			w("%d. %s%s — %s\n", i+1, it.Title, ref, it.Why)
+		}
+		for _, it := range f.Focus.Blockers {
+			w("- Blocked: %s — %s\n", it.Title, it.Why)
+		}
+	}
+
 	tasks, err := s.ListTasks(ctx, TaskFilter{ProjectKey: key, Open: true, Limit: 200})
 	if err == nil && len(tasks) > 0 {
 		rank := map[string]int{"in_progress": 0, "blocked": 1, "todo": 2, "backlog": 3}

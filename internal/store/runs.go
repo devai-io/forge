@@ -620,7 +620,8 @@ func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishI
 	if !OneOf(in.Status, []string{"succeeded", "failed", "cancelled"}) {
 		return invalid("status", "must be succeeded, failed or cancelled")
 	}
-	return s.tx(ctx, func(tx pgxTx) error {
+	var dirtyProject *int64
+	err := s.tx(ctx, func(tx pgxTx) error {
 		var projectID, taskID, repoID *int64
 		var repoName string
 		usage := "{}"
@@ -651,7 +652,12 @@ func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishI
 		if in.CostUSD != nil {
 			summary += fmt.Sprintf(" ($%.2f)", *in.CostUSD)
 		}
+		dirtyProject = projectID
 		return logActivity(ctx, tx, ActivityInput{ProjectID: projectID, TaskID: taskID, RunID: &runID,
 			Kind: "run.finished", Summary: summary})
 	})
+	if err == nil && dirtyProject != nil {
+		s.MarkFocusDirty(ctx, *dirtyProject, fmt.Sprintf("run #%d %s", runID, in.Status))
+	}
+	return err
 }

@@ -329,6 +329,7 @@ func serve(ctx context.Context, cfg config.Config, database *db.DB, st *store.St
 	checkups.Notify = app.NotifyCheckup
 	go checkups.Loop(ctx)
 	go app.RunTelegram(ctx)
+	go app.RunFocus(ctx)
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,

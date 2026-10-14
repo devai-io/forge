@@ -27,6 +27,7 @@ import type {
   Monitoring,
   Pairing,
   ProjectFile,
+  ProjectFocus,
   SetupInput,
   SetupStatus,
   CodeOpenInput,
@@ -317,6 +318,23 @@ export function useProjectActivity(key: string, limit = 50) {
         .get<{ activity: Activity[] }>(`/projects/${encodeURIComponent(key)}/activity`, { limit })
         .then((r) => r.activity),
     refetchInterval: 60_000,
+  });
+}
+
+/** The project's focus; task changes refresh it through the ["project"] prefix. */
+export function useProjectFocus(key: string) {
+  return useQuery({
+    queryKey: ["project", key, "focus"] as const,
+    queryFn: () => api.get<ProjectFocus>(`/projects/${encodeURIComponent(key)}/focus`),
+    refetchInterval: 60_000,
+  });
+}
+
+export function useRefreshFocus(key: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<ProjectFocus>(`/projects/${encodeURIComponent(key)}/focus/refresh`),
+    onSuccess: (f) => qc.setQueryData(["project", key, "focus"], f),
   });
 }
 

@@ -96,8 +96,18 @@ func (s *Store) FinishCheckup(ctx context.Context, id int64, status string, item
 	if items == nil {
 		items = []CheckItem{}
 	}
-	return scanCheckup(s.DB.QueryRow(ctx, `UPDATE checkups SET status = $2, items = $3, finished_at = now()
+	c, err := scanCheckup(s.DB.QueryRow(ctx, `UPDATE checkups SET status = $2, items = $3, finished_at = now()
 		WHERE id = $1 RETURNING `+checkupCols, id, status, items))
+	if err == nil {
+		seen := map[string]bool{}
+		for _, it := range c.Items {
+			if it.ProjectKey != nil && !seen[*it.ProjectKey] {
+				seen[*it.ProjectKey] = true
+				s.markFocusDirtyKey(ctx, *it.ProjectKey, "check-up")
+			}
+		}
+	}
+	return c, err
 }
 
 func (s *Store) MarkCheckupEmailed(ctx context.Context, id int64) error {
@@ -139,6 +149,7 @@ func (s *Store) ListCheckups(ctx context.Context, limit int) ([]CheckupSummary, 
 // UpdateCheckupItem edits one item in place under a row lock, so two quick
 // ticks in a row cannot overwrite each other.
 func (s *Store) UpdateCheckupItem(ctx context.Context, id int64, key string, fn func(*CheckItem) error) (*Checkup, error) {
+	var projectKey *string
 	err := s.tx(ctx, func(tx pgxTx) error {
 		c, err := scanCheckup(tx.QueryRow(ctx, `SELECT `+checkupCols+` FROM checkups WHERE id = $1`, id))
 		if err != nil {
@@ -150,7 +161,7 @@ func (s *Store) UpdateCheckupItem(ctx context.Context, id int64, key string, fn 
 				if err := fn(&c.Items[i]); err != nil {
 					return err
 				}
-				found = true
+				found, projectKey = true, c.Items[i].ProjectKey
 				break
 			}
 		}
@@ -162,6 +173,9 @@ func (s *Store) UpdateCheckupItem(ctx context.Context, id int64, key string, fn 
 	})
 	if err != nil {
 		return nil, err
+	}
+	if projectKey != nil {
+		s.markFocusDirtyKey(ctx, *projectKey, "check-up action updated")
 	}
 	return s.CheckupByID(ctx, id)
 }
