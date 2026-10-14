@@ -194,6 +194,7 @@ func (s *Server) Handler() http.Handler {
 	// Repo files: hand a project's git-ignored secrets to a machine.
 	h("POST /api/projects/{key}/vault/bundle", s.authed(s.elevated(s.vaultBundle)))
 	h("POST /api/projects/{key}/vault/setup-code", s.authed(s.elevated(s.vaultSetupCode)))
+	h("POST /api/projects/{key}/vault/files", s.authed(s.vaultFiles))
 	h("GET /api/vault-setup/{code}", s.vaultSetup) // no session: the one-time code is the credential
 
 	h("GET /api/monitoring", s.authed(s.monitoring))

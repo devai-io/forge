@@ -2,7 +2,7 @@
 // grouped by project. The list shows metadata only; values sit behind Reveal
 // in the item sheet (`?item=<id>`, deep-linkable).
 
-import { FolderGit2, History, KeyRound, Lock, MonitorDown, Plus, Search, TriangleAlert } from "lucide-react";
+import { FilePlus2, FolderGit2, History, KeyRound, Lock, MonitorDown, Plus, Search, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useProject, useProjects, useVault, useVaultAudit } from "@/api/hooks";
@@ -19,6 +19,7 @@ import { ElevationBadge } from "@/features/auth/ElevationBadge";
 import { useUser } from "@/lib/auth";
 import { todayInTz } from "@/lib/format";
 import { groupByProject, groupByRepo, isReference, repoFileContent, VAULT_KINDS } from "@/lib/vault";
+import { AddFilesDialog } from "./AddFilesDialog";
 import { ExpiryBadge, FileBadge, SecretKeyChips, VaultKindIcon } from "./bits";
 import { MachineSetupDialog } from "./MachineSetupDialog";
 import { VaultItemDialog } from "./VaultItemDialog";
@@ -255,6 +256,7 @@ function VaultRow({ item, today, onOpen }: { item: VaultItem; today: string; onO
 export function RepoFilesPanel({ projectKey, items, onOpen }: { projectKey: string; items: VaultItem[]; onOpen: (id: number) => void }) {
   const project = useProject(projectKey);
   const [setup, setSetup] = useState(false);
+  const [adding, setAdding] = useState(false);
   const groups = groupByRepo(items.filter((i) => i.project_key === projectKey));
   const count = groups.reduce((n, g) => n + g.items.length, 0);
   const repos = (project.data?.repos ?? []).map((r) => ({ id: r.id, name: r.name }));
@@ -269,9 +271,14 @@ export function RepoFilesPanel({ projectKey, items, onOpen }: { projectKey: stri
       icon={<FolderGit2 />}
       bodyClassName="p-0"
       actions={
-        <Button size="sm" variant="subtle" onClick={() => setSetup(true)} disabled={!count}>
-          <MonitorDown className="size-3.5" aria-hidden /> Set up a machine
-        </Button>
+        <>
+          <Button size="sm" variant="ghost" onClick={() => setAdding(true)}>
+            <FilePlus2 className="size-3.5" aria-hidden /> Add files
+          </Button>
+          <Button size="sm" variant="subtle" onClick={() => setSetup(true)} disabled={!count}>
+            <MonitorDown className="size-3.5" aria-hidden /> Set up a machine
+          </Button>
+        </>
       }
     >
       {groups.length ? (
@@ -304,10 +311,11 @@ export function RepoFilesPanel({ projectKey, items, onOpen }: { projectKey: stri
         </div>
       ) : (
         <p className="p-3.5 text-[12.5px] text-fg-3">
-          None yet. Give an item a repo and a path, or run <code className="font-mono">forge agent secrets push</code> inside a
+          None yet. Use Add files, give an item a repo and a path, or run <code className="font-mono">forge agent secrets push</code> inside a
           checkout to collect its git-ignored .env files and keys.
         </p>
       )}
+      {adding ? <AddFilesDialog projectKey={projectKey} onClose={() => setAdding(false)} /> : null}
       {setup ? <MachineSetupDialog projectKey={projectKey} repos={repos} fileCount={count} onClose={() => setSetup(false)} /> : null}
     </Panel>
   );

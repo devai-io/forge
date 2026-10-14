@@ -1,5 +1,5 @@
 import type { VaultItem } from "@/api/types";
-import { baseName, groupByRepo, repoFileContent } from "./vault";
+import { baseName, defaultRepoPath, groupByRepo, inferRepoFileKind, repoFileContent, repoPathProblem } from "./vault";
 
 const item = (over: Partial<VaultItem>): VaultItem => ({
   id: 1,
@@ -50,5 +50,43 @@ describe("repo files", () => {
   it("takes a path's file name", () => {
     expect(baseName("android/app/key.properties")).toBe("key.properties");
     expect(baseName(".env")).toBe(".env");
+  });
+});
+
+describe("Add files", () => {
+  it("infers a kind from the file name, like the server", () => {
+    const cases: Record<string, string> = {
+      ".env": "env_file",
+      "config/.env.local": "env_file",
+      "prod.env": "env_file",
+      "certs/tls.pem": "private_key",
+      "AuthKey_ABC.p8": "private_key",
+      "id_ed25519": "private_key",
+      "android/app/upload.jks": "keystore",
+      "dist.p12": "keystore",
+      "ca.crt": "certificate",
+      "App.mobileprovision": "provisioning_profile",
+      "android/app/google-services.json": "service_account",
+      "ios/GoogleService-Info.plist": "service_account",
+      "service-account-prod.json": "service_account",
+      "credentials.json": "service_account",
+      "package.json": "file",
+      "key.properties": "file",
+    };
+    for (const [path, kind] of Object.entries(cases)) expect([path, inferRepoFileKind(path)]).toEqual([path, kind]);
+  });
+
+  it("keeps a picked folder's paths, without the folder itself", () => {
+    expect(defaultRepoPath({ name: ".env", webkitRelativePath: "shop_api/config/.env" })).toBe("config/.env");
+    expect(defaultRepoPath({ name: ".env", webkitRelativePath: "" })).toBe(".env");
+    expect(defaultRepoPath({ name: "key.pem" })).toBe("key.pem");
+  });
+
+  it("flags paths the server would refuse", () => {
+    expect(repoPathProblem("config/.env")).toBe("");
+    expect(repoPathProblem("")).not.toBe("");
+    expect(repoPathProblem("/etc/passwd")).not.toBe("");
+    expect(repoPathProblem("a/../../x")).not.toBe("");
+    expect(repoPathProblem("a\\b")).not.toBe("");
   });
 });

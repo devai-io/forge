@@ -36,7 +36,15 @@ type SeedData struct {
 		Name        string `json:"name"`
 		NotesAppend string `json:"notes_append"`
 	} `json:"server_updates"`
-	Vault []VaultInput `json:"vault"`
+	Vault []SeedVault `json:"vault"`
+}
+
+// SeedVault is a vault item to import. Repo names the repo (within
+// project_key) a repo file belongs to, since ids differ between servers;
+// path is where it goes in that repo.
+type SeedVault struct {
+	VaultInput
+	Repo string `json:"repo"`
 }
 
 // SeedIfEmpty loads the seed when there are no projects yet. All or nothing:
@@ -161,7 +169,23 @@ func (s *Store) Import(ctx context.Context, box *vault.Box, raw []byte, ip strin
 		return rep, err
 	}
 
-	for _, v := range data.Vault {
+	for _, sv := range data.Vault {
+		v := sv.VaultInput
+		if repo := strings.TrimSpace(sv.Repo); repo != "" {
+			if v.ProjectKey == nil || strings.TrimSpace(*v.ProjectKey) == "" {
+				return rep, fmt.Errorf("vault item %q: %w", v.Name, invalid("repo", "needs a project_key"))
+			}
+			var id int64
+			err := s.DB.QueryRow(ctx, `SELECT r.id FROM repos r JOIN projects p ON p.id = r.project_id
+				WHERE p.key = $1 AND r.name = $2`, strings.ToUpper(strings.TrimSpace(*v.ProjectKey)), repo).Scan(&id)
+			if err != nil {
+				if mapErr(err) == ErrNotFound {
+					err = invalid("repo", "%s has no repo named %q", *v.ProjectKey, repo)
+				}
+				return rep, fmt.Errorf("vault item %q: %w", v.Name, err)
+			}
+			v.RepoID = &id
+		}
 		var exists bool
 		if err := s.DB.QueryRow(ctx, `SELECT exists(SELECT 1 FROM vault_items WHERE name = $1)`, strings.TrimSpace(v.Name)).
 			Scan(&exists); err != nil {

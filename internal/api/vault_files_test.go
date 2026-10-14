@@ -143,3 +143,42 @@ func TestVaultRepoFilesAndMachineSetup(t *testing.T) {
 		t.Fatalf("downloads audited = %d (%+v)", downloads, audit.Events)
 	}
 }
+
+// "Add files" in the vault: the browser's twin of `forge agent secrets push`.
+func TestVaultFilesFromTheBrowser(t *testing.T) {
+	h := setup(t)
+	h.login()
+	var p store.ProjectDetail
+	expect(t, "project", h.do("GET", "/api/projects/SHOP", nil, &p), 200)
+	var repo, other int64
+	for _, r := range p.Repos {
+		if r.Name == "shop_ui" {
+			repo = r.ID
+		}
+	}
+	var game store.ProjectDetail
+	expect(t, "other project", h.do("GET", "/api/projects/GAME", nil, &game), 200)
+	other = game.Repos[0].ID
+
+	files := func(s string) []map[string]string {
+		return []map[string]string{{"path": "config/key.pem", "content_base64": base64.StdEncoding.EncodeToString([]byte(s))}}
+	}
+	var res struct{ Files []store.RepoFileResult }
+	expect(t, "dry run", h.do("POST", "/api/projects/SHOP/vault/files", map[string]any{"repo_id": repo, "dry_run": true, "files": files("k1")}, &res), 200)
+	if res.Files[0].Action != "create" || res.Files[0].ItemID != nil {
+		t.Fatalf("dry run = %+v", res)
+	}
+	expect(t, "upload", h.do("POST", "/api/projects/SHOP/vault/files", map[string]any{"repo_id": repo, "files": files("k1")}, &res), 200)
+	var item store.VaultItem
+	expect(t, "item", h.do("GET", "/api/vault/"+itoa(*res.Files[0].ItemID), nil, &item), 200)
+	if item.Kind != "private_key" || item.Path != "config/key.pem" || !item.HasFile {
+		t.Fatalf("item = %+v", item)
+	}
+	expect(t, "changed", h.do("POST", "/api/projects/SHOP/vault/files", map[string]any{"repo_id": repo, "dry_run": true, "files": files("k2")}, &res), 200)
+	if res.Files[0].Action != "update" {
+		t.Fatalf("changed = %+v", res)
+	}
+	expect(t, "repo of another project", h.do("POST", "/api/projects/SHOP/vault/files", map[string]any{"repo_id": other, "files": files("k1")}, nil), 422)
+	expect(t, "bad path", h.do("POST", "/api/projects/SHOP/vault/files", map[string]any{"repo_id": repo,
+		"files": []map[string]string{{"path": "../x", "content_base64": "eA=="}}}, nil), 422)
+}

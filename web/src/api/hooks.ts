@@ -42,6 +42,7 @@ import type {
   VaultInput,
   VaultItem,
   VaultSetupCode,
+  RepoFilePush,
   Comment,
   Dashboard,
   Endpoint,
@@ -869,7 +870,7 @@ export function useVaultAudit(limit = 100, enabled = true) {
   });
 }
 
-function invalidateVault(qc: QueryClient) {
+export function invalidateVault(qc: QueryClient) {
   void qc.invalidateQueries({ queryKey: ["vault"] });
   void qc.invalidateQueries({ queryKey: ["vault-item"] });
   void qc.invalidateQueries({ queryKey: keys.vaultAudit });
@@ -896,6 +897,17 @@ export function useDeleteVaultItem() {
 }
 
 /** A one-time code for setting up a machine with a project's repo files. Not cached. */
+/**
+ * "Add files": store picked files as repo files of one repo (POST
+ * /projects/{key}/vault/files). dry_run says create / update / same first.
+ */
+export function pushVaultFiles(
+  projectKey: string,
+  body: { repo_id: number; files: { path: string; content_base64: string }[]; dry_run?: boolean },
+): Promise<RepoFilePush> {
+  return api.post<RepoFilePush>(`/projects/${projectKey}/vault/files`, body);
+}
+
 export function createVaultSetupCode(projectKey: string, repoId?: number): Promise<VaultSetupCode> {
   return api.post<VaultSetupCode>(`/projects/${projectKey}/vault/setup-code`, repoId ? { repo_id: repoId } : {});
 }

@@ -123,24 +123,24 @@ func TestRepoFiles(t *testing.T) {
 		t.Fatalf("repo by remote = %s", repo.Name)
 	}
 	in := []store.RepoFileInput{{Path: ".env.local", ContentBase64: base64.StdEncoding.EncodeToString([]byte("A=1\n"))}}
-	if res := must(st.PushRepoFiles(ctx, box, repo, in, true, "machine m")); res[0].Action != "create" || res[0].ItemID != nil {
+	if res := must(st.PushRepoFiles(ctx, box, repo, in, true, "machine m", "note")); res[0].Action != "create" || res[0].ItemID != nil {
 		t.Fatalf("dry run = %+v", res)
 	}
-	if res := must(st.PushRepoFiles(ctx, box, repo, in, false, "machine m")); res[0].Action != "create" || res[0].ItemID == nil {
+	if res := must(st.PushRepoFiles(ctx, box, repo, in, false, "machine m", "note")); res[0].Action != "create" || res[0].ItemID == nil {
 		t.Fatalf("push = %+v", res)
 	}
-	if res := must(st.PushRepoFiles(ctx, box, repo, in, false, "machine m")); res[0].Action != "same" {
+	if res := must(st.PushRepoFiles(ctx, box, repo, in, false, "machine m", "note")); res[0].Action != "same" {
 		t.Fatalf("again = %+v", res)
 	}
 	in[0].ContentBase64 = base64.StdEncoding.EncodeToString([]byte("A=2\n"))
-	if res := must(st.PushRepoFiles(ctx, box, repo, in, false, "machine m")); res[0].Action != "update" {
+	if res := must(st.PushRepoFiles(ctx, box, repo, in, false, "machine m", "note")); res[0].Action != "update" {
 		t.Fatalf("changed = %+v", res)
 	}
 	got := must(st.RepoFiles(ctx, box, "SHOP", repo.ID, ""))
 	if len(got) != 1 || string(got[0].Content) != "A=2\n" {
 		t.Fatalf("pushed file = %+v", got)
 	}
-	item := must(st.VaultByID(ctx, *must(st.PushRepoFiles(ctx, box, repo, in, true, "m"))[0].ItemID))
+	item := must(st.VaultByID(ctx, *must(st.PushRepoFiles(ctx, box, repo, in, true, "m", "note"))[0].ItemID))
 	if item.Kind != "env_file" || item.Name != "shop_ui · .env.local" {
 		t.Fatalf("pushed item = %+v", item)
 	}
@@ -150,3 +150,39 @@ func TestRepoFiles(t *testing.T) {
 }
 
 func itoa(n int64) string { return string(must(json.Marshal(n))) }
+
+// `forge import` places vault items in a repo by the repo's name.
+func TestImportRepoFiles(t *testing.T) {
+	cur = t
+	st := open(t)
+	ctx := context.Background()
+	box := must(vault.New(bytes.Repeat([]byte{1}, 32)))
+	content := base64.StdEncoding.EncodeToString([]byte("API_KEY=demo\n"))
+	rep := must(st.Import(ctx, box, []byte(`{"vault":[{"name":"shop ui env","kind":"env_file","project_key":"SHOP",
+		"repo":"shop_ui","path":".env","file":{"name":".env","content_base64":"`+content+`"}}]}`), "cli"))
+	if len(rep.VaultAdded) != 1 {
+		t.Fatalf("import = %+v", rep)
+	}
+	items := must(st.ListVault(ctx, store.VaultFilter{ProjectKey: "SHOP", Query: "shop ui env"}))
+	if len(items) != 1 || items[0].RepoID == nil || *items[0].RepoID != repoID(t, st, "SHOP", "shop_ui") || items[0].Path != ".env" {
+		t.Fatalf("imported = %+v", items)
+	}
+	for _, bad := range []string{
+		`{"vault":[{"name":"x1","kind":"file","project_key":"SHOP","repo":"nope","path":"a"}]}`,
+		`{"vault":[{"name":"x2","kind":"file","repo":"shop_ui","path":"a"}]}`,
+		`{"vault":[{"name":"x3","kind":"file","project_key":"SHOP","repo":"shop_ui","path":"../a"}]}`,
+		`{"vault":[{"name":"x4","kind":"file","project_key":"SHOP","path":"a"}]}`,
+	} {
+		if _, err := st.Import(ctx, box, []byte(bad), "cli"); err == nil {
+			t.Errorf("import accepted %s", bad)
+		}
+	}
+
+	// The web app's "Add files" goes through RepoInProject.
+	if _, err := st.RepoInProject(ctx, "GAME", repoID(t, st, "SHOP", "shop_ui")); err == nil {
+		t.Error("a repo of another project was accepted")
+	}
+	if r := must(st.RepoInProject(ctx, "shop", repoID(t, st, "SHOP", "shop_ui"))); r.Name != "shop_ui" {
+		t.Errorf("repo = %+v", r)
+	}
+}

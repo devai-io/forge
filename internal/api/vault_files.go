@@ -232,7 +232,8 @@ func (s *Server) runnerVaultFiles(w http.ResponseWriter, r *http.Request, rn *st
 		return
 	}
 	actor := "machine " + rn.Name
-	results, err := s.store.PushRepoFiles(r.Context(), s.box, repo, in.Files, in.DryRun, actor)
+	results, err := s.store.PushRepoFiles(r.Context(), s.box, repo, in.Files, in.DryRun, actor,
+		"Collected by "+actor+" (forge agent secrets push).")
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -248,6 +249,31 @@ func (s *Server) runnerVaultFiles(w http.ResponseWriter, r *http.Request, rn *st
 			_ = s.store.LogSecurity(r.Context(), "vault_push", fmt.Sprintf("%s pushed %d file(s) to %s/%s", rn.Name, changed, repo.ProjectKey, repo.Name),
 				s.clientIP(r), r.UserAgent(), 0)
 		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"project_key": repo.ProjectKey, "repo": repo.Name, "repo_id": repo.ID, "files": results})
+}
+
+// vaultFiles adds files picked in the browser as repo files of one of the
+// project's repos — the web twin of `forge agent secrets push`: a dry run
+// says create / update / same per file, then the real call writes them.
+func (s *Server) vaultFiles(w http.ResponseWriter, r *http.Request, u *store.User) {
+	var in struct {
+		RepoID int64                 `json:"repo_id"`
+		Files  []store.RepoFileInput `json:"files"`
+		DryRun bool                  `json:"dry_run"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	repo, err := s.store.RepoInProject(r.Context(), r.PathValue("key"), in.RepoID)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	results, err := s.store.PushRepoFiles(r.Context(), s.box, repo, in.Files, in.DryRun, s.clientIP(r), "Uploaded in the vault (Add files).")
+	if err != nil {
+		writeErr(w, r, err)
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"project_key": repo.ProjectKey, "repo": repo.Name, "repo_id": repo.ID, "files": results})
 }
