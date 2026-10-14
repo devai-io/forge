@@ -4,6 +4,7 @@ import { buildChatItems, describeToolCall, formatTokens, isAssistantOff, usageLa
 import { lastSeq, mergeMessages, upsertChat } from "./chats";
 
 const msg = (over: Partial<ChatMessage>): ChatMessage => ({
+  origin: "",
   seq: 1,
   role: "user",
   content: "",

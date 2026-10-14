@@ -1081,6 +1081,7 @@ type ChatTurn = {                  // one user message's processing
   error: string;
   usage: UsageEntry[];             // its own API calls (the chat model's, Jev's), live while running
   run_id: number | null;           // claude: the session run
+  origin: ChatOrigin;              // who started it; "event" / "schedule" turns are read-only
   started_at: string; finished_at: string | null;
   runs: Run[];                     // runs it queued (their cost_usd arrives as they finish) + its session run
 };
@@ -1099,7 +1100,19 @@ type Chat = {
   summary_seq: number;       // messages with seq <= this are folded into `summary` (0: nothing folded)
 } & ChatSettings;
 type BotLine = { role: "user" | "assistant"; content: string; created_at: string }; // content: first 300 chars
-type Bot = { project: Project; chat: Chat | null; last: BotLine | null };
+type ChatOrigin = "" | "telegram" | "event" | "schedule"; // "" the user in the web app; event/schedule: Forge, for a proactive bot
+type BotSettings = {               // a project without changes has the defaults
+  enabled: boolean;                // default true; off: messages and reviews → 422, nothing proactive
+  proactive: boolean;              // default false: Forge wakes the bot with events and a daily review
+  review_at: string;               // "HH:MM" local time of the daily review (default "08:30"; "" = none)
+  instructions: string;            // the user's standing orders for this bot (≤ 4000 chars), in its system prompt
+  last_review_date: string | null; // the user's local date of the last daily review
+  proactive_today: number;         // proactive turns started on proactive_date
+  proactive_date: string | null;
+  daily_cap: number;               // 12
+  pending_events: number;          // events waiting for the bot
+};
+type Bot = { project: Project; chat: Chat | null; last: BotLine | null; settings: BotSettings };
 type ChatToolCall = { id: string; name: string; arguments: Record<string, unknown> };
 type ChatMessage = {
   seq: number;                              // increasing per chat, starts at 1
@@ -1111,6 +1124,7 @@ type ChatMessage = {
   result: unknown;                          // tool messages: the structured result (object), else null
   is_error: boolean;                        // tool messages: the tool failed
   created_at: string;
+  origin: ChatOrigin;                       // user messages: who wrote it
 };
 ```
 
@@ -1126,7 +1140,9 @@ type ChatMessage = {
 | PATCH | /api/chats/{id} | `{title?, ...Partial<ChatSettings>}` | `{chat}` — changing `engine` resets `model` and `effort` |
 | DELETE | /api/chats/{id} | – | `204` — on a bot's chat this resets the bot (its next message starts a new chat; memories stay) |
 | GET | /api/bots | – | `{bots: Bot[]}` — every project that is not archived; bots that have talked first (newest first), then the rest in project order |
-| POST | /api/bots/{key}/messages | `{content, ...Partial<ChatSettings>}` | `201 {chat, messages, turns}` the first time (the bot's chat is created), `200` after; `409 busy`; `422` for an archived project |
+| POST | /api/bots/{key}/messages | `{content, ...Partial<ChatSettings>}` | `201 {chat, messages, turns}` the first time (the bot's chat is created), `200` after; `409 busy`; `422` for an archived project or a bot that is off |
+| PATCH | /api/bots/{key} | `{enabled?, proactive?, review_at?, instructions?}` | `{settings: BotSettings}`; `422` for a bad time or too long orders. Turning the bot or its proactive mode off drops waiting events |
+| POST | /api/bots/{key}/review | – | `201/200 {chat, messages, turns}` — the daily review now (origin `schedule`, read-only), proactive or not; not counted against the cap; `409 busy`; `422` when the bot is off |
 
 - `503 assistant_off` when the assistant is not enabled; `503 no_provider_key`
   (deepseek) without the provider key;
@@ -1152,7 +1168,28 @@ type ChatMessage = {
   brief (repos, servers, endpoints down, top open tasks, its memory) in the
   system prompt; its tools default to the project (omit `project`), memories
   it saves name it as origin (`"<KEY> bot"`), and `machine: "ios"` (any tool)
-  picks the machine with that role.
+  picks the machine with that role. A new bot chat starts on `claude` (the
+  master's Claude Code login — the subscription) whatever the Assistant's own
+  engine; the chat can still switch. A bot's Claude Code session starts in the
+  project's folder: the claim's `assistant.folders` lists the candidates, best
+  first (the folder holding all the project's repos, then its first repo; the
+  run's `cwd`, newline-separated); the agent takes the first inside its
+  allowed roots, else its home folder (older agents: always home). A resumed
+  session keeps its first folder. The bot's standing orders (`instructions`)
+  are appended to its system prompt on both engines.
+- **Proactive bots** (`proactive: true`): the store queues `bot_events` for the
+  project — an endpoint confirmed down or back up, a repo's CI turning to
+  failure (on a repo scan), the check-up finishing with fail/warn items, an
+  agent or command run finishing (not the ones the bot queued itself). The
+  server's bot loop (every 30 s) sends a bot its events as one user message
+  (origin `event`) once the oldest is 2 minutes old and the bot is free and
+  ready (events coalesce while it is busy), and the daily review (origin
+  `schedule`) once a local day at or after `review_at`. At most 12 such turns
+  per bot per day; past that, events are dropped and the chat says so once.
+  Those turns are read-only: Claude Code runs in plan mode (Forge's MCP tools
+  still work); on DeepSeek, `delegate_to_claude` only takes `plan` and
+  `run_command` is refused. The answer goes to Telegram (when it is set up)
+  unless it is just "Nothing to do.".
 - **Folding**: when the conversation the model would see passes about 240,000
   characters (~60k tokens), the oldest whole turns are summarised (one provider
   call on the turn's model, counted in the chat's usage; DeepSeek turns only)
@@ -1285,8 +1322,13 @@ What the bot does (`internal/api/telegram.go`):
   Assistant chat (created on demand with the default engine); the answer — the
   turn's last assistant message, or its error — is posted when the turn ends, and
   a reply to it continues that chat.
+- **Bots** (`assistant` too): `/bots` lists the project bots (on demand,
+  proactive or off, with the last line); `/bot KEY message` talks to one (origin
+  `telegram`); its answer is posted as "🤖 KEY bot" with a link to
+  `/assistant/bot/KEY`, and a reply to it goes on with the same bot. A
+  proactive bot's answers are posted too, unless they are just "Nothing to do.".
 - Commands: `/new [text]`, `/stop`, `/tasks [KEY]`, `/runs`, `/checkup`,
-  `/remember [KEY] text`, `/recall [KEY] words`, `/help`.
+  `/bots`, `/bot KEY message`, `/remember [KEY] text`, `/recall [KEY] words`, `/help`.
 - A message from another chat is ignored; while no chat is set the bot answers
   any chat with its id (to enter in Settings) and does nothing else.
 - Telegram's links (`telegram_links`: message id → prompt / run / chat) are how

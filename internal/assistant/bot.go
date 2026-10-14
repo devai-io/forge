@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,6 +31,79 @@ func withBot(ctx context.Context, key string) context.Context {
 func botOf(ctx context.Context) string {
 	k, _ := ctx.Value(botKey{}).(string)
 	return k
+}
+
+type proactiveKey struct{}
+
+// withProactive marks a turn Forge started itself (a proactive bot's).
+func withProactive(ctx context.Context) context.Context {
+	return context.WithValue(ctx, proactiveKey{}, true)
+}
+
+// proactiveOf says whether this turn was started by Forge.
+func proactiveOf(ctx context.Context) bool {
+	v, _ := ctx.Value(proactiveKey{}).(bool)
+	return v
+}
+
+// botOrders are the user's standing orders for the chat's bot, if any.
+func (a *Assistant) botOrders(ctx context.Context, chat *store.Chat) string {
+	if chat.ProjectID == nil {
+		return ""
+	}
+	set, err := a.store.BotSettingsFor(ctx, *chat.ProjectID)
+	if err != nil || strings.TrimSpace(set.Instructions) == "" {
+		return ""
+	}
+	return "\n\nYour standing orders from the user, for this bot (they come before the general rules above, never before change control):\n" +
+		set.Instructions
+}
+
+// proactiveNote tells the model this turn was Forge's idea, not the user's.
+const proactiveNote = `
+
+This turn was started by Forge, not by the user: the message above is an event report or your daily review. It is read-only for code and servers — you may read anything and keep Forge current (tasks, comments, memory), and you may queue read-only (plan) Claude Code runs to investigate; anything that changes code, servers or deploys is a proposal for the user. Be brief: a few lines, what matters first, no repeating what you already said in this chat. If nothing needs anything, answer exactly "Nothing to do." and stop.`
+
+// botFolders are where a bot's Claude Code session may start, best first:
+// the folder that holds all the project's repos, then its first repo. A
+// parent shallower than three levels (/home/you) is too broad to count.
+func botFolders(paths []string) []string {
+	var clean []string
+	for _, p := range paths {
+		if p = strings.TrimSpace(p); p != "" && strings.HasPrefix(p, "/") && !strings.Contains(p, "\n") {
+			clean = append(clean, filepath.Clean(p))
+		}
+	}
+	if len(clean) == 0 {
+		return nil
+	}
+	if len(clean) == 1 {
+		return clean
+	}
+	common := strings.Split(clean[0], "/")
+	for _, p := range clean[1:] {
+		parts := strings.Split(p, "/")
+		n := 0
+		for n < len(common) && n < len(parts) && common[n] == parts[n] {
+			n++
+		}
+		common = common[:n]
+	}
+	out := []string{}
+	if parent := strings.Join(common, "/"); len(common) > 3 && parent != clean[0] {
+		out = append(out, parent)
+	}
+	return append(out, clean[0])
+}
+
+func nonEmpty(xs []string) []string {
+	out := []string{}
+	for _, x := range xs {
+		if strings.TrimSpace(x) != "" {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 // botBrief is what a bot knows of its project at the start of each turn:
@@ -107,7 +181,8 @@ How a bot works:
 - Machines: work runs on the master machine (omit machine). Anything that needs macOS or Xcode — iOS builds, signing, simulators, TestFlight, Swift or Xcode projects — goes to machine "ios" (the machine with the ios role).
 - Spend tokens like they are yours. Answer from the brief, memory and Forge tools before delegating; check list_runs / get_run before redoing work a recent run already did. Give Claude Code narrow, self-contained prompts: the files or area, the goal, and a short report back. Claude Code sessions on the machines have a code-graph index (tokensave) and compact shell output (rtk): tell them to explore with the index rather than reading whole files.
 - You keep %[1]s's memory: when something durable is settled — a decision and why, a convention, a gotcha, how to build, test or deploy, where a long effort stands — remember it (project defaults to %[1]s; project "global" for something about the user everywhere). Correct or forget memories that turned out wrong.
-- Changes to production follow the change-control notes; when they ask for approval, ask and wait.`, key)
+- Changes to production follow the change-control notes; when they ask for approval, ask and wait.
+- When proactive, Forge wakes you itself: with the project's events (an endpoint down or back up, CI failing, the check-up's findings, a run finishing) and for a daily review. Those turns are read-only for code; be brief, don't repeat yourself, answer "Nothing to do." when nothing matters, and never act on production without the user's approval.`, key)
 }
 
 // ── Folding ───────────────────────────────────────────────────────────────

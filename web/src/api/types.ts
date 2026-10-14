@@ -952,10 +952,14 @@ export type ChatTurn = {
   error: string;
   usage: UsageEntry[];
   run_id: number | null; // the Claude Code session run
+  origin: ChatOrigin; // who started it; "event" / "schedule" turns are read-only
   started_at: string;
   finished_at: string | null;
   runs: Run[]; // runs it queued (and its own session run)
 };
+
+/** Who wrote a user message or started a turn: the user ("" web, "telegram") or Forge for a proactive bot. */
+export type ChatOrigin = "" | "telegram" | "event" | "schedule";
 
 export type ChatUsage = { input_tokens: number; output_tokens: number; cached_tokens: number };
 
@@ -975,8 +979,22 @@ export type Chat = {
 
 /** A project bot's latest line: the first 300 characters. */
 export type BotLine = { role: "user" | "assistant"; content: string; created_at: string };
+/** A project bot's settings; a project that never changed them has the defaults. */
+export type BotSettings = {
+  enabled: boolean; // off: it answers nothing and does nothing on its own
+  proactive: boolean; // Forge wakes it with the project's events and a daily review
+  review_at: string; // the daily review's local time, "HH:MM" ("" = none)
+  instructions: string; // the user's standing orders for this bot
+  last_review_date: string | null;
+  proactive_today: number; // turns Forge started on proactive_date
+  proactive_date: string | null;
+  daily_cap: number;
+  pending_events: number; // events waiting to go to the bot
+};
+/** PATCH /api/bots/{key}. */
+export type BotSettingsPatch = Partial<Pick<BotSettings, "enabled" | "proactive" | "review_at" | "instructions">>;
 /** A project with its bot; `chat` is null until the bot's first message. */
-export type Bot = { project: Project; chat: Chat | null; last: BotLine | null };
+export type Bot = { project: Project; chat: Chat | null; last: BotLine | null; settings: BotSettings };
 
 export type ChatToolCall = { id: string; name: string; arguments: Record<string, unknown> };
 
@@ -990,6 +1008,7 @@ export type ChatMessage = {
   result: unknown; // tool messages: the structured result (object), else null
   is_error: boolean; // tool messages: the tool failed
   created_at: string;
+  origin: ChatOrigin; // user messages: who wrote it ("event" / "schedule": Forge, for a proactive bot)
 };
 
 /** GET /api/chats/{id}, POST /api/chats and POST /api/chats/{id}/messages. */

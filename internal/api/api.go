@@ -76,6 +76,12 @@ type Server struct {
 	focusLocks  focusLocks
 	focusTick   time.Duration
 	focusSettle time.Duration
+
+	// Bots (bots.go): per-project locks, and how often the proactive loop
+	// looks for events and reviews, and how long a burst of events settles.
+	botLocks  focusLocks
+	botTick   time.Duration
+	botSettle time.Duration
 }
 
 // Deps are the optional collaborators; a zero value turns the feature off
@@ -107,6 +113,8 @@ func New(cfg config.Config, st *store.Store, m *mail.Mailer, mon *monitor.Monito
 		tgFollowEvery: 2 * time.Second,
 		focusTick:     focusTick,
 		focusSettle:   focusSettle,
+		botTick:       botTick,
+		botSettle:     botSettle,
 	}
 	s.tgs.following = map[int64]bool{}
 	s.tg = telegram.New(s.telegramToken)
@@ -176,6 +184,8 @@ func (s *Server) Handler() http.Handler {
 	h("DELETE /api/chats/{id}", s.authed(s.deleteChat))
 	h("GET /api/bots", s.authed(s.listBots))
 	h("POST /api/bots/{key}/messages", s.authed(s.sendBotMessage))
+	h("PATCH /api/bots/{key}", s.authed(s.updateBot))
+	h("POST /api/bots/{key}/review", s.authed(s.reviewBot))
 	h("DELETE /api/auth/sessions/{id}", s.authed(s.deleteSession))
 
 	h("POST /api/auth/elevate", s.authed(s.elevate))

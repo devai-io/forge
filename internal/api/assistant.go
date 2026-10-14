@@ -456,9 +456,16 @@ func (s *Server) sendBotMessage(w http.ResponseWriter, r *http.Request, u *store
 	if !ok {
 		return
 	}
+	if bs, err := s.store.BotSettingsFor(r.Context(), p.ID); err != nil {
+		writeErr(w, r, err)
+		return
+	} else if !bs.Enabled {
+		writeErr(w, r, errBotOff(p.Key))
+		return
+	}
 	status := http.StatusOK
 	chat, err := s.store.BotChat(r.Context(), p.ID)
-	cur := s.assistant.DefaultSettings(r.Context())
+	cur := s.assistant.BotSettings(r.Context())
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		status = http.StatusCreated

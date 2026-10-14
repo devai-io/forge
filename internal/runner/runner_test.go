@@ -234,3 +234,29 @@ func TestValidSSHTarget(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionDir(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	outside, _ := filepath.EvalSymlinks(t.TempDir())
+	project := filepath.Join(root, "shop")
+	repo := filepath.Join(project, "shop_api")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := &Runner{cfg: &Config{AllowedRoots: []string{root}}}
+	cases := []struct {
+		folders []string
+		want    string
+	}{
+		{nil, root}, // the Assistant: the home folder
+		{[]string{project, repo}, project},
+		{[]string{outside, repo}, repo},                             // outside the roots: the next one
+		{[]string{filepath.Join(root, "gone"), outside}, root},      // none usable: home
+		{[]string{filepath.Join(project, "..", "..", "etc")}, root}, // no escaping
+	}
+	for _, c := range cases {
+		if got := r.sessionDir(&assistantSetup{Folders: c.folders}); got != c.want {
+			t.Errorf("sessionDir(%q) = %q, want %q", c.folders, got, c.want)
+		}
+	}
+}

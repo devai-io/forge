@@ -176,6 +176,8 @@ var tgCommands = []telegram.Command{
 	{Command: "tasks", Description: "Open tasks [PROJECT]"},
 	{Command: "runs", Description: "Active and recent runs"},
 	{Command: "checkup", Description: "Today's check-up actions"},
+	{Command: "bots", Description: "Project bots"},
+	{Command: "bot", Description: "PROJECT message — talk to a project's bot"},
 	{Command: "remember", Description: "[PROJECT] text — save a memory"},
 	{Command: "recall", Description: "[PROJECT] words — search memory"},
 	{Command: "help", Description: "What this bot does"},
@@ -240,6 +242,7 @@ func (s *Server) tgCommand(ctx context.Context, set store.TelegramSettings, text
 			"- A finished run or one waiting for you says so; reply to it to continue the session.\n" +
 			"- Anything else you write goes to the Assistant. /new starts a fresh chat, /stop stops it.\n" +
 			"- /tasks [PROJECT], /runs, /checkup\n" +
+			"- /bots lists the project bots; /bot PROJECT message talks to one (reply to its answer to go on)\n" +
 			"- /remember [PROJECT] text — save a memory (no project: about you, every project)\n" +
 			"- /recall [PROJECT] words — search memory")
 	case "/new":
@@ -261,6 +264,15 @@ func (s *Server) tgCommand(ctx context.Context, set store.TelegramSettings, text
 		say("Nothing is running.")
 	case "/tasks":
 		say(s.tgTasks(ctx, strings.ToUpper(rest)))
+	case "/bots":
+		say(s.tgBots(ctx))
+	case "/bot":
+		key, msg, _ := strings.Cut(rest, " ")
+		if key == "" || strings.TrimSpace(msg) == "" {
+			say("Usage: /bot PROJECT message")
+			return
+		}
+		s.tgBot(ctx, set, strings.ToUpper(key), strings.TrimSpace(msg))
 	case "/runs":
 		say(s.tgRuns(ctx))
 	case "/checkup":
@@ -573,9 +585,14 @@ func (s *Server) tgReply(ctx context.Context, set store.TelegramSettings, l *sto
 		s.tgSecurity(ctx, "telegram_run_message", fmt.Sprintf("run %d", *l.RunID))
 		say(fmt.Sprintf("Sent to run #%d.", *l.RunID))
 	case "chat":
-		if l.ChatID != nil {
-			s.tgAssistant(ctx, set, *l.ChatID, text)
+		if l.ChatID == nil {
+			return
 		}
+		if chat, err := s.store.ChatByID(ctx, *l.ChatID); err == nil && chat.ProjectKey != "" {
+			s.tgBot(ctx, set, chat.ProjectKey, text)
+			return
+		}
+		s.tgAssistant(ctx, set, *l.ChatID, text)
 	}
 }
 
@@ -650,6 +667,41 @@ func tgAssistantErr(err error) string {
 // then posts its answer (the last thing it said), linked so a reply goes
 // back to the same chat.
 func (s *Server) tgFollowChat(tgChat, chatID int64, afterSeq int) {
+	s.tgFollow(tgChat, chatID, afterSeq, true, func(answer string) string { return answer })
+}
+
+// tgFollowBot posts a bot's answer to Telegram: to a message sent from
+// there, or to a turn Forge started (then quietly — no "typing…" — and
+// not at all when the answer is just "Nothing to do.").
+func (s *Server) tgFollowBot(chatID int64, afterSeq int, key, origin string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	set, on := s.tgOn(ctx)
+	cancel()
+	if !on {
+		return
+	}
+	proactive := origin == "event" || origin == "schedule"
+	go s.tgFollow(set.ChatID, chatID, afterSeq, !proactive, func(answer string) string {
+		if proactive && nothingToDo(answer) {
+			return ""
+		}
+		head := "🤖 **" + key + " bot**"
+		if proactive {
+			head += " · on its own"
+		}
+		return head + "\n\n" + answer + "\n\n[Open the " + key + " bot](" + s.cfg.PublicURL + "/assistant/bot/" + key + ")"
+	})
+}
+
+// nothingToDo says a proactive answer has nothing to report.
+func nothingToDo(answer string) bool {
+	a := strings.ToLower(strings.Trim(strings.TrimSpace(answer), "*_`.! \n"))
+	return len(a) < 80 && strings.HasPrefix(a, "nothing to do")
+}
+
+// tgFollow waits for a chat's turn to end and posts what format makes of
+// its answer ("" posts nothing), linked so a reply continues that chat.
+func (s *Server) tgFollow(tgChat, chatID int64, afterSeq int, typing bool, format func(string) string) {
 	s.tgs.mu.Lock()
 	if s.tgs.following[chatID] {
 		s.tgs.mu.Unlock()
@@ -668,7 +720,7 @@ func (s *Server) tgFollowChat(tgChat, chatID int64, afterSeq int) {
 	tick := time.NewTicker(s.tgFollowEvery)
 	defer tick.Stop()
 	for i := 0; ; i++ {
-		if i%3 == 0 {
+		if typing && i%3 == 0 {
 			_ = s.tg.Typing(ctx, tgChat)
 		}
 		select {
@@ -700,7 +752,9 @@ func (s *Server) tgFollowChat(tgChat, chatID int64, afterSeq int) {
 		if answer == "" {
 			answer = "(no answer)"
 		}
-		s.tgSend(ctx, tgChat, answer, nil, &store.TelegramLink{Kind: "chat", ChatID: &chatID})
+		if answer = format(answer); answer != "" {
+			s.tgSend(ctx, tgChat, answer, nil, &store.TelegramLink{Kind: "chat", ChatID: &chatID})
+		}
 		return
 	}
 }
@@ -1002,4 +1056,62 @@ func (s *Server) TestTelegram(ctx context.Context) map[string]any {
 		return map[string]any{"ok": false, "bot": me.Username, "error": err.Error()}
 	}
 	return map[string]any{"ok": true, "bot": me.Username, "sent": true}
+}
+
+// ── Bots ──────────────────────────────────────────────────────────────────
+
+func (s *Server) tgBots(ctx context.Context) string {
+	bots, err := s.store.ListBots(ctx, store.TodayFor("UTC"))
+	if err != nil {
+		return "Could not list the bots: " + err.Error()
+	}
+	var b strings.Builder
+	for _, bot := range bots {
+		state := "on demand"
+		switch {
+		case !bot.Settings.Enabled:
+			state = "off"
+		case bot.Settings.Proactive:
+			state = "proactive"
+		}
+		fmt.Fprintf(&b, "- **%s** · %s", bot.Project.Key, state)
+		if bot.Last != nil {
+			fmt.Fprintf(&b, " — %s", telegram.Clip(strings.Join(strings.Fields(bot.Last.Content), " "), 80))
+		}
+		b.WriteString("\n")
+	}
+	if b.Len() == 0 {
+		return "No projects yet."
+	}
+	return b.String() + "\n/bot PROJECT message talks to one."
+}
+
+// tgBot sends a Telegram message to a project's bot; its answer comes back
+// here, and a reply to that answer goes on with the same bot.
+func (s *Server) tgBot(ctx context.Context, set store.TelegramSettings, key, text string) {
+	say := func(md string) { s.tgSend(ctx, set.ChatID, md, nil, nil) }
+	if !set.Assistant {
+		say("The Assistant (and the bots) are off for Telegram (Settings → Telegram).")
+		return
+	}
+	user, err := s.store.FirstUser(ctx)
+	if err != nil {
+		say("No account yet.")
+		return
+	}
+	if _, _, err := s.startBotTurn(ctx, user, key, "telegram", text, true); err != nil {
+		var ve *store.ValidationError
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			say("No project " + key + ". /bots lists them.")
+		case errors.As(err, &ve):
+			say(ve.Message)
+		case errors.Is(err, store.ErrConflict):
+			say("The " + key + " bot is still working on the last message.")
+		default:
+			say(tgAssistantErr(err))
+		}
+		return
+	}
+	s.tgSecurity(ctx, "telegram_bot_message", key)
 }

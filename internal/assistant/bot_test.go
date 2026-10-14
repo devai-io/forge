@@ -81,3 +81,47 @@ func TestBotContext(t *testing.T) {
 		}
 	}
 }
+
+func TestBotFolders(t *testing.T) {
+	cases := []struct {
+		in   []string
+		want []string
+	}{
+		{nil, nil},
+		{[]string{"", "relative/path"}, nil},
+		{[]string{"/home/ada/dev/shop/shop_api"}, []string{"/home/ada/dev/shop/shop_api"}},
+		{[]string{"/home/ada/dev/shop/shop_api", "/home/ada/dev/shop/shop_ui/"},
+			[]string{"/home/ada/dev/shop", "/home/ada/dev/shop/shop_api"}},
+		// Only /home/ada in common: too broad, the first repo instead.
+		{[]string{"/home/ada/shop_api", "/home/ada/work/shop_ui"}, []string{"/home/ada/shop_api"}},
+		// A repo inside another: the outer one is the folder.
+		{[]string{"/home/ada/dev/shop", "/home/ada/dev/shop/mobile"}, []string{"/home/ada/dev/shop"}},
+	}
+	for _, c := range cases {
+		got := botFolders(c.in)
+		if strings.Join(got, "|") != strings.Join(c.want, "|") {
+			t.Errorf("botFolders(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestSessionPromptForABot(t *testing.T) {
+	u := &store.User{Username: "ada", Timezone: "UTC"}
+	p := sessionPrompt(u, "desk", "plan", "https://forge.example.com", []string{"/home/ada/dev/shop", "/home/ada/dev/shop/shop_api"}, false)
+	if !strings.Contains(p, "started in the project's folder /home/ada/dev/shop") || !strings.Contains(p, "then its home folder") {
+		t.Fatalf("bot prompt: %s", p)
+	}
+	p = sessionPrompt(u, "desk", "plan", "https://forge.example.com", nil, true)
+	if !strings.Contains(p, "started in its home folder") || !strings.Contains(p, "Forge started this turn") {
+		t.Fatalf("proactive prompt: %s", p)
+	}
+}
+
+func TestNothingToDoIsQuiet(t *testing.T) {
+	if !strings.Contains(proactiveNote, `"Nothing to do."`) {
+		t.Fatal("the proactive note must name the quiet answer")
+	}
+	if !strings.Contains(botRules("SHOP"), "When proactive") {
+		t.Fatal("the bot rules explain proactive turns")
+	}
+}

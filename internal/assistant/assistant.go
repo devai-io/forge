@@ -140,11 +140,30 @@ func (a *Assistant) DefaultSettings(ctx context.Context) store.ChatSettings {
 	return cs
 }
 
+// BotSettings are what a new bot chat starts with: Claude Code on the
+// master machine — the subscription logged in there — whatever engine the
+// Assistant's own chats use; no permission prompts where the master allows
+// bypassPermissions.
+func (a *Assistant) BotSettings(ctx context.Context) store.ChatSettings {
+	cs := store.ChatSettings{Engine: "claude"}
+	if rn, err := a.store.MasterRunner(ctx); err == nil {
+		cs.SkipPermissions = store.OneOf("bypassPermissions", rn.Capabilities.PermissionModes)
+	}
+	return cs
+}
+
 // Start runs a turn for the chat's newest user message. On DeepSeek the
 // server runs it in the background; on Claude Code it is a run on the
 // master machine and ends when that run does (FinishSession). It fails with
 // ErrConflict when a turn is already running.
 func (a *Assistant) Start(ctx context.Context, chatID int64, user *store.User) error {
+	return a.StartFrom(ctx, chatID, user, "")
+}
+
+// StartFrom is Start with the turn's origin (store.ChatTurn.Origin). A
+// proactive turn ("event", "schedule") is read-only whatever the chat
+// allows: it may update Forge (tasks, comments, memory) but not code.
+func (a *Assistant) StartFrom(ctx context.Context, chatID int64, user *store.User, origin string) error {
 	chat, err := a.store.ChatByID(ctx, chatID)
 	if err != nil {
 		return err
@@ -169,7 +188,7 @@ func (a *Assistant) Start(ctx context.Context, chatID int64, user *store.User) e
 	if !ok {
 		return fmt.Errorf("%w: the assistant is still working on this chat", store.ErrConflict)
 	}
-	turn, err := a.store.CreateChatTurn(ctx, chatID, seq, chat.ChatSettings)
+	turn, err := a.store.CreateChatTurnFrom(ctx, chatID, seq, chat.ChatSettings, origin)
 	if err != nil {
 		_ = a.store.ReleaseChat(ctx, chatID, err.Error())
 		return err
@@ -259,13 +278,19 @@ func (a *Assistant) turn(ctx context.Context, chat *store.Chat, turn *store.Chat
 	api := apiName(set.BaseURL)
 	tools := toolDefs()
 	system := systemPrompt(user, a.store.PublicURL)
+	if turn.Proactive() {
+		ctx = withProactive(ctx)
+	}
 	if chat.ProjectKey != "" {
 		ctx = withBot(ctx, chat.ProjectKey)
 		brief, err := a.botBrief(ctx, user, chat.ProjectKey)
 		if err != nil {
 			return err
 		}
-		system += botRules(chat.ProjectKey) + brief
+		system += botRules(chat.ProjectKey) + a.botOrders(ctx, chat) + brief
+		if turn.Proactive() {
+			system += proactiveNote
+		}
 	}
 	system += a.userMemories(ctx)
 	a.fold(ctx, client, model, api, chat, meter)

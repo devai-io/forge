@@ -19,6 +19,8 @@ import type {
   AssistantSettings,
   AssistantStatus,
   Bot,
+  BotSettings,
+  BotSettingsPatch,
   Chat,
   ChatSettings,
   ChatThread,
@@ -1407,6 +1409,29 @@ export function useSendBotMessage(key: string) {
   return useMutation({
     mutationFn: ({ content, settings }: { content: string; settings?: Partial<ChatSettings> }) =>
       api.post<ChatThread>(`/bots/${encodeURIComponent(key)}/messages`, { content, ...settings }),
+    onSuccess: (thread) => {
+      storeThread(qc, thread);
+      void qc.invalidateQueries({ queryKey: keys.bots });
+    },
+    onError: (err) => onAssistantError(qc, err),
+  });
+}
+
+/** Changes a bot's settings (on/off, proactive, review time, standing orders). */
+export function useUpdateBot(key: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: BotSettingsPatch) =>
+      api.patch<{ settings: BotSettings }>(`/bots/${encodeURIComponent(key)}`, patch).then((r) => r.settings),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.bots }),
+  });
+}
+
+/** Runs the bot's daily review now (read-only, like a proactive turn). */
+export function useReviewBot(key: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<ChatThread>(`/bots/${encodeURIComponent(key)}/review`),
     onSuccess: (thread) => {
       storeThread(qc, thread);
       void qc.invalidateQueries({ queryKey: keys.bots });

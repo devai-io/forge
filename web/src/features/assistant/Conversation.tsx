@@ -3,7 +3,7 @@
 // once, and polls the chat (useChat) until the turn is done. Like a run's
 // transcript it follows the bottom unless the reader has scrolled up.
 
-import { ArrowLeft, ArrowUp, Bot as BotIcon, ChevronDown, Pencil, Sparkles, Square, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowUp, Bot as BotIcon, ChevronDown, Pencil, Radar, Sparkles, Square, Trash2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError } from "@/api/client";
@@ -19,6 +19,7 @@ import { SkeletonRows } from "@/components/ui/Skeleton";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { buildChatItems, EXAMPLE_PROMPTS, usageLabel } from "@/lib/assistant";
+import { BotSettingsButton } from "./BotSettings";
 import { ChatSettingsBar } from "./ChatSettingsBar";
 import { ToolActivity } from "./ToolActivity";
 import { TurnSpend } from "./TurnSpend";
@@ -44,8 +45,8 @@ export function NewChat({ bot }: { bot?: { key: string; name: string } } = {}) {
   const [draft, setDraft] = useState("");
   const status = useAssistant();
   const [picked, setSettings] = useState<ChatSettings | null>(null);
-  // The configured engine (Claude by default), unless it cannot answer and the other can.
-  const configured = status.data?.settings.engine ?? "claude";
+  // The configured engine (Claude by default; always Claude for a bot), unless it cannot answer and the other can.
+  const configured = bot ? "claude" : (status.data?.settings.engine ?? "claude");
   const other = configured === "claude" ? "deepseek" : "claude";
   const settings: ChatSettings = picked ?? {
     engine: status.data && !status.data.engines?.[configured].available && status.data.engines?.[other].available ? other : configured,
@@ -75,6 +76,7 @@ export function NewChat({ bot }: { bot?: { key: string; name: string } } = {}) {
           bot ? (
             <h2 className="flex min-w-0 items-center gap-2 truncate text-[15px] font-semibold">
               {bot.name} <BotBadge projectKey={bot.key} />
+              <BotSettingsButton projectKey={bot.key} />
             </h2>
           ) : (
             <h2 className="truncate text-[15px] font-semibold">New chat</h2>
@@ -197,7 +199,12 @@ function ChatHeader({ title, chat }: { title: ReactNode; chat?: Chat }) {
         <ArrowLeft className="size-4" />
       </Link>
       <div className="min-w-0 flex-1">{title}</div>
-      {chat?.project_key ? <BotBadge projectKey={chat.project_key} /> : null}
+      {chat?.project_key ? (
+        <>
+          <BotBadge projectKey={chat.project_key} />
+          <BotSettingsButton projectKey={chat.project_key} />
+        </>
+      ) : null}
       {chat ? (
         <>
           <span className="hidden shrink-0 text-[11.5px] text-fg-3 tabular sm:inline" title={`${chat.usage.cached_tokens.toLocaleString()} input tokens from cache`}>
@@ -423,7 +430,14 @@ function withTurnSpend(items: ReturnType<typeof buildChatItems>, turnBySeq: Map<
     if (item.kind === "user") {
       flush();
       turn = turnBySeq.get(item.message.seq);
-      out.push(<UserBubble key={item.key} text={item.message.content} />);
+      const origin = item.message.origin;
+      out.push(
+        origin === "event" || origin === "schedule" ? (
+          <ForgeEvent key={item.key} text={item.message.content} origin={origin} />
+        ) : (
+          <UserBubble key={item.key} text={item.message.content} via={origin === "telegram" ? "Telegram" : undefined} />
+        ),
+      );
     } else if (item.kind === "assistant") {
       out.push(<AssistantMessage key={item.key} text={item.message.content} />);
     } else {
@@ -434,12 +448,33 @@ function withTurnSpend(items: ReturnType<typeof buildChatItems>, turnBySeq: Map<
   return out;
 }
 
-function UserBubble({ text }: { text: string }) {
+function UserBubble({ text, via }: { text: string; via?: string }) {
   return (
-    <div className="flex justify-end">
+    <div className="flex flex-col items-end">
       <div className="max-w-[85%] rounded-2xl rounded-br-md border border-accent/25 bg-accent/10 px-3.5 py-2 text-sm leading-relaxed break-words whitespace-pre-wrap">
         {text}
       </div>
+      {via ? <span className="mt-0.5 pr-1 text-[11px] text-fg-3">via {via}</span> : null}
+    </div>
+  );
+}
+
+/** A message Forge wrote to a proactive bot: the project's events, or the daily review. */
+function ForgeEvent({ text, origin }: { text: string; origin: "event" | "schedule" }) {
+  const [open, setOpen] = useState(false);
+  const body = text.replace(/^Forge:\s*/, "");
+  const first = body.split("\n")[0];
+  return (
+    <div role="note" aria-label={origin === "event" ? "Forge event" : "Forge daily review"} className="mx-auto max-w-[92%] rounded-lg border border-dashed border-line-strong bg-surface-2/60 px-3 py-2 text-[12.5px] text-fg-2">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex w-full items-start gap-2 text-left">
+        <Radar className="mt-0.5 size-3.5 shrink-0 text-fg-3" aria-hidden />
+        <span className="min-w-0 flex-1">
+          <span className="font-medium text-fg">{origin === "event" ? "Forge · events" : "Forge · daily review"}</span>
+          {open ? null : <span className="block truncate text-fg-3">{first}</span>}
+        </span>
+        <ChevronDown className={`mt-0.5 size-3.5 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
+      </button>
+      {open ? <Markdown className="mt-1.5 pl-5.5 text-[12.5px]">{body}</Markdown> : null}
     </div>
   );
 }

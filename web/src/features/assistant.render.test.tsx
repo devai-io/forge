@@ -42,6 +42,7 @@ const chat = (over: Partial<Chat> = {}): Chat => ({
 });
 
 const msg = (over: Partial<ChatMessage>): ChatMessage => ({
+  origin: "",
   seq: 1,
   role: "user",
   content: "",

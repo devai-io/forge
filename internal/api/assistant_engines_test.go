@@ -156,7 +156,10 @@ func TestAssistantClaudeCodeTurns(t *testing.T) {
 
 	type claim struct {
 		Run       store.Run
-		Assistant map[string]string
+		Assistant struct {
+			AppendSystem string   `json:"append_system"`
+			Folders      []string `json:"folders"`
+		}
 	}
 	claimOne := func() claim {
 		t.Helper()
@@ -178,7 +181,7 @@ func TestAssistantClaudeCodeTurns(t *testing.T) {
 	}
 	c := claimOne()
 	if c.Run.RepoID != 0 || c.Run.ChatTurnID == nil || c.Run.Model != "sonnet" || c.Run.Effort != "high" ||
-		c.Run.PermissionMode != "plan" || c.Run.Prompt != "What is open on SHOP?" || !strings.Contains(c.Assistant["append_system"], "forge MCP") {
+		c.Run.PermissionMode != "plan" || c.Run.Prompt != "What is open on SHOP?" || !strings.Contains(c.Assistant.AppendSystem, "forge MCP") {
 		t.Fatalf("claimed = %+v %v", c.Run, c.Assistant)
 	}
 	// The session is not a board run.
@@ -240,7 +243,7 @@ func TestAssistantClaudeCodeTurns(t *testing.T) {
 	expect(t, "skip", h.do("POST", fmt.Sprintf("/api/chats/%d/messages", started.Chat.ID),
 		map[string]any{"content": "Just do it", "skip_permissions": true}, nil), 200)
 	c = claimOne()
-	if c.Run.PermissionMode != "bypassPermissions" || !strings.Contains(c.Assistant["append_system"], "Permission prompts are off") {
+	if c.Run.PermissionMode != "bypassPermissions" || !strings.Contains(c.Assistant.AppendSystem, "Permission prompts are off") {
 		t.Fatalf("skip = %+v %v", c.Run, c.Assistant)
 	}
 	finish(c.Run.ID, map[string]any{"status": "succeeded", "session_id": "s1", "result": "Done."})

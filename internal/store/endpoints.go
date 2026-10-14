@@ -285,6 +285,7 @@ func (s *Store) RecordCheck(ctx context.Context, e Endpoint, r CheckResult) (sta
 		return "", 0, err
 	}
 	var prev string
+	var summary string
 	err = s.tx(ctx, func(tx pgxTx) error {
 		if _, err := tx.Exec(ctx, `INSERT INTO endpoint_checks (endpoint_id, ok, code, latency_ms, error)
 			VALUES ($1, $2, $3, $4, $5)`, e.ID, r.OK, r.Code, r.LatencyMS, truncate(r.Error, 500)); err != nil {
@@ -303,7 +304,6 @@ func (s *Store) RecordCheck(ctx context.Context, e Endpoint, r CheckResult) (sta
 			WHERE id = $1`, e.ID, status, streak, r.Code, r.LatencyMS, truncate(r.Error, 500)); err != nil {
 			return mapErr(err)
 		}
-		var summary string
 		switch {
 		case status == "down" && prev != "down":
 			summary = fmt.Sprintf("%s is down", e.Name)
@@ -324,6 +324,9 @@ func (s *Store) RecordCheck(ctx context.Context, e Endpoint, r CheckResult) (sta
 	})
 	if err == nil && status != prev && (status == "down" || prev == "down") {
 		s.MarkFocusDirty(ctx, e.ProjectID, "endpoint "+e.Name+" is "+status) // a confirmed change moves the blockers
+	}
+	if err == nil && summary != "" {
+		s.AddBotEvent(ctx, e.ProjectID, "endpoint", summary+" ("+e.URL+")")
 	}
 	return status, streak, err
 }

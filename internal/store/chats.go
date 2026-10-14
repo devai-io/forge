@@ -69,6 +69,9 @@ type ChatMessage struct {
 	Result     json.RawMessage `json:"result"`
 	IsError    bool            `json:"is_error"`
 	CreatedAt  time.Time       `json:"created_at"`
+	// Origin says who wrote a user message: "" the user in the web app,
+	// "telegram", or Forge itself for a proactive bot ("event", "schedule").
+	Origin string `json:"origin"`
 	// Reasoning is the model's thinking (DeepSeek), kept to send back.
 	Reasoning string `json:"-"`
 }
@@ -145,9 +148,10 @@ func (s *Store) SetChatSummary(ctx context.Context, id int64, summary string, se
 // Bot is a project with its bot: the chat (nil until the first message) and
 // the conversation's latest line.
 type Bot struct {
-	Project Project  `json:"project"`
-	Chat    *Chat    `json:"chat"`
-	Last    *BotLine `json:"last"`
+	Project  Project     `json:"project"`
+	Chat     *Chat       `json:"chat"`
+	Last     *BotLine    `json:"last"`
+	Settings BotSettings `json:"settings"`
 }
 
 type BotLine struct {
@@ -201,9 +205,16 @@ func (s *Store) ListBots(ctx context.Context, today string) ([]Bot, error) {
 	if err := lines.Err(); err != nil {
 		return nil, err
 	}
+	settings, err := s.allBotSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]Bot, 0, len(projects))
 	for _, p := range projects {
-		b := Bot{Project: p, Chat: chats[p.ID]}
+		b := Bot{Project: p, Chat: chats[p.ID], Settings: DefaultBotSettings()}
+		if set, ok := settings[p.ID]; ok {
+			b.Settings = set
+		}
 		if b.Chat != nil {
 			b.Last = last[b.Chat.ID]
 		}
@@ -305,9 +316,9 @@ func (s *Store) AppendChatMessage(ctx context.Context, chatID int64, m ChatMessa
 		if err := tx.QueryRow(ctx, `SELECT coalesce(max(seq), 0) + 1 FROM chat_messages WHERE chat_id = $1`, chatID).Scan(&seq); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO chat_messages (chat_id, seq, role, content, tool_calls, tool_call_id, tool_name, result, is_error, reasoning)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, chatID, seq, m.Role, m.Content, m.ToolCalls, m.ToolCallID,
-			m.ToolName, result, m.IsError, m.Reasoning); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO chat_messages (chat_id, seq, role, content, tool_calls, tool_call_id, tool_name, result, is_error, reasoning, origin)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`, chatID, seq, m.Role, m.Content, m.ToolCalls, m.ToolCallID,
+			m.ToolName, result, m.IsError, m.Reasoning, m.Origin); err != nil {
 			return mapErr(err)
 		}
 		_, err := tx.Exec(ctx, `UPDATE chats SET updated_at = now() WHERE id = $1`, chatID)
@@ -321,7 +332,7 @@ func (s *Store) AppendChatMessage(ctx context.Context, chatID int64, m ChatMessa
 }
 
 func (s *Store) ChatMessages(ctx context.Context, chatID int64, after int) ([]ChatMessage, error) {
-	rows, err := s.DB.Query(ctx, `SELECT seq, role, content, tool_calls, tool_call_id, tool_name, result, is_error, created_at, reasoning
+	rows, err := s.DB.Query(ctx, `SELECT seq, role, content, tool_calls, tool_call_id, tool_name, result, is_error, created_at, reasoning, origin
 		FROM chat_messages WHERE chat_id = $1 AND seq > $2 ORDER BY seq`, chatID, after)
 	if err != nil {
 		return nil, err
@@ -332,7 +343,7 @@ func (s *Store) ChatMessages(ctx context.Context, chatID int64, after int) ([]Ch
 		var m ChatMessage
 		var result *string
 		if err := rows.Scan(&m.Seq, &m.Role, &m.Content, &m.ToolCalls, &m.ToolCallID, &m.ToolName, &result, &m.IsError,
-			&m.CreatedAt, &m.Reasoning); err != nil {
+			&m.CreatedAt, &m.Reasoning, &m.Origin); err != nil {
 			return nil, err
 		}
 		if result != nil {
@@ -354,28 +365,31 @@ func (s *Store) ChatMessages(ctx context.Context, chatID int64, after int) ([]Ch
 // ended and what it spent, per API. Runs lists the runs it queued (and, on
 // Claude Code, its own session run), filled in by ChatTurns.
 type ChatTurn struct {
-	ID         int64         `json:"id"`
-	ChatID     int64         `json:"chat_id"`
-	Seq        int           `json:"seq"` // the user message that started it
-	Engine     string        `json:"engine"`
-	Model      string        `json:"model"`
-	Effort     string        `json:"effort"`
-	Status     string        `json:"status"` // running | done | failed | stopped
-	Error      string        `json:"error"`
-	Usage      []usage.Entry `json:"usage"`
-	RunID      *int64        `json:"run_id"` // the Claude Code session run
-	StartedAt  time.Time     `json:"started_at"`
-	FinishedAt *time.Time    `json:"finished_at"`
-	Runs       []Run         `json:"runs"`
+	ID     int64         `json:"id"`
+	ChatID int64         `json:"chat_id"`
+	Seq    int           `json:"seq"` // the user message that started it
+	Engine string        `json:"engine"`
+	Model  string        `json:"model"`
+	Effort string        `json:"effort"`
+	Status string        `json:"status"` // running | done | failed | stopped
+	Error  string        `json:"error"`
+	Usage  []usage.Entry `json:"usage"`
+	RunID  *int64        `json:"run_id"` // the Claude Code session run
+	// Origin: who started the turn ("" the user, "telegram", "event" or
+	// "schedule"); a proactive turn ("event", "schedule") is read-only.
+	Origin     string     `json:"origin"`
+	StartedAt  time.Time  `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at"`
+	Runs       []Run      `json:"runs"`
 }
 
-const turnCols = `id, chat_id, seq, engine, model, effort, status, error, usage, run_id, started_at, finished_at`
+const turnCols = `id, chat_id, seq, engine, model, effort, status, error, usage, run_id, started_at, finished_at, origin`
 
 func scanTurn(row interface{ Scan(...any) error }) (*ChatTurn, error) {
 	var t ChatTurn
 	var u string
 	if err := row.Scan(&t.ID, &t.ChatID, &t.Seq, &t.Engine, &t.Model, &t.Effort, &t.Status, &t.Error, &u, &t.RunID,
-		&t.StartedAt, &t.FinishedAt); err != nil {
+		&t.StartedAt, &t.FinishedAt, &t.Origin); err != nil {
 		return nil, mapErr(err)
 	}
 	if json.Unmarshal([]byte(u), &t.Usage) != nil || t.Usage == nil {
@@ -386,9 +400,17 @@ func scanTurn(row interface{ Scan(...any) error }) (*ChatTurn, error) {
 }
 
 func (s *Store) CreateChatTurn(ctx context.Context, chatID int64, seq int, set ChatSettings) (*ChatTurn, error) {
-	return scanTurn(s.DB.QueryRow(ctx, `INSERT INTO chat_turns (chat_id, seq, engine, model, effort) VALUES ($1, $2, $3, $4, $5)
-		RETURNING `+turnCols, chatID, seq, set.Engine, set.Model, set.Effort))
+	return s.CreateChatTurnFrom(ctx, chatID, seq, set, "")
 }
+
+// CreateChatTurnFrom records who started the turn (ChatTurn.Origin).
+func (s *Store) CreateChatTurnFrom(ctx context.Context, chatID int64, seq int, set ChatSettings, origin string) (*ChatTurn, error) {
+	return scanTurn(s.DB.QueryRow(ctx, `INSERT INTO chat_turns (chat_id, seq, engine, model, effort, origin) VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING `+turnCols, chatID, seq, set.Engine, set.Model, set.Effort, origin))
+}
+
+// Proactive says a turn was started by Forge for a proactive bot.
+func (t *ChatTurn) Proactive() bool { return t.Origin == "event" || t.Origin == "schedule" }
 
 func (s *Store) ChatTurnByID(ctx context.Context, id int64) (*ChatTurn, error) {
 	return scanTurn(s.DB.QueryRow(ctx, `SELECT `+turnCols+` FROM chat_turns WHERE id = $1`, id))

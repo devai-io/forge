@@ -59,6 +59,7 @@ func (a *Assistant) startSession(ctx context.Context, chat *store.Chat, turn *st
 
 	mode := "plan"
 	switch {
+	case turn.Proactive(): // Forge started it: read-only, whatever the chat allows
 	case chat.SkipPermissions:
 		mode = "bypassPermissions" // CreateRun refuses it unless the machine allows it
 	case chat.Edits:
@@ -68,16 +69,32 @@ func (a *Assistant) startSession(ctx context.Context, chat *store.Chat, turn *st
 	if !store.OneOf(effort, store.ClaudeEfforts) {
 		effort = ""
 	}
-	system := sessionPrompt(user, rn.Name, mode, a.store.PublicURL)
+	var folders []string
+	if chat.ProjectKey != "" {
+		if prev != nil {
+			folders = strings.Split(prev.Cwd, "\n") // a session resumes where it started
+		} else if p, err := a.store.ProjectByKey(ctx, store.TodayFor(user.Timezone), chat.ProjectKey); err == nil {
+			var paths []string
+			for _, r := range p.Repos {
+				paths = append(paths, r.Path)
+			}
+			folders = botFolders(paths)
+		}
+	}
+	system := sessionPrompt(user, rn.Name, mode, a.store.PublicURL, folders, turn.Proactive())
 	if chat.ProjectKey != "" {
 		brief, err := a.botBrief(ctx, user, chat.ProjectKey)
 		if err != nil {
 			return err
 		}
-		system += botRules(chat.ProjectKey) + " Forge's MCP tools take the project key " + chat.ProjectKey + "." + brief
+		system += botRules(chat.ProjectKey) + " Forge's MCP tools take the project key " + chat.ProjectKey + "." +
+			a.botOrders(ctx, chat) + brief
+		if turn.Proactive() {
+			system += proactiveNote
+		}
 	}
 	in := store.RunInput{RunnerID: rn.ID, Kind: "agent", Prompt: prompt, PermissionMode: mode, Model: chat.Model,
-		Effort: effort, Engine: "claude", ChatTurnID: &turn.ID, AppendSystem: system}
+		Effort: effort, Engine: "claude", ChatTurnID: &turn.ID, AppendSystem: system, Cwd: strings.Join(nonEmpty(folders), "\n")}
 	if prev != nil {
 		in.ResumeRunID = &prev.ID
 	}
@@ -206,7 +223,7 @@ func sessionUsage(run *store.Run) []usage.Entry {
 	return out
 }
 
-func sessionPrompt(user *store.User, machine, mode, publicURL string) string {
+func sessionPrompt(user *store.User, machine, mode, publicURL string, folders []string, proactive bool) string {
 	name := user.DisplayName
 	if name == "" {
 		name = user.Username
@@ -218,12 +235,21 @@ func sessionPrompt(user *store.User, machine, mode, publicURL string) string {
 	perm := "This chat is read-only (plan mode): you can read files and Forge (forge_projects, forge_tasks, forge_task, " +
 		"forge_context, forge_checkup) but change nothing — no files, no tasks. If a change is needed, say what you would do; " +
 		name + " can allow changes for this chat."
+	if proactive {
+		perm = "Forge started this turn, not " + name + ": it is read-only for files and code (plan mode), but you may keep Forge " +
+			"current with its MCP tools — tasks, comments, memory. Propose changes to code or servers; " + name + " decides."
+	}
+	where := "started in its home folder (their projects live under it)"
+	if f := nonEmpty(folders); len(f) > 0 {
+		where = "started in the project's folder " + f[0] + " (or, if this machine does not allow that folder, " +
+			strings.Join(append(f[1:], "its home folder"), ", then ") + ")"
+	}
 	switch mode {
 	case "acceptEdits":
 		perm = "You may edit files and update Forge tasks. Shell commands this machine has not pre-approved will be refused."
 	case "bypassPermissions":
 		perm = "Permission prompts are off for this chat: every tool runs without asking, so take care with anything destructive."
 	}
-	return fmt.Sprintf(`You are the assistant in Forge's chat (%s), talking with %s through its web app. This is Claude Code on their machine %q, started in its home folder (their projects live under it). Forge tracks their projects, repos, servers, tasks, machines and daily check-up: use the forge MCP tools for it. Forge memory (forge_recall, forge_remember) keeps what earlier sessions learned per project and about the user: recall before answering how something works or what was decided, and remember what the user tells you that should outlast this chat. Messages come from the web app, not a terminal: nobody can approve a tool prompt, so a refused tool stays refused — say what you would need instead of retrying. %s Be concise and concrete, answer in the user's language, use Markdown. Today is %s.`,
-		publicURL, name, machine, perm, time.Now().In(loc).Format("Monday 2 January 2006"))
+	return fmt.Sprintf(`You are the assistant in Forge's chat (%s), talking with %s through its web app. This is Claude Code on their machine %q, %s. Forge tracks their projects, repos, servers, tasks, machines and daily check-up: use the forge MCP tools for it. Forge memory (forge_recall, forge_remember) keeps what earlier sessions learned per project and about the user: recall before answering how something works or what was decided, and remember what the user tells you that should outlast this chat. Messages come from the web app, not a terminal: nobody can approve a tool prompt, so a refused tool stays refused — say what you would need instead of retrying. %s Be concise and concrete, answer in the user's language, use Markdown. Today is %s.`,
+		publicURL, name, machine, where, perm, time.Now().In(loc).Format("Monday 2 January 2006"))
 }

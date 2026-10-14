@@ -239,7 +239,7 @@ SELECT r.id, coalesce(r.runner_id, 0), coalesce(rn.name, r.runner_name), coalesc
        r.kind, r.prompt, r.command, r.permission_mode, r.model, r.worktree, r.resume_run_id, r.status,
        r.cancel_requested, r.session_id, r.result, r.error, r.exit_code, r.cost_usd, r.num_turns, r.duration_ms,
        r.created_at, r.started_at, r.finished_at, coalesce(rp.path, ''), r.resume_session, r.model_note, r.engine,
-       r.effort, r.chat_turn_id, r.usage, r.append_system, r.interactive,
+       r.effort, r.chat_turn_id, r.usage, r.append_system, r.interactive, r.cwd,
        CASE WHEN r.status <> 'running' THEN ''
             WHEN EXISTS (SELECT 1 FROM run_prompts pr WHERE pr.run_id = r.id AND pr.status = 'pending') THEN 'answer'
             ELSE r.awaiting END
@@ -258,7 +258,7 @@ func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 		&r.Model, &r.Worktree, &r.ResumeRunID, &r.Status, &r.CancelRequested, &r.SessionID, &r.Result, &r.Error,
 		&r.ExitCode, &r.CostUSD, &r.NumTurns, &r.DurationMS, &r.CreatedAt, &r.StartedAt, &r.FinishedAt,
 		&r.RepoPath, &r.ResumeSession, &r.ModelNote, &r.Engine, &r.Effort, &r.ChatTurnID, &usage, &r.AppendSystem,
-		&r.Interactive, &r.Awaiting); err != nil {
+		&r.Interactive, &r.Cwd, &r.Awaiting); err != nil {
 		return nil, mapErr(err)
 	}
 	r.Usage = json.RawMessage(usage)
@@ -267,7 +267,7 @@ func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 
 // Public strips the fields only a runner needs.
 func (r Run) Public() Run {
-	r.RepoPath, r.ResumeSession, r.AppendSystem = "", "", ""
+	r.RepoPath, r.ResumeSession, r.AppendSystem, r.Cwd = "", "", "", ""
 	return r
 }
 
@@ -353,6 +353,10 @@ type RunInput struct {
 	// AppendSystem is added to Claude Code's system prompt (Assistant
 	// sessions); set by the server only.
 	AppendSystem string `json:"-"`
+	// Cwd is where an Assistant session starts ("" = the machine's home
+	// folder); the machine refuses a folder outside its allowed roots and
+	// falls back to home. Set by the server only.
+	Cwd string `json:"-"`
 	// Interactive keeps the session open for questions and follow-ups (an
 	// agent run on a machine that supports it).
 	Interactive bool `json:"interactive"`
@@ -376,6 +380,7 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 		}
 		in.RunnerID, in.RepoID, in.Kind = prev.RunnerID, prev.RepoID, "agent"
 		in.Worktree = false // --resume reopens the session where it ran
+		in.Cwd = prev.Cwd   // Claude Code finds a session by its folder
 		if in.TaskID == nil {
 			in.TaskID = prev.TaskID
 		}
@@ -410,6 +415,9 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 		projectID, repoID = &repo.ProjectID, &repo.ID
 	} else if in.Kind != "agent" {
 		return nil, invalid("kind", "an assistant session is an agent run")
+	}
+	if !home {
+		in.Cwd = ""
 	}
 
 	in.Prompt = strings.TrimSpace(in.Prompt)
@@ -485,11 +493,11 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO runs (runner_id, runner_name, project_id, repo_id, task_id, kind, prompt, command,
 			                  permission_mode, model, worktree, resume_run_id, resume_session, model_note, engine, effort, chat_turn_id,
-			                  append_system, interactive)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id`,
+			                  append_system, interactive, cwd)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING id`,
 			runner.ID, runner.Name, projectID, repoID, in.TaskID, in.Kind, in.Prompt, in.Command,
 			in.PermissionMode, in.Model, in.Worktree, in.ResumeRunID, resumeSession, in.ModelNote, in.Engine,
-			in.Effort, in.ChatTurnID, in.AppendSystem, in.Interactive).Scan(&id); err != nil {
+			in.Effort, in.ChatTurnID, in.AppendSystem, in.Interactive, in.Cwd).Scan(&id); err != nil {
 			return mapErr(err)
 		}
 		if home {
@@ -621,9 +629,9 @@ func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishI
 		return invalid("status", "must be succeeded, failed or cancelled")
 	}
 	var dirtyProject *int64
+	var repoName string
 	err := s.tx(ctx, func(tx pgxTx) error {
 		var projectID, taskID, repoID *int64
-		var repoName string
 		usage := "{}"
 		if len(in.Usage) > 0 && json.Valid(in.Usage) && len(in.Usage) < 64<<10 {
 			usage = string(in.Usage)
@@ -658,6 +666,30 @@ func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishI
 	})
 	if err == nil && dirtyProject != nil {
 		s.MarkFocusDirty(ctx, *dirtyProject, fmt.Sprintf("run #%d %s", runID, in.Status))
+		s.runBotEvent(ctx, *dirtyProject, runID, repoName, in)
 	}
 	return err
+}
+
+// runBotEvent tells the project's bot a run finished — unless the bot
+// queued it itself (it follows its own runs).
+func (s *Store) runBotEvent(ctx context.Context, projectID, runID int64, repoName string, in FinishInput) {
+	var own bool
+	var kind, prompt, command string
+	if err := s.DB.QueryRow(ctx, `SELECT r.kind, r.prompt, r.command, exists(SELECT 1 FROM chat_turns t JOIN chats c ON c.id = t.chat_id
+		WHERE t.id = r.chat_turn_id AND c.project_id IS NOT NULL) FROM runs r WHERE r.id = $1`, runID).
+		Scan(&kind, &prompt, &command, &own); err != nil || own {
+		return
+	}
+	what := command
+	if kind == "agent" {
+		what = excerpt(prompt, 100)
+	}
+	text := fmt.Sprintf("Run #%d on %s %s: %s", runID, repoName, in.Status, what)
+	if in.Status == "failed" && in.Error != "" {
+		text += " — error: " + excerpt(in.Error, 200)
+	} else if in.Result != "" {
+		text += " — result: " + excerpt(in.Result, 300)
+	}
+	s.AddBotEvent(ctx, projectID, "run", text)
 }

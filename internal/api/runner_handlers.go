@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/devai-io/forge/internal/store"
@@ -56,7 +57,13 @@ func (s *Server) runnerClaim(w http.ResponseWriter, r *http.Request, rn *store.R
 		if err == nil {
 			out := map[string]any{"run": run, "engine": s.runnerEngine(r.Context(), run)}
 			if run.RepoID == 0 && run.ChatTurnID != nil {
-				out["assistant"] = map[string]string{"append_system": run.AppendSystem}
+				folders := []string{}
+				for _, f := range strings.Split(run.Cwd, "\n") {
+					if f != "" {
+						folders = append(folders, f)
+					}
+				}
+				out["assistant"] = map[string]any{"append_system": run.AppendSystem, "folders": folders}
 			}
 			writeJSON(w, http.StatusOK, out)
 			return

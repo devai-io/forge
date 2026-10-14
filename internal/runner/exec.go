@@ -40,10 +40,25 @@ type claimedRun struct {
 }
 
 // assistantSetup marks a run as an Assistant turn on Claude Code: it runs in
-// this machine's home folder (the first allowed root) and may use Forge's
+// this machine's home folder (the first allowed root) — or, for a project's
+// bot, the first of Folders inside the allowed roots — and may use Forge's
 // own MCP tools; the server adds its instructions to the system prompt.
 type assistantSetup struct {
-	AppendSystem string `json:"append_system"`
+	AppendSystem string   `json:"append_system"`
+	Folders      []string `json:"folders"`
+}
+
+// sessionDir is where an Assistant session starts: the first of its folders
+// this machine allows, else the home folder (the first allowed root).
+func (r *Runner) sessionDir(a *assistantSetup) string {
+	for _, f := range a.Folders {
+		if dir, ok := r.cfg.Allowed(f); ok {
+			if st, err := os.Stat(dir); err == nil && st.IsDir() {
+				return dir
+			}
+		}
+	}
+	return r.cfg.AllowedRoots[0]
 }
 
 type event struct {
@@ -142,7 +157,7 @@ func (r *Runner) execute(ctx context.Context, run claimedRun) finishReport {
 
 	dir, ok := r.cfg.Allowed(run.RepoPath)
 	if run.Assistant != nil && run.RepoPath == "" && run.Kind == "agent" && len(r.cfg.AllowedRoots) > 0 {
-		dir, ok = r.cfg.AllowedRoots[0], true
+		dir, ok = r.sessionDir(run.Assistant), true
 	}
 	if !ok {
 		msg := fmt.Sprintf("refused: %s is not inside this runner's allowed_roots or does not exist here", run.RepoPath)

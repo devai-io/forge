@@ -55,7 +55,7 @@ func TestProjectBots(t *testing.T) {
 	h.enableAssistant(llm.srv.URL)
 
 	var started struct{ Chat store.Chat }
-	expect(t, "first message", h.do("POST", "/api/bots/shop/messages", map[string]string{"content": "Ship the iOS build"}, &started), 201)
+	expect(t, "first message", h.do("POST", "/api/bots/shop/messages", map[string]string{"content": "Ship the iOS build", "engine": "deepseek"}, &started), 201)
 	chat, msgs := h.waitChat(started.Chat.ID)
 	if chat.LastError != "" || chat.ProjectKey != "SHOP" || chat.ProjectID == nil {
 		t.Fatalf("bot chat = %+v", chat)

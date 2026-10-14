@@ -411,6 +411,9 @@ func (a *Assistant) call(ctx context.Context, user *store.User, name string, raw
 		default:
 			return nil, "", fmt.Errorf("permission_mode must be plan or acceptEdits, not %q", mode)
 		}
+		if mode != "plan" && proactiveOf(ctx) {
+			return nil, "", errors.New("a turn Forge started is read-only: queue a plan run to investigate, and propose the change to the user")
+		}
 		repo, err := a.repo(ctx, today, in.Project, in.Repo)
 		if err != nil {
 			return nil, "", err
@@ -451,6 +454,9 @@ func (a *Assistant) call(ctx context.Context, user *store.User, name string, raw
 		return out, fmt.Sprintf("Queued Claude Code run #%d on %s (%s/%s, %s, %s)", run.ID, run.RunnerName, run.ProjectKey, run.RepoName, mode, run.Engine), nil
 
 	case "run_command":
+		if proactiveOf(ctx) {
+			return nil, "", errors.New("a turn Forge started does not run commands: propose it to the user")
+		}
 		repo, err := a.repo(ctx, today, in.Project, in.Repo)
 		if err != nil {
 			return nil, "", err

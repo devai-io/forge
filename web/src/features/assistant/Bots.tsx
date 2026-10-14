@@ -3,7 +3,7 @@
 // chat when it has one, else a composer whose first message creates it.
 
 import clsx from "clsx";
-import { Bot as BotIcon, ChevronDown } from "lucide-react";
+import { Bot as BotIcon, ChevronDown, Radar } from "lucide-react";
 import { useState } from "react";
 import { Link, Navigate, NavLink } from "react-router-dom";
 import { useBots } from "@/api/hooks";
@@ -104,6 +104,14 @@ function BotRow({ bot: b }: { bot: Bot }) {
         <span className="flex min-w-0 items-baseline gap-1.5">
           <span className="truncate text-[13px] font-medium">{b.project.name}</span>
           <span className="shrink-0 font-mono text-[10.5px] text-fg-3">{b.project.key}</span>
+          {!b.settings.enabled ? (
+            <span className="shrink-0 text-[10.5px] text-fg-3">off</span>
+          ) : b.settings.proactive ? (
+            <span className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] text-accent" title="Proactive: Forge wakes it with the project's events and a daily review">
+              <Radar className="size-3" aria-hidden />
+              proactive
+            </span>
+          ) : null}
         </span>
         {b.last ? (
           <span className="block truncate text-[11.5px] text-fg-3">

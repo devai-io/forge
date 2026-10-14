@@ -443,13 +443,27 @@ func (s *Store) SaveRepoScans(ctx context.Context, runnerName string, scans []Re
 		// A sync result rides along with every scan until the next sync; the
 		// feed hears about a pull once.
 		var name string
-		var prevSync *string
-		if err := s.DB.QueryRow(ctx, `SELECT name, json_extract(git, '$.sync.at') FROM repos WHERE id = $1`,
-			sc.RepoID).Scan(&name, &prevSync); err != nil {
+		var prevSync, prevCI *string
+		var projectID int64
+		if err := s.DB.QueryRow(ctx, `SELECT name, json_extract(git, '$.sync.at'), json_extract(git, '$.ci.conclusion'), project_id
+			FROM repos WHERE id = $1`, sc.RepoID).Scan(&name, &prevSync, &prevCI, &projectID); err != nil {
 			continue // a repo deleted since the runner's list
 		}
 		if _, err := s.DB.Exec(ctx, `UPDATE repos SET git = $2 WHERE id = $1`, sc.RepoID, g); err != nil {
 			return err
+		}
+		if ci := g.CI; ci != nil && ci.Conclusion == "failure" && (prevCI == nil || *prevCI != "failure") {
+			text := fmt.Sprintf("CI failed on %s", name)
+			if ci.Workflow != "" {
+				text += " (" + ci.Workflow + ")"
+			}
+			if ci.Title != "" {
+				text += ": " + ci.Title
+			}
+			if ci.URL != "" {
+				text += " — " + ci.URL
+			}
+			s.AddBotEvent(ctx, projectID, "ci", text)
 		}
 		if g.Sync != nil && g.Sync.Pulled > 0 && (prevSync == nil || *prevSync != g.Sync.At) {
 			if _, err := s.DB.Exec(ctx, `INSERT INTO activity (project_id, kind, summary)

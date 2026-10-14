@@ -369,6 +369,9 @@ type Run struct {
 	Usage json.RawMessage `json:"usage"`
 	// AppendSystem: only the runner needs it (Assistant sessions).
 	AppendSystem string `json:"append_system,omitempty"`
+	// Cwd: where an Assistant session starts on its machine ("" = the home
+	// folder); a bot's sessions start in the project's folder.
+	Cwd string `json:"cwd,omitempty"`
 	// Interactive: the session stays open on the machine; its questions and
 	// approval requests come to the web app, and follow-ups go back to it.
 	Interactive bool `json:"interactive"`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -100,10 +101,28 @@ func (s *Store) FinishCheckup(ctx context.Context, id int64, status string, item
 		WHERE id = $1 RETURNING `+checkupCols, id, status, items))
 	if err == nil {
 		seen := map[string]bool{}
+		findings := map[string][]string{}
+		var keys []string
 		for _, it := range c.Items {
-			if it.ProjectKey != nil && !seen[*it.ProjectKey] {
+			if it.ProjectKey == nil {
+				continue
+			}
+			if !seen[*it.ProjectKey] {
 				seen[*it.ProjectKey] = true
+				keys = append(keys, *it.ProjectKey)
 				s.markFocusDirtyKey(ctx, *it.ProjectKey, "check-up")
+			}
+			if (it.Severity == "fail" || it.Severity == "warn") && !it.Done {
+				line := it.Severity + ": " + it.Title
+				if it.Action != "" {
+					line += " → " + it.Action
+				}
+				findings[*it.ProjectKey] = append(findings[*it.ProjectKey], line)
+			}
+		}
+		for _, k := range keys {
+			if f := findings[k]; len(f) > 0 {
+				s.addBotEventKey(ctx, k, "checkup", fmt.Sprintf("The %s check-up found %d thing(s): %s", c.Date, len(f), strings.Join(f, "; ")))
 			}
 		}
 	}
