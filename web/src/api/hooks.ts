@@ -18,6 +18,7 @@ import type {
   Activity,
   AssistantSettings,
   AssistantStatus,
+  Bot,
   Chat,
   ChatSettings,
   ChatThread,
@@ -121,6 +122,7 @@ export const keys = {
   memories: (project: string, q: string) => ["memories", project, q] as const,
   telegram: ["telegram"] as const,
   chats: ["chats"] as const,
+  bots: ["bots"] as const,
   chat: (id: number) => ["chat", id] as const,
 };
 
@@ -1381,7 +1383,35 @@ export function useDeleteChat() {
       qc.setQueryData<Chat[]>(keys.chats, (old) => old?.filter((c) => c.id !== id));
       qc.removeQueries({ queryKey: keys.chat(id) });
       void qc.invalidateQueries({ queryKey: keys.chats });
+      void qc.invalidateQueries({ queryKey: keys.bots }); // a bot's chat: the bot is reset
     },
+  });
+}
+
+// ── Project bots ─────────────────────────────────────────────────────────
+//
+// A bot is a project's own long-lived chat; once it exists, the chat hooks
+// above work on it like on any chat.
+
+export function useBots() {
+  return useQuery({
+    queryKey: keys.bots,
+    queryFn: ({ signal }) => api.get<{ bots: Bot[] }>("/bots", undefined, signal).then((r) => r.bots),
+    refetchInterval: (query) => (query.state.data?.some((b) => b.chat?.busy) ? 5_000 : 60_000),
+  });
+}
+
+/** Talks to a project's bot: its first message creates the bot's chat. */
+export function useSendBotMessage(key: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ content, settings }: { content: string; settings?: Partial<ChatSettings> }) =>
+      api.post<ChatThread>(`/bots/${encodeURIComponent(key)}/messages`, { content, ...settings }),
+    onSuccess: (thread) => {
+      storeThread(qc, thread);
+      void qc.invalidateQueries({ queryKey: keys.bots });
+    },
+    onError: (err) => onAssistantError(qc, err),
   });
 }
 

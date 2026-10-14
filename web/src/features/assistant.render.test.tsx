@@ -34,6 +34,10 @@ const chat = (over: Partial<Chat> = {}): Chat => ({
   model: "",
   effort: "",
   edits: false,
+  project_id: null,
+  project_key: "",
+  summary: "",
+  summary_seq: 0,
   ...over,
 });
 

@@ -1093,7 +1093,13 @@ type Chat = {
   usage: ChatUsage;       // totals for the chat
   created_at: string;
   updated_at: string;
+  project_id: number | null; // a project bot's chat (one per project); null for the Assistant's own chats
+  project_key: string;       // "" unless a bot's chat
+  summary: string;           // "" or the folded older part of the conversation (markdown)
+  summary_seq: number;       // messages with seq <= this are folded into `summary` (0: nothing folded)
 } & ChatSettings;
+type BotLine = { role: "user" | "assistant"; content: string; created_at: string }; // content: first 300 chars
+type Bot = { project: Project; chat: Chat | null; last: BotLine | null };
 type ChatToolCall = { id: string; name: string; arguments: Record<string, unknown> };
 type ChatMessage = {
   seq: number;                              // increasing per chat, starts at 1
@@ -1118,7 +1124,9 @@ type ChatMessage = {
 | POST | /api/chats/{id}/messages | `{content, ...Partial<ChatSettings>}` | `{chat, messages, turns}` (the new user message); `409 busy` while the agent is still on this chat |
 | POST | /api/chats/{id}/stop | – | `{chat}` — cancels the running turn (claude: cancels its run) |
 | PATCH | /api/chats/{id} | `{title?, ...Partial<ChatSettings>}` | `{chat}` — changing `engine` resets `model` and `effort` |
-| DELETE | /api/chats/{id} | – | `204` |
+| DELETE | /api/chats/{id} | – | `204` — on a bot's chat this resets the bot (its next message starts a new chat; memories stay) |
+| GET | /api/bots | – | `{bots: Bot[]}` — every project that is not archived; bots that have talked first (newest first), then the rest in project order |
+| POST | /api/bots/{key}/messages | `{content, ...Partial<ChatSettings>}` | `201 {chat, messages, turns}` the first time (the bot's chat is created), `200` after; `409 busy`; `422` for an archived project |
 
 - `503 assistant_off` when the assistant is not enabled; `503 no_provider_key`
   (deepseek) without the provider key;
@@ -1138,6 +1146,21 @@ type ChatMessage = {
   A server restart does not end a Claude Code turn; it does end a DeepSeek one.
 - DeepSeek turns send `reasoning_content` back on every earlier assistant
   message (required by its thinking mode with tools).
+- **Project bots**: a bot is one long-lived chat per project (`project_id`
+  set). `GET /api/chats` leaves bots out; the chat endpoints (`/api/chats/{id}`
+  …) work on a bot's chat like any other. A bot's turns get the project's
+  brief (repos, servers, endpoints down, top open tasks, its memory) in the
+  system prompt; its tools default to the project (omit `project`), memories
+  it saves name it as origin (`"<KEY> bot"`), and `machine: "ios"` (any tool)
+  picks the machine with that role.
+- **Folding**: when the conversation the model would see passes about 240,000
+  characters (~60k tokens), the oldest whole turns are summarised (one provider
+  call on the turn's model, counted in the chat's usage; DeepSeek turns only)
+  into `summary`, keeping roughly the newest
+  60,000 characters word for word; the model then gets the summary plus the
+  messages after `summary_seq` (a Claude Code turn that starts a new session
+  gets the summary in its prompt). Messages are never deleted. Applies to
+  every chat; in practice only bots grow that long.
 - The web app polls `GET /api/chats/{id}?after=<last seq it holds>` every 1.5 s
   while `chat.busy` and stops when it is false — so every message of a turn
   must be stored before `busy` flips to false. Messages are not expected to

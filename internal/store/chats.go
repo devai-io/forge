@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,6 +28,14 @@ type Chat struct {
 	ChatSettings
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// A bot's chat belongs to a project (ProjectID set, one per project);
+	// the Assistant's chats do not.
+	ProjectID  *int64 `json:"project_id"`
+	ProjectKey string `json:"project_key"`
+	// Summary stands for the messages up to SummarySeq, which the model no
+	// longer sees one by one (a long conversation, folded).
+	Summary    string `json:"summary"`
+	SummarySeq int    `json:"summary_seq"`
 }
 
 // ChatSettings pick what answers a chat: the DeepSeek API loop on the
@@ -64,19 +74,22 @@ type ChatMessage struct {
 }
 
 const chatCols = `id, title, busy, last_error, input_tokens, output_tokens, cached_tokens, created_at, updated_at,
-	engine, model, effort, edits, skip_permissions`
+	engine, model, effort, edits, skip_permissions, project_id,
+	coalesce((SELECT p.key FROM projects p WHERE p.id = chats.project_id), ''), summary, summary_seq`
 
 func scanChat(row interface{ Scan(...any) error }) (*Chat, error) {
 	var c Chat
 	if err := row.Scan(&c.ID, &c.Title, &c.Busy, &c.LastError, &c.Usage.InputTokens, &c.Usage.OutputTokens,
-		&c.Usage.CachedTokens, &c.CreatedAt, &c.UpdatedAt, &c.Engine, &c.Model, &c.Effort, &c.Edits, &c.SkipPermissions); err != nil {
+		&c.Usage.CachedTokens, &c.CreatedAt, &c.UpdatedAt, &c.Engine, &c.Model, &c.Effort, &c.Edits, &c.SkipPermissions,
+		&c.ProjectID, &c.ProjectKey, &c.Summary, &c.SummarySeq); err != nil {
 		return nil, mapErr(err)
 	}
 	return &c, nil
 }
 
+// ListChats lists the Assistant's chats (not the bots'), newest first.
 func (s *Store) ListChats(ctx context.Context) ([]Chat, error) {
-	rows, err := s.DB.Query(ctx, `SELECT `+chatCols+` FROM chats ORDER BY updated_at DESC, id DESC LIMIT 200`)
+	rows, err := s.DB.Query(ctx, `SELECT `+chatCols+` FROM chats WHERE project_id IS NULL ORDER BY updated_at DESC, id DESC LIMIT 200`)
 	if err != nil {
 		return nil, err
 	}
@@ -100,6 +113,112 @@ func (s *Store) CreateChat(ctx context.Context, title string, set ChatSettings) 
 	return scanChat(s.DB.QueryRow(ctx, `INSERT INTO chats (title, engine, model, effort, edits, skip_permissions)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING `+chatCols, chatTitle(title), set.Engine, set.Model, set.Effort, set.Edits, set.SkipPermissions))
+}
+
+// BotChat is the project's bot chat, or ErrNotFound before its first message.
+func (s *Store) BotChat(ctx context.Context, projectID int64) (*Chat, error) {
+	return scanChat(s.DB.QueryRow(ctx, `SELECT `+chatCols+` FROM chats WHERE project_id = $1`, projectID))
+}
+
+// EnsureBotChat returns the project's bot chat, creating it (with set) the
+// first time. A bot's chat is named after its project.
+func (s *Store) EnsureBotChat(ctx context.Context, projectID int64, title string, set ChatSettings) (*Chat, error) {
+	c, err := s.BotChat(ctx, projectID)
+	if !errors.Is(err, ErrNotFound) {
+		return c, err
+	}
+	c, err = scanChat(s.DB.QueryRow(ctx, `INSERT INTO chats (title, engine, model, effort, edits, skip_permissions, project_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING `+chatCols, chatTitle(title), set.Engine, set.Model, set.Effort, set.Edits, set.SkipPermissions, projectID))
+	if errors.Is(err, ErrConflict) { // created meanwhile
+		return s.BotChat(ctx, projectID)
+	}
+	return c, err
+}
+
+// SetChatSummary folds the messages up to seq into summary.
+func (s *Store) SetChatSummary(ctx context.Context, id int64, summary string, seq int) error {
+	_, err := s.DB.Exec(ctx, `UPDATE chats SET summary = $2, summary_seq = $3 WHERE id = $1`, id, summary, seq)
+	return err
+}
+
+// Bot is a project with its bot: the chat (nil until the first message) and
+// the conversation's latest line.
+type Bot struct {
+	Project Project  `json:"project"`
+	Chat    *Chat    `json:"chat"`
+	Last    *BotLine `json:"last"`
+}
+
+type BotLine struct {
+	Role      string    `json:"role"`
+	Content   string    `json:"content"` // the start of it
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ListBots lists every project that is not archived, with its bot; the
+// most recently active bots first, then the projects in their usual order.
+func (s *Store) ListBots(ctx context.Context, today string) ([]Bot, error) {
+	projects, err := s.ListProjects(ctx, today, false)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.DB.Query(ctx, `SELECT `+chatCols+` FROM chats WHERE project_id IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	chats := map[int64]*Chat{}
+	for rows.Next() {
+		c, err := scanChat(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		chats[*c.ProjectID] = c
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	lines, err := s.DB.Query(ctx, `SELECT m.chat_id, m.role, substr(m.content, 1, 300), m.created_at
+		FROM chat_messages m JOIN chats c ON c.id = m.chat_id
+		WHERE c.project_id IS NOT NULL AND m.seq = (SELECT max(seq) FROM chat_messages x
+			WHERE x.chat_id = m.chat_id AND x.role IN ('user', 'assistant') AND x.content <> '')`)
+	if err != nil {
+		return nil, err
+	}
+	last := map[int64]*BotLine{}
+	for lines.Next() {
+		var id int64
+		var l BotLine
+		if err := lines.Scan(&id, &l.Role, &l.Content, &l.CreatedAt); err != nil {
+			lines.Close()
+			return nil, err
+		}
+		last[id] = &l
+	}
+	lines.Close()
+	if err := lines.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]Bot, 0, len(projects))
+	for _, p := range projects {
+		b := Bot{Project: p, Chat: chats[p.ID]}
+		if b.Chat != nil {
+			b.Last = last[b.Chat.ID]
+		}
+		out = append(out, b)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i].Chat, out[j].Chat
+		switch {
+		case a == nil || b == nil:
+			return a != nil && b == nil
+		default:
+			return a.UpdatedAt.After(b.UpdatedAt)
+		}
+	})
+	return out, nil
 }
 
 // SetChatSettings changes what answers the chat from its next turn on.

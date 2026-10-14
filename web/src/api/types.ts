@@ -967,7 +967,16 @@ export type Chat = {
   usage: ChatUsage; // totals for the chat
   created_at: string;
   updated_at: string;
+  project_id: number | null; // a project bot's chat (one per project); null for the Assistant's own chats
+  project_key: string; // "" unless a bot's chat
+  summary: string; // "" or the folded older part of the conversation (markdown)
+  summary_seq: number; // messages with seq <= this are folded into `summary`
 } & ChatSettings;
+
+/** A project bot's latest line: the first 300 characters. */
+export type BotLine = { role: "user" | "assistant"; content: string; created_at: string };
+/** A project with its bot; `chat` is null until the bot's first message. */
+export type Bot = { project: Project; chat: Chat | null; last: BotLine | null };
 
 export type ChatToolCall = { id: string; name: string; arguments: Record<string, unknown> };
 

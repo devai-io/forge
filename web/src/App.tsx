@@ -54,6 +54,7 @@ export function App() {
           <Route index element={<DashboardPage />} />
           <Route path="assistant" element={page(<AssistantPage />)} />
           <Route path="assistant/:chatId" element={page(<AssistantPage />)} />
+          <Route path="assistant/bot/:botKey" element={page(<AssistantPage />)} />
           <Route path="terminal" element={<TerminalPage />} />
           <Route path="terminal/:runnerId/:session" element={page(<TerminalView />)} />
           <Route path="editor" element={page(<EditorPage />)} />

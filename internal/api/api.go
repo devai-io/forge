@@ -174,6 +174,8 @@ func (s *Server) Handler() http.Handler {
 	h("POST /api/chats/{id}/stop", s.authed(s.stopChat))
 	h("PATCH /api/chats/{id}", s.authed(s.renameChat))
 	h("DELETE /api/chats/{id}", s.authed(s.deleteChat))
+	h("GET /api/bots", s.authed(s.listBots))
+	h("POST /api/bots/{key}/messages", s.authed(s.sendBotMessage))
 	h("DELETE /api/auth/sessions/{id}", s.authed(s.deleteSession))
 
 	h("POST /api/auth/elevate", s.authed(s.elevate))

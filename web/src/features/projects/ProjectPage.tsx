@@ -10,6 +10,7 @@ import {
   FolderGit2,
   GitBranch,
   Globe,
+  MessagesSquare,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -18,7 +19,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { botPath } from "@/lib/chats";
 import { ApiError } from "@/api/client";
 import { useDeleteRepo, useProject, useProjectActivity, useRuns, useTasks } from "@/api/hooks";
 import type { ProjectDetail, Repo, SyncStatus } from "@/api/types";
@@ -131,6 +133,7 @@ function ProjectHeader({ project: p }: { project: ProjectDetail }) {
   const user = useUser();
   const today = todayInTz(user.timezone);
   const [editing, setEditing] = useState(false);
+  const navigate = useNavigate();
   return (
     <div className="mb-4 flex flex-wrap items-start gap-4">
       <div className="flex min-w-0 grow basis-80 items-start gap-3">
@@ -156,6 +159,9 @@ function ProjectHeader({ project: p }: { project: ProjectDetail }) {
         <OpenInCodeButton size="sm" variant="subtle" responsiveLabel target={{ kind: "project", projectKey: p.key, repoIds: [] }} />
         <Button size="sm" variant="subtle" onClick={() => setEditing(true)} aria-label="Edit project" title="Edit project">
           <Pencil className="size-3.5" aria-hidden /> <span className="hidden sm:inline">Edit</span>
+        </Button>
+        <Button size="sm" variant="subtle" onClick={() => navigate(botPath(p.key))} aria-label={`${p.key} bot`} title={`Talk to the ${p.key} bot`}>
+          <MessagesSquare className="size-3.5" aria-hidden /> <span className="hidden sm:inline">Bot</span>
         </Button>
         <Button size="sm" variant="subtle" onClick={() => newRun({ project_key: p.key })} aria-label="Run agent" title="Run agent">
           <Bot className="size-3.5" aria-hidden /> <span className="hidden sm:inline">Run agent</span>

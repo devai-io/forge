@@ -3,12 +3,13 @@
 // once, and polls the chat (useChat) until the turn is done. Like a run's
 // transcript it follows the bottom unless the reader has scrolled up.
 
-import { ArrowLeft, ArrowUp, Pencil, Sparkles, Square, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowUp, Bot as BotIcon, ChevronDown, Pencil, Sparkles, Square, Trash2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError } from "@/api/client";
-import { useAssistant, useChat, useChatSettings, useCreateChat, useDeleteChat, useRenameChat, useSendMessage, useStopChat } from "@/api/hooks";
+import { useAssistant, useChat, useChatSettings, useCreateChat, useDeleteChat, useRenameChat, useSendBotMessage, useSendMessage, useStopChat } from "@/api/hooks";
 import type { Chat, ChatMessage, ChatSettings, ChatTurn } from "@/api/types";
+import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/Dialog";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
@@ -29,9 +30,15 @@ import { TurnSpend } from "./TurnSpend";
 // cover the last lines.
 const FRAME = "flex min-h-[calc(100dvh-10.25rem)] flex-col md:min-h-[calc(100dvh-6.75rem)]";
 
-/** A brand-new chat: the intro, examples, and a composer whose first send creates the chat. */
-export function NewChat() {
-  const create = useCreateChat();
+/**
+ * A brand-new chat: the intro, examples, and a composer whose first send
+ * creates the chat. With `bot`, the first message goes to that project's bot
+ * and creates its chat.
+ */
+export function NewChat({ bot }: { bot?: { key: string; name: string } } = {}) {
+  const createChat = useCreateChat();
+  const botSend = useSendBotMessage(bot?.key ?? "");
+  const create = bot ? botSend : createChat;
   const navigate = useNavigate();
   const toast = useToast();
   const [draft, setDraft] = useState("");
@@ -63,10 +70,22 @@ export function NewChat() {
 
   return (
     <div className={FRAME}>
-      <ChatHeader title={<h2 className="truncate text-[15px] font-semibold">New chat</h2>} />
+      <ChatHeader
+        title={
+          bot ? (
+            <h2 className="flex min-w-0 items-center gap-2 truncate text-[15px] font-semibold">
+              {bot.name} <BotBadge projectKey={bot.key} />
+            </h2>
+          ) : (
+            <h2 className="truncate text-[15px] font-semibold">New chat</h2>
+          )
+        }
+      />
       <div className="flex-1">
         {create.isPending ? (
           <Messages messages={[]} turns={[]} pendingText={create.variables?.content} working endRef={end} />
+        ) : bot ? (
+          <BotIntro name={bot.name} projectKey={bot.key} />
         ) : (
           <Intro
             onPick={(prompt) => {
@@ -119,6 +138,7 @@ function ChatView({ chat, messages, turns }: { chat: Chat; messages: ChatMessage
   return (
     <div className={FRAME}>
       <ChatHeader title={<ChatTitle chat={chat} />} chat={chat} />
+      {chat.summary ? <FoldedSummary chat={chat} /> : null}
       <div className="flex-1">
         <Messages
           messages={messages}
@@ -177,6 +197,7 @@ function ChatHeader({ title, chat }: { title: ReactNode; chat?: Chat }) {
         <ArrowLeft className="size-4" />
       </Link>
       <div className="min-w-0 flex-1">{title}</div>
+      {chat?.project_key ? <BotBadge projectKey={chat.project_key} /> : null}
       {chat ? (
         <>
           <span className="hidden shrink-0 text-[11.5px] text-fg-3 tabular sm:inline" title={`${chat.usage.cached_tokens.toLocaleString()} input tokens from cache`}>
@@ -249,16 +270,22 @@ function DeleteChat({ chat }: { chat: Chat }) {
   const toast = useToast();
   const navigate = useNavigate();
   const [confirming, setConfirming] = useState(false);
+  const bot = chat.project_key;
+  const label = bot ? `Reset the ${bot} bot` : "Delete chat";
   return (
     <>
-      <Button size="icon-sm" variant="ghost" aria-label="Delete chat" title="Delete chat" onClick={() => setConfirming(true)}>
+      <Button size="icon-sm" variant="ghost" aria-label={label} title={label} onClick={() => setConfirming(true)}>
         <Trash2 className="size-3.5" />
       </Button>
       <ConfirmDialog
         open={confirming}
         onClose={() => setConfirming(false)}
-        title="Delete this chat?"
-        body="The conversation is removed. Runs and tasks it created stay where they are."
+        title={bot ? `Reset the ${bot} bot?` : "Delete this chat?"}
+        body={
+          bot
+            ? "Its conversation is removed and the next message starts a new one. The project's memory, runs and tasks stay."
+            : "The conversation is removed. Runs and tasks it created stay where they are."
+        }
         loading={del.isPending}
         onConfirm={() =>
           del.mutate(chat.id, {
@@ -271,6 +298,48 @@ function DeleteChat({ chat }: { chat: Chat }) {
         }
       />
     </>
+  );
+}
+
+// ── Project bots ───────────────────────────────────────────────────────────
+
+export function BotBadge({ projectKey }: { projectKey: string }) {
+  return (
+    <Badge tone="outline" className="shrink-0" title="This project's bot: one long conversation that keeps going">
+      <BotIcon className="size-3" aria-hidden /> {projectKey} bot
+    </Badge>
+  );
+}
+
+function BotIntro({ name, projectKey }: { name: string; projectKey: string }) {
+  return (
+    <div className="mx-auto max-w-lg py-6 text-center">
+      <BotIcon className="mx-auto size-6 text-fg-3" aria-hidden />
+      <p className="mt-2 text-sm font-medium text-fg-2">{name}'s bot</p>
+      <p className="mt-1 text-[13px] text-fg-3">
+        One conversation that goes on for as long as {projectKey} does. It knows the project's repos, servers, tasks and memory, works through
+        Claude Code on your machines, and keeps the project's memory up to date. Older messages are folded into a summary as it grows.
+      </p>
+    </div>
+  );
+}
+
+/** The older part of a long chat, folded into a summary the model reads instead. */
+function FoldedSummary({ chat }: { chat: Chat }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-4 rounded-lg border border-line bg-surface-2/60 px-3 py-2 text-[12.5px]">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 text-left text-fg-2 hover:text-fg"
+      >
+        <ChevronDown className={`size-3.5 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
+        Earlier messages are folded into a summary — the model reads it instead of them.
+      </button>
+      {open ? <Markdown className="mt-2 text-[12.5px]">{chat.summary}</Markdown> : null}
+    </div>
   );
 }
 

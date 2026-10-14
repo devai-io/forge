@@ -45,9 +45,16 @@ func (a *Assistant) startSession(ctx context.Context, chat *store.Chat, turn *st
 	} else {
 		prev = nil
 	}
-	if missed := transcript(msgs, seen, turn.Seq); missed != "" {
+	from := seen
+	if seen <= chat.SummarySeq && chat.Summary != "" {
+		from = chat.SummarySeq // what came before is in the summary
+	}
+	if missed := transcript(msgs, from, turn.Seq); missed != "" {
 		prompt = "Earlier in this chat (you did not see these turns; another engine answered them):\n\n" + missed +
 			"\n\n---\n\n" + prompt
+	}
+	if from > seen {
+		prompt = "The conversation before that, summarised:\n" + chat.Summary + "\n\n---\n\n" + prompt
 	}
 
 	mode := "plan"
@@ -61,8 +68,16 @@ func (a *Assistant) startSession(ctx context.Context, chat *store.Chat, turn *st
 	if !store.OneOf(effort, store.ClaudeEfforts) {
 		effort = ""
 	}
+	system := sessionPrompt(user, rn.Name, mode, a.store.PublicURL)
+	if chat.ProjectKey != "" {
+		brief, err := a.botBrief(ctx, user, chat.ProjectKey)
+		if err != nil {
+			return err
+		}
+		system += botRules(chat.ProjectKey) + " Forge's MCP tools take the project key " + chat.ProjectKey + "." + brief
+	}
 	in := store.RunInput{RunnerID: rn.ID, Kind: "agent", Prompt: prompt, PermissionMode: mode, Model: chat.Model,
-		Effort: effort, Engine: "claude", ChatTurnID: &turn.ID, AppendSystem: sessionPrompt(user, rn.Name, mode, a.store.PublicURL)}
+		Effort: effort, Engine: "claude", ChatTurnID: &turn.ID, AppendSystem: system}
 	if prev != nil {
 		in.ResumeRunID = &prev.ID
 	}

@@ -77,7 +77,7 @@ func toolDefs() []llm.Tool {
 				"project":         prop("string", "Project key"),
 				"repo":            prop("string", "Repo name within the project"),
 				"prompt":          prop("string", "Complete, self-contained instructions for Claude Code"),
-				"machine":         prop("string", "Machine name (optional; default the master)"),
+				"machine":         prop("string", "Machine name or role (optional; default the master; \"ios\" for work that needs macOS/Xcode)"),
 				"permission_mode": prop("string", "plan (read-only, default) | acceptEdits (may change files)"),
 				"engine":          prop("string", "claude | deepseek (optional; default Forge's setting). Set it ONLY when the user explicitly asked for that engine for this work"),
 				"model":           prop("string", "Model name (optional; default chosen by Forge — leave empty unless the user named one)"),
@@ -89,7 +89,7 @@ func toolDefs() []llm.Tool {
 				"project": prop("string", "Project key"),
 				"repo":    prop("string", "Repo name"),
 				"command": prop("string", "Command name"),
-				"machine": prop("string", "Machine name (optional; default the master)"),
+				"machine": prop("string", "Machine name or role (optional; default the master)"),
 			})},
 		{Name: "get_run", Description: "A run's status and, when finished, its result (Claude's final answer or the command's output tail).",
 			Parameters: params([]string{"run_id"}, object{"run_id": prop("integer", "Run id")})},
@@ -102,7 +102,7 @@ func toolDefs() []llm.Tool {
 		{Name: "remember", Description: "Save one durable fact to Forge memory. Claude Code sessions in that project start with it. Returns similar memories: update or forget one of those instead of adding a near-copy.",
 			Parameters: params([]string{"content"}, object{
 				"content": prop("string", "The fact, self-contained and specific; no secrets"),
-				"project": prop("string", "Project key; omit for something about the user that holds everywhere (a preference)"),
+				"project": prop("string", "Project key; omit (or \"global\") for something about the user that holds everywhere (a preference)"),
 				"repo":    prop("string", "Repo name, when it only applies to one repo (optional)"),
 				"kind":    prop("string", "fact | decision | convention | gotcha | preference | howto (default fact)"),
 				"pinned":  prop("boolean", "Always listed first (only for essentials)"),
@@ -174,6 +174,9 @@ func (a *Assistant) call(ctx context.Context, user *store.User, name string, raw
 				in.RunIDs = append(in.RunIDs, int64(f))
 			}
 		}
+	}
+	if in.Project == "" {
+		in.Project = botOf(ctx) // a bot's tools point at its project
 	}
 	today := store.TodayFor(user.Timezone)
 
@@ -543,8 +546,17 @@ func (a *Assistant) repo(ctx context.Context, today, project, name string) (*sto
 	return nil, fmt.Errorf("%s has no repo %q (it has: %s)", p.Key, name, strings.Join(names, ", "))
 }
 
-// machine picks the named machine, or the master, or (for a command only
-// another machine has) that machine.
+// origin names who saved a memory: the Assistant or a project's bot.
+func origin(ctx context.Context) string {
+	if k := botOf(ctx); k != "" {
+		return k + " bot"
+	}
+	return "Assistant"
+}
+
+// machine picks the named machine (or the one with that role: "master",
+// "ios"), or the master, or (for a command only another machine has) that
+// machine.
 func (a *Assistant) machine(ctx context.Context, name, command string) (*store.Runner, error) {
 	runners, err := a.store.ListRunners(ctx)
 	if err != nil {
@@ -558,6 +570,15 @@ func (a *Assistant) machine(ctx context.Context, name, command string) (*store.R
 			if strings.EqualFold(runners[i].Name, name) {
 				return &runners[i], nil
 			}
+		}
+		var byRole *store.Runner
+		for i := range runners {
+			if strings.EqualFold(runners[i].Role, name) && (byRole == nil || runners[i].Online && !byRole.Online) {
+				byRole = &runners[i]
+			}
+		}
+		if byRole != nil {
+			return byRole, nil
 		}
 		return nil, fmt.Errorf("no machine %q", name)
 	}
@@ -696,9 +717,12 @@ func (a *Assistant) memoryTool(ctx context.Context, name, project string, loose 
 		return object{"memories": lines(ms)}, fmt.Sprintf("Recalled %d memories", len(ms)), nil
 
 	case "remember":
+		if project == "GLOBAL" {
+			project = ""
+		}
 		pinned, _ := loose["pinned"].(bool)
 		saved, err := a.store.CreateMemory(ctx, store.MemoryInput{ProjectKey: project, Repo: str("repo"),
-			Kind: strings.ToLower(str("kind")), Content: str("content"), Pinned: pinned, Source: "assistant", Origin: "Assistant"})
+			Kind: strings.ToLower(str("kind")), Content: str("content"), Pinned: pinned, Source: "assistant", Origin: origin(ctx)})
 		if err != nil {
 			return nil, "", err
 		}

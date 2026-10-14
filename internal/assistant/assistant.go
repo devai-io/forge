@@ -258,13 +258,24 @@ func (a *Assistant) turn(ctx context.Context, chat *store.Chat, turn *store.Chat
 	defer func() { _ = a.store.SetChatTurnUsage(context.Background(), turn.ID, meter.Entries()) }()
 	api := apiName(set.BaseURL)
 	tools := toolDefs()
-	known := a.userMemories(ctx)
-	for step := 0; step < maxSteps; step++ {
-		history, err := a.store.ChatMessages(ctx, chat.ID, 0)
+	system := systemPrompt(user, a.store.PublicURL)
+	if chat.ProjectKey != "" {
+		ctx = withBot(ctx, chat.ProjectKey)
+		brief, err := a.botBrief(ctx, user, chat.ProjectKey)
 		if err != nil {
 			return err
 		}
-		msg, u, err := client.Chat(ctx, model, turn.Effort, a.conversation(user, known, history), tools)
+		system += botRules(chat.ProjectKey) + brief
+	}
+	system += a.userMemories(ctx)
+	a.fold(ctx, client, model, api, chat, meter)
+	system += summaryNote(chat)
+	for step := 0; step < maxSteps; step++ {
+		history, err := a.store.ChatMessages(ctx, chat.ID, chat.SummarySeq)
+		if err != nil {
+			return err
+		}
+		msg, u, err := client.Chat(ctx, model, turn.Effort, conversation(system, history), tools)
 		if err != nil {
 			return err
 		}
@@ -331,11 +342,11 @@ func apiName(baseURL string) string {
 }
 
 // conversation is what the model sees: the system prompt and the stored
-// chat, with older tool results cut short (the recent ones matter; the old
+// chat (after its folded part), with older tool results cut short (the recent ones matter; the old
 // ones mostly cost tokens). DeepSeek's reasoning goes back with each of its
 // messages, as its thinking mode requires.
-func (a *Assistant) conversation(user *store.User, known string, history []store.ChatMessage) []llm.Message {
-	out := []llm.Message{{Role: "system", Content: systemPrompt(user, a.store.PublicURL) + known}}
+func conversation(system string, history []store.ChatMessage) []llm.Message {
+	out := []llm.Message{{Role: "system", Content: system}}
 	recentFrom := len(history) - 8
 	for i, m := range history {
 		switch m.Role {

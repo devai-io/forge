@@ -426,3 +426,71 @@ func (s *Server) Ask(ctx context.Context, login, content string, set store.ChatS
 		}
 	}
 }
+
+// ── Bots ──────────────────────────────────────────────────────────────────
+//
+// A bot is a project's own long-lived chat. The conversation itself goes
+// through the chat endpoints; these list the bots and start (or continue)
+// one by project key.
+
+func (s *Server) listBots(w http.ResponseWriter, r *http.Request, u *store.User) {
+	bots, err := s.store.ListBots(r.Context(), store.TodayFor(u.Timezone))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"bots": bots})
+}
+
+func (s *Server) sendBotMessage(w http.ResponseWriter, r *http.Request, u *store.User) {
+	p, err := s.store.ProjectByKey(r.Context(), store.TodayFor(u.Timezone), r.PathValue("key"))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if p.Status == "archived" {
+		writeErr(w, r, &store.ValidationError{Field: "project", Message: "the project is archived"})
+		return
+	}
+	in, ok := decodeContent(w, r)
+	if !ok {
+		return
+	}
+	status := http.StatusOK
+	chat, err := s.store.BotChat(r.Context(), p.ID)
+	cur := s.assistant.DefaultSettings(r.Context())
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		status = http.StatusCreated
+	case err != nil:
+		writeErr(w, r, err)
+		return
+	case chat.Busy:
+		s.assistantErr(w, r, store.ErrConflict)
+		return
+	default:
+		cur = chat.ChatSettings
+	}
+	set, err := chatSettings(cur, in.Engine, in.Model, in.Effort, in.Edits, in.SkipPermissions)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if err := s.assistant.Ready(r.Context(), set.Engine); err != nil {
+		s.assistantErr(w, r, err)
+		return
+	}
+	if chat == nil {
+		if chat, err = s.store.EnsureBotChat(r.Context(), p.ID, p.Name+" bot", set); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
+	if set != chat.ChatSettings {
+		if _, err := s.store.SetChatSettings(r.Context(), chat.ID, set); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
+	s.startTurn(w, r, u, chat.ID, in.Content, status)
+}

@@ -12,10 +12,11 @@ import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { ASSISTANT_SETTINGS_PATH, isAssistantOff } from "@/lib/assistant";
+import { BotEntry, BotList } from "./Bots";
 import { Conversation, NewChat } from "./Conversation";
 
 export function AssistantPage() {
-  const { chatId } = useParams();
+  const { chatId, botKey } = useParams();
   const status = useAssistant();
   const chats = useChats();
 
@@ -28,7 +29,7 @@ export function AssistantPage() {
   if (off) return <AssistantOff keyConfigured={!!status.data?.key_configured} />;
 
   const id = chatId && chatId !== "new" ? Number(chatId) : null;
-  const listOnly = chatId === undefined; // phones: /assistant is the list
+  const listOnly = chatId === undefined && botKey === undefined; // phones: /assistant is the list
 
   return (
     <div className="mx-auto flex max-w-6xl gap-6">
@@ -42,7 +43,9 @@ export function AssistantPage() {
         <ChatList />
       </aside>
       <div className={clsx("min-w-0 flex-1", listOnly && "hidden md:block")}>
-        {id === null ? (
+        {botKey ? (
+          <BotEntry projectKey={botKey} />
+        ) : id === null ? (
           <NewChat />
         ) : Number.isInteger(id) && id > 0 ? (
           <Conversation key={id} id={id} />
@@ -104,6 +107,7 @@ function ChatList() {
           ))}
         </ul>
       )}
+      <BotList />
     </>
   );
 }

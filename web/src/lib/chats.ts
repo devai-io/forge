@@ -22,7 +22,15 @@ export function mergeMessages(prev: ChatMessage[], incoming: ChatMessage[]): Cha
   return Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
 }
 
-/** Replace a chat in the list, or put a new one first (the list is newest first). */
+/**
+ * Replace a chat in the list, or put a new one first (the list is newest
+ * first). The list is the Assistant's own chats: a project bot's chat never
+ * joins it.
+ */
 export function upsertChat(list: Chat[], chat: Chat): Chat[] {
+  if (chat.project_id != null) return list;
   return list.some((c) => c.id === chat.id) ? list.map((c) => (c.id === chat.id ? chat : c)) : [chat, ...list];
 }
+
+/** Where a project's bot opens: its chat if it has one, else a first message. */
+export const botPath = (key: string) => `/assistant/bot/${encodeURIComponent(key)}`;
