@@ -211,12 +211,12 @@ type CheckResult struct {
 // (→ down, down → up) land in the activity feed; a warning that clears is
 // not news.
 func (s *Store) RecordCheck(ctx context.Context, e Endpoint, r CheckResult) (status string, streak int, err error) {
+	var prev string
 	err = s.tx(ctx, func(tx pgxTx) error {
 		if _, err := tx.Exec(ctx, `INSERT INTO endpoint_checks (endpoint_id, ok, code, latency_ms, error)
 			VALUES ($1, $2, $3, $4, $5)`, e.ID, r.OK, r.Code, r.LatencyMS, truncate(r.Error, 500)); err != nil {
 			return err
 		}
-		var prev string
 		var prevStreak int
 		if err := tx.QueryRow(ctx, `SELECT last_status, fail_streak FROM endpoints WHERE id = $1`, e.ID).
 			Scan(&prev, &prevStreak); err != nil {
@@ -249,6 +249,9 @@ func (s *Store) RecordCheck(ctx context.Context, e Endpoint, r CheckResult) (sta
 		}
 		return logActivity(ctx, tx, ActivityInput{ProjectID: &e.ProjectID, Kind: "endpoint." + status, Summary: summary})
 	})
+	if err == nil && status != prev && (status == "down" || prev == "down") {
+		s.MarkFocusDirty(ctx, e.ProjectID, "endpoint "+e.Name+" is "+status) // a confirmed change moves the blockers
+	}
 	return status, streak, err
 }
 
