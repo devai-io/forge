@@ -47,7 +47,7 @@ export function NewChat({ bot }: { bot?: { key: string; name: string } } = {}) {
   const [picked, setSettings] = useState<ChatSettings | null>(null);
   // The configured engine (Claude by default; always Claude for a bot), unless it cannot answer and the other can.
   const configured = bot ? "claude" : (status.data?.settings.engine ?? "claude");
-  const other = configured === "claude" ? "deepseek" : "claude";
+  const other = configured === "claude" ? "openrouter" : "claude";
   const settings: ChatSettings = picked ?? {
     engine: status.data && !status.data.engines?.[configured].available && status.data.engines?.[other].available ? other : configured,
     model: "",

@@ -9,7 +9,7 @@ afterEach(() => vi.unstubAllGlobals());
 const status = (over: Partial<EngineStatus> = {}): EngineStatus => ({
   settings: { default: "claude", model: "deepseek/deepseek-v4-flash", heavy_model: "deepseek/deepseek-v4-pro", max_concurrent: 4 },
   provider_key: false,
-  models: { deepseek: ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"], claude: ["claude-opus-5-5"] },
+  models: { openrouter: ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"], claude: ["claude-opus-5-5"] },
   efforts: ["low", "medium", "high", "xhigh", "max"],
   ...over,
 });
@@ -32,7 +32,7 @@ describe("Settings → Agent engine", () => {
         "GET /engine": () => jsonResponse(200, current),
         "PATCH /engine": (init) => {
           sent.push(JSON.parse(String(init.body)));
-          current = status({ provider_key: true, settings: { ...current.settings, default: "deepseek" } });
+          current = status({ provider_key: true, settings: { ...current.settings, default: "openrouter" } });
           return jsonResponse(200, current);
         },
       }),
@@ -41,7 +41,7 @@ describe("Settings → Agent engine", () => {
     const user = userEvent.setup();
     expect(await screen.findByText("OpenRouter key in the vault")).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: "DeepSeek (OpenRouter)" }));
-    await waitFor(() => expect(sent).toEqual([{ default: "deepseek" }]));
+    await waitFor(() => expect(sent).toEqual([{ default: "openrouter" }]));
     await waitFor(() => expect(screen.getByRole("radio", { name: "DeepSeek (OpenRouter)" })).toHaveAttribute("aria-checked", "true"));
   });
 

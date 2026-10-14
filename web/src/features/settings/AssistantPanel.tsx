@@ -74,7 +74,7 @@ function AssistantForm({ status }: { status: AssistantStatus }) {
           onChange={(v: ChatEngine) => save({ engine: v })}
           items={[
             { value: "claude", label: "Claude" },
-            { value: "deepseek", label: "DeepSeek (OpenRouter)" },
+            { value: "openrouter", label: "DeepSeek (OpenRouter)" },
           ]}
         />
       </div>

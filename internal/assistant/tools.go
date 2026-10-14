@@ -79,7 +79,7 @@ func toolDefs() []llm.Tool {
 				"prompt":          prop("string", "Complete, self-contained instructions for Claude Code"),
 				"machine":         prop("string", "Machine name or role (optional; default the master; \"ios\" for work that needs macOS/Xcode)"),
 				"permission_mode": prop("string", "plan (read-only, default) | acceptEdits (may change files)"),
-				"engine":          prop("string", "claude | deepseek (optional; default Forge's setting). Set it ONLY when the user explicitly asked for that engine for this work"),
+				"engine":          prop("string", "claude | openrouter (optional; default Forge's setting). Set it ONLY when the user explicitly asked for that engine for this work"),
 				"model":           prop("string", "Model name (optional; default chosen by Forge — leave empty unless the user named one)"),
 				"worktree":        prop("boolean", "Work in an isolated git worktree/branch (recommended for changes)"),
 				"task_ref":        prop("string", "Link the run to this task (optional)"),
@@ -162,7 +162,7 @@ func (a *Assistant) call(ctx context.Context, user *store.User, name string, raw
 	}
 	in.Project, in.Repo, in.Prompt, in.Machine = strings.ToUpper(str("project")), str("repo"), str("prompt"), str("machine")
 	in.PermissionMode, in.Model, in.TaskRef, in.Ref = str("permission_mode"), str("model"), strings.ToUpper(str("task_ref")), strings.ToUpper(str("ref"))
-	in.Engine = strings.ToLower(str("engine"))
+	in.Engine = store.NormEngine(str("engine"))
 	in.Query, in.Status, in.Title, in.Description = str("query"), str("status"), str("title"), str("description")
 	in.Priority, in.Type, in.Body, in.Command = str("priority"), str("type"), str("body"), str("command")
 	in.Worktree, _ = loose["worktree"].(bool)
@@ -423,9 +423,9 @@ func (a *Assistant) call(ctx context.Context, user *store.User, name string, raw
 			return nil, "", err
 		}
 		switch in.Engine {
-		case "", "deepseek", "claude":
+		case "", store.EngineOpenRouter, store.EngineClaude:
 		default:
-			return nil, "", fmt.Errorf("engine must be deepseek or claude, not %q", in.Engine)
+			return nil, "", fmt.Errorf("engine must be openrouter or claude, not %q", in.Engine)
 		}
 		ri := store.RunInput{RunnerID: rn.ID, RepoID: repo.ID, Kind: "agent", Prompt: in.Prompt,
 			PermissionMode: mode, Model: in.Model, Worktree: in.Worktree, Engine: in.Engine, ChatTurnID: turnOf(ctx)}

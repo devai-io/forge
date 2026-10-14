@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -281,7 +282,28 @@ type RunnerCapabilities struct {
 	// approvals (the machine's "approvals" setting); otherwise only questions.
 	Interactive bool `json:"interactive"`
 	Approvals   bool `json:"approvals"`
+	// Engines the agent can run ("claude", "openrouter"); empty from an
+	// agent older than v0.1.30, which knows the OpenRouter engine only as
+	// "deepseek".
+	Engines []string `json:"engines"`
 }
+
+// CLISession is one coding-agent CLI on a machine (runner/sessions.go).
+type CLISession struct {
+	// CLI: "claude" (Claude Code), "codex" (OpenAI Codex CLI), "cursor"
+	// (Cursor's cursor-agent).
+	CLI string `json:"cli"`
+	// State: "logged_in", "logged_out", "unknown" or "missing".
+	State     string     `json:"state"`
+	Version   string     `json:"version"`
+	Detail    string     `json:"detail"`
+	CheckedAt *time.Time `json:"checked_at"`
+}
+
+var (
+	SessionCLIs   = []string{"claude", "codex", "cursor"}
+	SessionStates = []string{"logged_in", "logged_out", "unknown", "missing"}
+)
 
 type CommandDetail struct {
 	Name        string   `json:"name"`
@@ -314,8 +336,12 @@ type Runner struct {
 	Online       bool               `json:"online"`
 	LastSeenAt   *time.Time         `json:"last_seen_at"`
 	Capabilities RunnerCapabilities `json:"capabilities"`
-	Running      int                `json:"running"`
-	CreatedAt    time.Time          `json:"created_at"`
+	// Sessions are the coding-agent CLIs on the machine and whether each is
+	// logged in, as of its last check (every 5 minutes, carried on the
+	// heartbeat). Empty until an agent new enough to check reports.
+	Sessions  []CLISession `json:"sessions"`
+	Running   int          `json:"running"`
+	CreatedAt time.Time    `json:"created_at"`
 	// PairExpiresAt is set while a pairing code is outstanding.
 	PairExpiresAt *time.Time `json:"pair_expires_at"`
 }
@@ -437,7 +463,7 @@ var (
 	RunStatuses     = []string{"queued", "running", "succeeded", "failed", "cancelled"}
 	PermissionModes = []string{"plan", "acceptEdits", "auto", "dontAsk", "bypassPermissions"}
 	RunnerRoles     = []string{"master", "ios", "worker"}
-	Engines         = []string{"deepseek", "claude"}
+	Engines         = []string{EngineOpenRouter, EngineClaude}
 	ClaudeEfforts   = []string{"low", "medium", "high", "xhigh", "max"}
 	// ClaudeModels are the models the web app offers for a Claude run (any
 	// other id Claude Code accepts can still be sent).
@@ -446,6 +472,24 @@ var (
 	// ids), next to the engine settings' own model and heavy model.
 	DeepSeekModels = []string{"deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"}
 )
+
+// The agent-run and Assistant engines. EngineOpenRouter is Claude Code
+// against OpenRouter's Anthropic-compatible endpoint (DeepSeek's models by
+// default); it was called "deepseek" before v0.1.30.
+const (
+	EngineClaude     = "claude"
+	EngineOpenRouter = "openrouter"
+)
+
+// NormEngine is an engine name as given (an API call, the CLI, an Assistant
+// tool): trimmed, lower case, and the old "deepseek" read as "openrouter".
+func NormEngine(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "deepseek" {
+		return EngineOpenRouter
+	}
+	return name
+}
 
 func OneOf(v string, allowed []string) bool {
 	for _, a := range allowed {

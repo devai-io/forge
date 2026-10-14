@@ -237,10 +237,10 @@ confirmation are left to you). **Settings → Assistant**, or on the server:
 
 ```bash
 forge assistant on
-forge assistant engine claude                  # what a new chat starts on (claude | deepseek)
+forge assistant engine claude                  # what a new chat starts on (claude | openrouter)
 forge assistant model deepseek/deepseek-v4-flash   # the DeepSeek engine's model
 forge assistant ask "What needs my attention today?"   # one turn from the shell, with what it spent
-forge assistant ask -engine deepseek "…"       # the same on DeepSeek
+forge assistant ask -engine openrouter "…"       # the same on DeepSeek
 ```
 
 Each chat picks its engine above the message box: **Claude Code** (the
@@ -281,7 +281,7 @@ run falls back to Claude (the run says so). **Settings → Agent engine**, or on
 the server:
 
 ```bash
-forge engine deepseek            # make DeepSeek the default (forge engine claude to undo)
+forge engine openrouter          # make DeepSeek via OpenRouter the default (forge engine claude to undo; `deepseek` still works)
 forge engine model deepseek/deepseek-v4-flash deepseek/deepseek-v4-pro
 forge engine status
 ```

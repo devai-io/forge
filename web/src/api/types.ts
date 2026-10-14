@@ -298,6 +298,7 @@ export type RunnerCapabilities = {
   code: boolean; // runner can serve VS Code (web)
   interactive?: boolean; // can keep a session open for questions and follow-ups (older agents: absent)
   approvals?: boolean; // also relays tool permissions and plan approvals ("approvals" in agent.json)
+  engines?: string[]; // engines the agent can run ("claude", "openrouter"); missing before v0.1.30
 };
 export type Runner = {
   id: number;
@@ -308,10 +309,23 @@ export type Runner = {
   online: boolean;
   last_seen_at: string | null;
   capabilities: RunnerCapabilities;
+  /** The coding-agent CLIs on the machine, as of its last check (every 5 min); [] until an agent ≥ v0.1.30 reports. */
+  sessions?: CLISession[];
   running: number;
   created_at: string;
   role: RunnerRole;
   pair_expires_at: string | null; // non-null = a pairing code is outstanding and unused
+};
+
+export type SessionCLI = "claude" | "codex" | "cursor";
+export type SessionState = "logged_in" | "logged_out" | "unknown" | "missing";
+/** One coding-agent CLI on a machine: installed, logged in, version. Never a credential. */
+export type CLISession = {
+  cli: SessionCLI;
+  state: SessionState;
+  version: string;
+  detail: string; // e.g. "claude.ai, max", or why the check could not tell
+  checked_at: string | null;
 };
 
 /** A one-time code a machine swaps for its token (`forge agent pair <origin> <code>`). */
@@ -320,7 +334,7 @@ export type Pairing = { code: string; expires_at: string };
 export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type RunKind = "agent" | "command";
 /** Where an agent run's Claude Code sends its requests. */
-export type Engine = "deepseek" | "claude";
+export type Engine = "openrouter" | "claude"; // "openrouter" was "deepseek" before v0.1.30
 export type Run = {
   id: number;
   runner_id: number;
@@ -909,7 +923,7 @@ export type AssistantStatus = {
   key_configured: boolean; // the provider key (DeepSeek engine); never returned
   models: string[]; // what the provider lists for this key ([] if unknown/unreachable)
   engines: {
-    deepseek: { available: boolean; models: string[]; efforts: string[] };
+    openrouter: { available: boolean; models: string[]; efforts: string[] }; // was "deepseek" before v0.1.30
     // Claude Code sessions on the master machine (its own login, no API key).
     // skip_permissions: the machine allows bypassPermissions (--dangerously-skip-permissions).
     claude: {
@@ -925,7 +939,7 @@ export type AssistantStatus = {
 };
 
 /** What answers a chat: the DeepSeek API loop on the server, or a Claude Code session on the master machine. */
-export type ChatEngine = "deepseek" | "claude";
+export type ChatEngine = "openrouter" | "claude";
 export type ChatSettings = {
   engine: ChatEngine;
   model: string; // "" = the default (the Assistant's model / Claude Code's)

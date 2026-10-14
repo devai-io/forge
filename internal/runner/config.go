@@ -31,6 +31,11 @@ type Config struct {
 
 	// ClaudePath is the claude binary; "claude" resolves through PATH.
 	ClaudePath string `json:"claude_path"`
+	// CodexPath and CursorPath are the OpenAI Codex CLI and Cursor's
+	// cursor-agent ("codex" and "cursor-agent" through PATH). Forge only
+	// checks whether they are installed and logged in (sessions.go).
+	CodexPath  string `json:"codex_path"`
+	CursorPath string `json:"cursor_path"`
 	// PermissionModes this runner accepts. bypassPermissions is never implied:
 	// it has to be listed here by hand on the machine itself.
 	PermissionModes []string `json:"permission_modes"`
@@ -168,6 +173,12 @@ func (c *Config) normalize() error {
 	}
 	if c.ClaudePath == "" {
 		c.ClaudePath = "claude"
+	}
+	if c.CodexPath == "" {
+		c.CodexPath = "codex"
+	}
+	if c.CursorPath == "" {
+		c.CursorPath = "cursor-agent"
 	}
 	if c.TmuxPath == "" {
 		c.TmuxPath = "tmux"

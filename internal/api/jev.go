@@ -127,7 +127,7 @@ func (s *Server) jevRoute(ctx context.Context, in *store.RunInput, eng store.Eng
 	}
 	a := ans["effort"]
 	model := map[string]string{"light": "haiku", "medium": "sonnet"}[a.Choice]
-	if in.Engine == "deepseek" {
+	if in.Engine == store.EngineOpenRouter {
 		model = map[string]string{"heavy": eng.HeavyModel}[a.Choice]
 	}
 	if model == "" || a.Confidence < 0.7 {

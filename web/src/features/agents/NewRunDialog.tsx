@@ -286,7 +286,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                       <>
                         <option value="">Default ({ENGINE_LABEL[defaultEngine]})</option>
                         <option value="claude">Claude</option>
-                        <option value="deepseek">DeepSeek (OpenRouter)</option>
+                        <option value="openrouter">DeepSeek (OpenRouter)</option>
                       </>
                     )}
                   </Select>

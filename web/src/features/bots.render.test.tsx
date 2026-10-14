@@ -12,11 +12,11 @@ afterEach(() => vi.unstubAllGlobals());
 const AT = "2026-09-28T10:00:00Z";
 
 const status: AssistantStatus = {
-  settings: { enabled: true, engine: "deepseek", base_url: "https://llm.example.com", model: "demo-model" },
+  settings: { enabled: true, engine: "openrouter", base_url: "https://llm.example.com", model: "demo-model" },
   key_configured: true,
   models: [],
   engines: {
-    deepseek: { available: true, models: ["demo-model"], efforts: ["off", "low", "high", "max"] },
+    openrouter: { available: true, models: ["demo-model"], efforts: ["off", "low", "high", "max"] },
     claude: { available: false, machine: "", online: false, reason: "no master machine", models: [], efforts: [] },
   },
 } as AssistantStatus;
@@ -29,7 +29,7 @@ const chat = (over: Partial<Chat> = {}): Chat => ({
   usage: { input_tokens: 0, output_tokens: 0, cached_tokens: 0 },
   created_at: AT,
   updated_at: AT,
-  engine: "deepseek",
+  engine: "openrouter",
   model: "",
   effort: "",
   edits: false,

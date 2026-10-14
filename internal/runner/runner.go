@@ -38,6 +38,9 @@ type Runner struct {
 	// jevRetryAt holds off another attempt after a failed one (no claude,
 	// no network) so a broken setup is not retried every heartbeat.
 	jevRetryAt time.Time
+
+	// sessions is the last probe of the coding-agent CLIs (sessions.go).
+	sessions sessionCache
 }
 
 func New(cfg *Config) *Runner {
@@ -72,7 +75,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 	// The control socket carries terminals and VS Code workspace requests.
 	if r.terminalEnabled() || r.codeEnabled() {
 		wg.Add(1)
@@ -88,6 +91,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	go func() { defer wg.Done(); r.heartbeatLoop(ctx) }()
 	go func() { defer wg.Done(); r.claimLoop(ctx) }()
 	go func() { defer wg.Done(); r.scanLoop(ctx) }()
+	go func() { defer wg.Done(); r.sessionsLoop(ctx) }()
 	wg.Wait()
 
 	// Let in-flight runs report before exiting (their contexts are already
@@ -116,8 +120,13 @@ func (r *Runner) capabilities() map[string]any {
 		"code_gateway":     r.codeGateway(),
 		"interactive":      true,
 		"approvals":        r.cfg.Approvals,
+		// engines this agent can run: "openrouter" is the engine once called
+		// "deepseek" (an older agent knows only that name).
+		"engines": runEngines,
 	}
 }
+
+var runEngines = []string{"claude", "openrouter"}
 
 func (r *Runner) codeGateway() string {
 	if !r.codeEnabled() {
@@ -163,6 +172,9 @@ func (r *Runner) heartbeat(ctx context.Context) error {
 	}
 	if r.terminalEnabled() {
 		body["tmux"] = r.listTmux(ctx)
+	}
+	if s := r.sessions.get(); s != nil { // none until the first probe is done
+		body["sessions"] = s
 	}
 	if _, err := r.client.post(ctx, "/api/runner/heartbeat", body, &resp); err != nil {
 		return err

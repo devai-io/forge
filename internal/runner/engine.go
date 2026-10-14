@@ -27,7 +27,7 @@ type engineSetup struct {
 // compaction waits accordingly. Tool search stays off: it defers tools
 // behind a server-side feature only Anthropic's endpoints implement.
 func (e *engineSetup) env(runModel string) ([]string, error) {
-	if e == nil || e.Name != "deepseek" {
+	if e == nil || !isOpenRouter(e.Name) {
 		return nil, errors.New("the server sent no DeepSeek setup for this run (update Forge?)")
 	}
 	if e.APIKey == "" {
@@ -107,3 +107,7 @@ func (c *claudeResult) deepseekCost(at time.Time) *float64 {
 	}
 	return &total
 }
+
+// isOpenRouter: the OpenRouter engine, under its name since v0.1.30 or the
+// "deepseek" it had before (a server that has not been updated sends that).
+func isOpenRouter(engine string) bool { return engine == "openrouter" || engine == "deepseek" }
