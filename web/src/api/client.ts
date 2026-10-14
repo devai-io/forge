@@ -142,9 +142,9 @@ export async function request<T>(method: string, path: string, options: RequestO
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
-/** GET a file. The filename comes from Content-Disposition when present. */
-export async function requestBlob(path: string): Promise<{ blob: Blob; filename: string | null }> {
-  const res = await send("GET", path, {}, "*/*");
+/** GET (or POST) a file. The filename comes from Content-Disposition when present. */
+export async function requestBlob(path: string, method: "GET" | "POST" = "GET"): Promise<{ blob: Blob; filename: string | null }> {
+  const res = await send(method, path, {}, "*/*");
   return { blob: await res.blob(), filename: filenameFromDisposition(res.headers.get("Content-Disposition")) };
 }
 

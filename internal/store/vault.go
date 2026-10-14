@@ -15,7 +15,7 @@ import (
 )
 
 var VaultKinds = []string{"password", "api_key", "private_key", "keystore", "certificate",
-	"provisioning_profile", "service_account", "token", "env_file", "note", "reference"}
+	"provisioning_profile", "service_account", "token", "env_file", "file", "note", "reference"}
 
 // maxVaultFile bounds one stored file. Keystores, .p8/.p12 and service-account
 // JSONs are a few KB; this is a vault, not a file share.
@@ -27,6 +27,9 @@ type VaultItem struct {
 	Kind           string            `json:"kind"`
 	ProjectKey     *string           `json:"project_key"`
 	ProjectColor   *string           `json:"project_color"`
+	RepoID         *int64            `json:"repo_id"`
+	RepoName       *string           `json:"repo_name"`
+	Path           string            `json:"path"`
 	Platform       string            `json:"platform"`
 	Host           string            `json:"host"`
 	Identifier     string            `json:"identifier"`
@@ -54,15 +57,15 @@ type VaultAudit struct {
 }
 
 const vaultSelect = `
-SELECT v.id, v.name, v.kind, p.key, p.color, v.platform, v.host, v.identifier, v.fields, v.secret_keys,
+SELECT v.id, v.name, v.kind, p.key, p.color, r.id, r.name, v.path, v.platform, v.host, v.identifier, v.fields, v.secret_keys,
        v.file_sealed IS NOT NULL, v.file_name, v.file_size, v.location, v.expires_at,
        v.notes, v.tags, v.created_at, v.updated_at, v.last_revealed_at
-FROM vault_items v LEFT JOIN projects p ON p.id = v.project_id`
+FROM vault_items v LEFT JOIN projects p ON p.id = v.project_id LEFT JOIN repos r ON r.id = v.repo_id`
 
 func scanVault(row interface{ Scan(...any) error }) (*VaultItem, error) {
 	var v VaultItem
 	var fields []byte
-	if err := row.Scan(&v.ID, &v.Name, &v.Kind, &v.ProjectKey, &v.ProjectColor, &v.Platform, &v.Host,
+	if err := row.Scan(&v.ID, &v.Name, &v.Kind, &v.ProjectKey, &v.ProjectColor, &v.RepoID, &v.RepoName, &v.Path, &v.Platform, &v.Host,
 		&v.Identifier, &fields, &v.SecretKeys, &v.HasFile, &v.FileName, &v.FileSize, &v.Location, &v.ExpiresAt,
 		&v.Notes, &v.Tags, &v.CreatedAt, &v.UpdatedAt, &v.LastRevealedAt); err != nil {
 		return nil, mapErr(err)
@@ -75,6 +78,7 @@ func scanVault(row interface{ Scan(...any) error }) (*VaultItem, error) {
 
 type VaultFilter struct {
 	ProjectKey, Query, Kind string
+	RepoID                  int64
 }
 
 func (s *Store) ListVault(ctx context.Context, f VaultFilter) ([]VaultItem, error) {
@@ -86,6 +90,9 @@ func (s *Store) ListVault(ctx context.Context, f VaultFilter) ([]VaultItem, erro
 	}
 	if f.Kind != "" {
 		where = append(where, "v.kind = "+arg(f.Kind))
+	}
+	if f.RepoID != 0 {
+		where = append(where, "v.repo_id = "+arg(f.RepoID))
 	}
 	if q := strings.TrimSpace(f.Query); q != "" {
 		n := arg("%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q) + "%")
@@ -126,6 +133,8 @@ type VaultInput struct {
 	Name       string            `json:"name"`
 	Kind       string            `json:"kind"`
 	ProjectKey *string           `json:"project_key"`
+	RepoID     *int64            `json:"repo_id"`
+	Path       string            `json:"path"`
 	Platform   string            `json:"platform"`
 	Host       string            `json:"host"`
 	Identifier string            `json:"identifier"`
@@ -235,6 +244,13 @@ func (s *Store) CreateVault(ctx context.Context, box *vault.Box, in VaultInput, 
 	if err != nil {
 		return nil, err
 	}
+	path, err := CleanRepoPath(in.Path)
+	if err != nil {
+		return nil, err
+	}
+	if path != "" && in.RepoID == nil {
+		return nil, invalid("path", "a repo file needs a repo")
+	}
 	aad := make([]byte, 16)
 	if _, err := rand.Read(aad); err != nil {
 		return nil, err
@@ -265,13 +281,16 @@ func (s *Store) CreateVault(ctx context.Context, box *vault.Box, in VaultInput, 
 		if err != nil {
 			return err
 		}
+		if err := checkVaultRepo(ctx, tx, pid, in.RepoID); err != nil {
+			return err
+		}
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO vault_items (aad, name, kind, project_id, platform, host, identifier, fields, secret_keys,
+			INSERT INTO vault_items (aad, name, kind, project_id, repo_id, path, platform, host, identifier, fields, secret_keys,
 			                         secret_sealed, file_name, file_size, file_sealed, location, expires_at, notes, tags)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id`,
+			VALUES ($1, $2, $3, $4, $18, $19, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id`,
 			aad, in.Name, in.Kind, pid, strings.TrimSpace(in.Platform), strings.TrimSpace(in.Host),
 			strings.TrimSpace(in.Identifier), fields, secretKeys(secret), sealedSecret, fileName, fileSize,
-			sealedFile, strings.TrimSpace(in.Location), in.ExpiresAt, in.Notes, tags).Scan(&id); err != nil {
+			sealedFile, strings.TrimSpace(in.Location), in.ExpiresAt, in.Notes, tags, in.RepoID, path).Scan(&id); err != nil {
 			return mapErr(err)
 		}
 		return auditVault(ctx, tx, &id, in.Name, "create", ip)
@@ -294,8 +313,27 @@ func (s *Store) UpdateVault(ctx context.Context, box *vault.Box, id int64, p Pat
 	if err := s.DB.QueryRow(ctx, `SELECT aad, name FROM vault_items WHERE id = $1`, id).Scan(&aad, &name); err != nil {
 		return nil, mapErr(err)
 	}
+	_, repoInPatch := p["repo_id"]
+	_, pathInPatch := p["path"]
+	_, projectInPatch := p["project_key"]
 	for key, raw := range p {
 		switch key {
+		case "repo_id":
+			var rid *int64
+			if err := json.Unmarshal(raw, &rid); err != nil {
+				return nil, invalid(key, "must be a repo id or null")
+			}
+			sets = append(sets, "repo_id = "+arg(rid))
+		case "path":
+			var v string
+			if err := json.Unmarshal(raw, &v); err != nil {
+				return nil, invalid(key, "must be a string")
+			}
+			v, err := CleanRepoPath(v)
+			if err != nil {
+				return nil, err
+			}
+			sets = append(sets, "path = "+arg(v))
 		case "name", "platform", "host", "identifier", "location", "notes":
 			max, required := 2000, false
 			if key == "name" {
@@ -347,6 +385,15 @@ func (s *Store) UpdateVault(ctx context.Context, box *vault.Box, id int64, p Pat
 				return nil, err
 			}
 			sets = append(sets, "project_id = "+arg(pid))
+			if !repoInPatch {
+				// A repo of another project no longer applies, and neither
+				// does a path inside it.
+				n := arg(pid)
+				sets = append(sets, "repo_id = (SELECT r.id FROM repos r WHERE r.id = vault_items.repo_id AND r.project_id = "+n+")")
+				if !pathInPatch {
+					sets = append(sets, "path = CASE WHEN EXISTS (SELECT 1 FROM repos r WHERE r.id = vault_items.repo_id AND r.project_id = "+n+") THEN path ELSE '' END")
+				}
+			}
 		case "secret":
 			if isNull(raw) {
 				sets = append(sets, "secret_sealed = NULL", "secret_keys = '[]'")
@@ -390,7 +437,7 @@ func (s *Store) UpdateVault(ctx context.Context, box *vault.Box, id int64, p Pat
 				return nil, err
 			}
 			sets = append(sets, "file_sealed = "+arg(sealed), "file_name = "+arg(fname), "file_size = "+arg(len(data)))
-		case "id", "project_color", "secret_keys", "has_file", "file_name", "file_size", "created_at", "updated_at",
+		case "id", "project_color", "repo_name", "secret_keys", "has_file", "file_name", "file_size", "created_at", "updated_at",
 			"last_revealed_at":
 		default:
 			return nil, invalid(key, "unknown or read-only field")
@@ -401,6 +448,11 @@ func (s *Store) UpdateVault(ctx context.Context, box *vault.Box, id int64, p Pat
 			if _, err := tx.Exec(ctx, `UPDATE vault_items SET `+strings.Join(sets, ", ")+`, updated_at = now() WHERE id = $1`,
 				append([]any{id}, args...)...); err != nil {
 				return mapErr(err)
+			}
+			if repoInPatch || pathInPatch || projectInPatch {
+				if err := checkVaultRow(ctx, tx, id); err != nil {
+					return err
+				}
 			}
 			return auditVault(ctx, tx, &id, name, "update", ip)
 		})

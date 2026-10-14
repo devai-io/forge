@@ -18,7 +18,8 @@ import (
 
 func (s *Server) listVault(w http.ResponseWriter, r *http.Request, u *store.User) {
 	q := r.URL.Query()
-	items, err := s.store.ListVault(r.Context(), store.VaultFilter{ProjectKey: q.Get("project"), Query: q.Get("q"), Kind: q.Get("kind")})
+	items, err := s.store.ListVault(r.Context(), store.VaultFilter{ProjectKey: q.Get("project"), Query: q.Get("q"), Kind: q.Get("kind"),
+		RepoID: int64(queryInt(r, "repo", 0))})
 	if err != nil {
 		writeErr(w, r, err)
 		return

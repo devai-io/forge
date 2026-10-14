@@ -40,6 +40,7 @@ import type {
   VaultAudit,
   VaultInput,
   VaultItem,
+  VaultSetupCode,
   Comment,
   Dashboard,
   Endpoint,
@@ -119,7 +120,7 @@ export const keys = {
   chat: (id: number) => ["chat", id] as const,
 };
 
-export type VaultFilters = { project?: string; q?: string; kind?: string };
+export type VaultFilters = { project?: string; q?: string; kind?: string; repo?: number };
 
 export function invalidateTaskViews(qc: QueryClient, taskId?: number) {
   void qc.invalidateQueries({ queryKey: ["tasks"] });
@@ -864,6 +865,11 @@ export function useDeleteVaultItem() {
       invalidateVault(qc);
     },
   });
+}
+
+/** A one-time code for setting up a machine with a project's repo files. Not cached. */
+export function createVaultSetupCode(projectKey: string, repoId?: number): Promise<VaultSetupCode> {
+  return api.post<VaultSetupCode>(`/projects/${projectKey}/vault/setup-code`, repoId ? { repo_id: repoId } : {});
 }
 
 /** Secret values for one item. Keep the result in component state only. */

@@ -7,7 +7,7 @@
 
 import { Paperclip, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { useProjects, useSaveVaultItem } from "@/api/hooks";
+import { useProject, useProjects, useSaveVaultItem } from "@/api/hooks";
 import type { VaultInput, VaultItem, VaultKind } from "@/api/types";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -37,7 +37,7 @@ export function VaultItemDialog({
   onSaved,
 }: {
   item?: VaultItem;
-  defaults?: { project_key?: string | null };
+  defaults?: { project_key?: string | null; repo_id?: number | null };
   onClose: () => void;
   onSaved?: (item: VaultItem) => void;
 }) {
@@ -49,6 +49,10 @@ export function VaultItemDialog({
   const [name, setName] = useState(item?.name ?? "");
   const [kind, setKind] = useState<VaultKind>(item?.kind ?? "password");
   const [projectKey, setProjectKey] = useState(item?.project_key ?? defaults?.project_key ?? "");
+  const [repoId, setRepoId] = useState(String(item?.repo_id ?? defaults?.repo_id ?? ""));
+  const [path, setPath] = useState(item?.path ?? "");
+  const project = useProject(projectKey || undefined);
+  const repos = project.data?.repos ?? [];
   const [platform, setPlatform] = useState(item?.platform ?? "");
   const [host, setHost] = useState(item?.host ?? "");
   const [identifier, setIdentifier] = useState(item?.identifier ?? "");
@@ -71,6 +75,8 @@ export function VaultItemDialog({
       name: name.trim(),
       kind,
       project_key: projectKey || null,
+      repo_id: projectKey && repoId ? Number(repoId) : null,
+      path: projectKey && repoId ? path.trim() : "",
       platform: platform.trim(),
       host: host.trim(),
       identifier: identifier.trim(),
@@ -153,7 +159,14 @@ export function VaultItemDialog({
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Field label="Project">
             {(id) => (
-              <Select id={id} value={projectKey} onChange={(e) => setProjectKey(e.target.value)}>
+              <Select
+                id={id}
+                value={projectKey}
+                onChange={(e) => {
+                  setProjectKey(e.target.value);
+                  setRepoId("");
+                }}
+              >
                 <option value="">Shared</option>
                 {projects.data?.map((p) => (
                   <option key={p.key} value={p.key}>
@@ -191,6 +204,36 @@ export function VaultItemDialog({
             {(id) => <Input id={id} type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />}
           </Field>
         </div>
+        {projectKey ? (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[190px_1fr]">
+            <Field label="Repo">
+              {(id) => (
+                <Select id={id} value={repoId} onChange={(e) => setRepoId(e.target.value)}>
+                  <option value="">Not a repo file</option>
+                  {repos.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label="Path in the repo" hint="Where machine setup writes it: .env, android/key.properties…">
+              {(id, desc) => (
+                <Input
+                  id={id}
+                  aria-describedby={desc}
+                  value={path}
+                  onChange={(e) => setPath(e.target.value)}
+                  disabled={!repoId}
+                  required={!!repoId}
+                  placeholder=".env"
+                  className="font-mono text-[13px]"
+                />
+              )}
+            </Field>
+          </div>
+        ) : null}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Identifier" hint="Non-secret handle: username, e-mail, key id, alias">
             {(id, desc) => <Input id={id} aria-describedby={desc} value={identifier} onChange={(e) => setIdentifier(e.target.value)} />}
@@ -262,8 +305,10 @@ export function VaultItemDialog({
                 type="file"
                 aria-label="File"
                 onChange={(e) => {
-                  setFile(e.target.files?.[0] ?? null);
+                  const f = e.target.files?.[0] ?? null;
+                  setFile(f);
                   setFileMode("replace");
+                  if (f && repoId && !path.trim()) setPath(f.name);
                 }}
                 className="text-[13px] file:mr-3 file:rounded-md file:border file:border-line-strong file:bg-surface-2 file:px-2.5 file:py-1 file:text-[13px] file:text-fg"
               />
@@ -277,7 +322,7 @@ export function VaultItemDialog({
           ) : fileMode === "remove" ? (
             <p className="text-xs text-critical-ink">The stored file will be deleted on save.</p>
           ) : null}
-          <p className="text-xs text-fg-3">Keystores, .p8/.p12 files, provisioning profiles, service-account JSON.</p>
+          <p className="text-xs text-fg-3">Keystores, .p8/.p12 files, provisioning profiles, service-account JSON, .env files.</p>
         </fieldset>
 
         <Field label="Tags" hint={'Comma separated. "integration:grafana" wires a token into monitoring.'}>

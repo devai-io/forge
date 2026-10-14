@@ -76,6 +76,9 @@ Machine (settings: ~/.config/forge/agent.json):
   forge agent setup-claude               add the Forge MCP server + hook to Claude Code
   forge agent [-config path]             run the agent in the foreground
   forge agent mcp | context [--hook]     Claude Code integration (used by setup-claude)
+  forge agent secrets scan               list this checkout's git-ignored secret files
+  forge agent secrets push [--yes] [FILE…]
+                                         store them in the vault (Vault → Set up a machine)
 
   forge version
 
@@ -159,6 +162,8 @@ func runAgent(args []string) error {
 			runner.PrintMatch(cfg, os.Stdin, os.Stdout)
 		}
 		return nil
+	case "secrets":
+		return agentSecrets(cfg, err, fs.Args()[1:])
 	case "", "run":
 	default:
 		return fmt.Errorf("unknown agent command %q (see forge help)", fs.Arg(0))
@@ -172,6 +177,37 @@ func runAgent(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return runner.New(cfg).Run(ctx)
+}
+
+// agentSecrets is `forge agent secrets scan|push`.
+func agentSecrets(cfg *runner.Config, cfgErr error, args []string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	if len(args) == 0 {
+		return errors.New("usage: forge agent secrets scan | push [--yes] [FILE…]")
+	}
+	switch args[0] {
+	case "scan":
+		return runner.SecretsScan(cwd, os.Stdout)
+	case "push":
+		if cfgErr != nil {
+			return fmt.Errorf("%w\nthis machine is not paired yet: forge agent pair <server-url> <code>", cfgErr)
+		}
+		yes := false
+		var files []string
+		for _, a := range args[1:] {
+			switch a {
+			case "--yes", "-y":
+				yes = true
+			default:
+				files = append(files, a)
+			}
+		}
+		return runner.SecretsPush(cfg, cwd, files, yes, os.Stdin, os.Stdout)
+	}
+	return fmt.Errorf("unknown secrets command %q: scan or push", args[0])
 }
 
 func runServer(args []string) error {

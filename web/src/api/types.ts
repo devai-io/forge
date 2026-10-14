@@ -397,6 +397,7 @@ export type VaultKind =
   | "service_account"
   | "token"
   | "env_file"
+  | "file"
   | "note"
   | "reference";
 
@@ -406,6 +407,9 @@ export type VaultItem = {
   kind: VaultKind;
   project_key: string | null;
   project_color: string | null;
+  repo_id: number | null; // a repo file: written at `path` inside this repo on machine setup
+  repo_name: string | null;
+  path: string; // relative to the repo root; "" when not a repo file
   platform: string; // "ios" | "android" | "web" | "ci" | "infra" | ""
   host: string; // where the original lives: "desk" | "mac" | "sops" | "github" | …
   identifier: string; // non-secret handle
@@ -423,6 +427,9 @@ export type VaultItem = {
   last_revealed_at: string | null;
 };
 
+/** A one-time machine-setup code: GET `url` (no session) returns the repo files as a tar.gz, once. */
+export type VaultSetupCode = { code: string; url: string; command: string; expires_at: string };
+
 export type VaultAudit = {
   id: number;
   item_id: number | null;
@@ -436,6 +443,8 @@ export type VaultInput = {
   name?: string;
   kind?: VaultKind;
   project_key?: string | null;
+  repo_id?: number | null;
+  path?: string;
   platform?: string;
   host?: string;
   identifier?: string;
@@ -702,6 +711,10 @@ export type SecurityKind =
   | "sessions_revoked_others"
   | "vault_reveal"
   | "vault_download"
+  | "vault_bundle"
+  | "vault_setup_code"
+  | "vault_setup_used"
+  | "vault_push"
   | "terminal_attach"
   | "terminal_keys"
   | "terminal_create"
