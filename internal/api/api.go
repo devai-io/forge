@@ -46,6 +46,8 @@ type Server struct {
 	terminals *terminalHub
 	codes     *codeSessions
 
+	vaultSetups *setupCodes // one-time machine-setup codes (vault_files.go)
+
 	logins  *limiter // failed logins / password checks / setup tokens
 	resets  *limiter // reset e-mails requested
 	pairs   *limiter // wrong machine pairing codes
@@ -98,6 +100,7 @@ func New(cfg config.Config, st *store.Store, m *mail.Mailer, mon *monitor.Monito
 		inboxes:       newNotifier(),
 		terminals:     newTerminalHub(),
 		codes:         newCodeSessions(),
+		vaultSetups:   newSetupCodes(),
 		claimWait:     25 * time.Second,
 		jevCache:      map[string]relevanceEntry{},
 		tgPoll:        25 * time.Second,
@@ -188,6 +191,10 @@ func (s *Server) Handler() http.Handler {
 	h("DELETE /api/vault/{id}", s.authed(s.elevated(s.deleteVault)))
 	h("POST /api/vault/{id}/reveal", s.authed(s.elevated(s.revealVault)))
 	h("GET /api/vault/{id}/file", s.authed(s.elevated(s.vaultFile)))
+	// Repo files: hand a project's git-ignored secrets to a machine.
+	h("POST /api/projects/{key}/vault/bundle", s.authed(s.elevated(s.vaultBundle)))
+	h("POST /api/projects/{key}/vault/setup-code", s.authed(s.elevated(s.vaultSetupCode)))
+	h("GET /api/vault-setup/{code}", s.vaultSetup) // no session: the one-time code is the credential
 
 	h("GET /api/monitoring", s.authed(s.monitoring))
 
@@ -262,6 +269,7 @@ func (s *Server) Handler() http.Handler {
 	h("POST /api/runner/runs/{id}/inbox", s.runnerAuth(s.runnerInbox))
 	h("POST /api/runner/runs/{id}/awaiting", s.runnerAuth(s.runnerAwaiting))
 	h("POST /api/runner/repos", s.runnerAuth(s.runnerRepos))
+	h("POST /api/runner/vault/files", s.runnerAuth(s.runnerVaultFiles))
 	h("GET /api/runner/control", s.runnerAuth(s.runnerControl))
 	h("GET /api/runner/tty/{channel}", s.runnerAuth(s.runnerTTY))
 	h("GET /api/runner/context", s.runnerAuth(s.runnerContext))

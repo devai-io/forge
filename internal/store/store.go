@@ -83,6 +83,8 @@ func uniqueWhat(name string) string {
 		return "a machine with that name already exists"
 	case strings.Contains(name, "runners_one_master"):
 		return "there is already a master machine"
+	case strings.Contains(name, "vault_items_repo_id_path"), strings.Contains(name, "vault_items_repo_path"):
+		return "this repo already has a vault file at that path"
 	case strings.Contains(name, "users_email"):
 		return "that e-mail address is taken"
 	case strings.Contains(name, "users_username"):

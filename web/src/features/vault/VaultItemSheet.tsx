@@ -133,6 +133,14 @@ function ItemBody({ item }: { item: VaultItem }) {
             <dd className="font-mono break-all">{v}</dd>
           </div>
         ))}
+        {item.repo_name && item.path ? (
+          <>
+            <dt className="text-fg-3">Repo file</dt>
+            <dd className="font-mono text-[12.5px] break-all" title="Written here when a machine is set up">
+              {item.repo_name}/{item.path}
+            </dd>
+          </>
+        ) : null}
         {item.location ? (
           <>
             <dt className="text-fg-3">Location</dt>

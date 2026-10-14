@@ -14,6 +14,7 @@ export const VAULT_KINDS: { value: VaultKind; label: string }[] = [
   { value: "provisioning_profile", label: "Provisioning profile" },
   { value: "service_account", label: "Service account" },
   { value: "env_file", label: "Env file" },
+  { value: "file", label: "File" },
   { value: "note", label: "Secure note" },
   { value: "reference", label: "Reference" },
 ];
@@ -77,6 +78,31 @@ export function groupByProject(items: VaultItem[]): { key: string | null; color:
       items: list.sort((x, y) => x.name.localeCompare(y.name)),
     }));
 }
+
+/** Repo files (items with a repo and a path), grouped by repo, paths sorted. */
+export function groupByRepo(items: VaultItem[]): { repo: string; repoId: number; items: VaultItem[] }[] {
+  const map = new Map<number, { repo: string; repoId: number; items: VaultItem[] }>();
+  for (const item of items) {
+    if (item.repo_id === null || !item.path) continue;
+    const g = map.get(item.repo_id) ?? { repo: item.repo_name ?? `repo ${item.repo_id}`, repoId: item.repo_id, items: [] };
+    g.items.push(item);
+    map.set(item.repo_id, g);
+  }
+  return Array.from(map.values())
+    .sort((a, b) => a.repo.localeCompare(b.repo))
+    .map((g) => ({ ...g, items: g.items.sort((x, y) => x.path.localeCompare(y.path)) }));
+}
+
+/** What machine setup writes for an item: its file, an env file's fields, or a lone secret field. */
+export function repoFileContent(item: Pick<VaultItem, "has_file" | "kind" | "secret_keys">): "file" | "fields" | "value" | null {
+  if (item.has_file) return "file";
+  if (item.kind === "env_file" && item.secret_keys.length) return "fields";
+  if (item.secret_keys.length === 1) return "value";
+  return null;
+}
+
+/** "android/app/key.properties" → "key.properties" (the default name of an uploaded file's path). */
+export const baseName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
 /** Read a File as base64 (no data: prefix) for the API's `content_base64`. */
 export function fileToBase64(file: Blob): Promise<string> {

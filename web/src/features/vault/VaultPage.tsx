@@ -2,10 +2,10 @@
 // grouped by project. The list shows metadata only; values sit behind Reveal
 // in the item sheet (`?item=<id>`, deep-linkable).
 
-import { History, KeyRound, Lock, Plus, Search } from "lucide-react";
+import { FolderGit2, History, KeyRound, Lock, MonitorDown, Plus, Search, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useProjects, useVault, useVaultAudit } from "@/api/hooks";
+import { useProject, useProjects, useVault, useVaultAudit } from "@/api/hooks";
 import type { VaultAudit, VaultItem } from "@/api/types";
 import { Badge, ColorDot } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -18,8 +18,9 @@ import { Tabs } from "@/components/ui/Tabs";
 import { ElevationBadge } from "@/features/auth/ElevationBadge";
 import { useUser } from "@/lib/auth";
 import { todayInTz } from "@/lib/format";
-import { groupByProject, isReference, VAULT_KINDS } from "@/lib/vault";
+import { groupByProject, groupByRepo, isReference, repoFileContent, VAULT_KINDS } from "@/lib/vault";
 import { ExpiryBadge, FileBadge, SecretKeyChips, VaultKindIcon } from "./bits";
+import { MachineSetupDialog } from "./MachineSetupDialog";
 import { VaultItemDialog } from "./VaultItemDialog";
 import { VaultItemSheet } from "./VaultItemSheet";
 
@@ -62,7 +63,16 @@ export function VaultPage() {
           { value: "audit", label: "Audit log" },
         ]}
       />
-      {tab === "items" ? <ItemsTab onOpen={(id) => setParam("item", String(id))} onAdd={() => setAdding(true)} /> : <AuditTab onOpen={(id) => setParam("item", String(id))} />}
+      {tab === "items" ? (
+        <ItemsTab
+          project={params.get("project") ?? ""}
+          onProject={(key) => setParam("project", key || null)}
+          onOpen={(id) => setParam("item", String(id))}
+          onAdd={() => setAdding(true)}
+        />
+      ) : (
+        <AuditTab onOpen={(id) => setParam("item", String(id))} />
+      )}
       <VaultItemSheet id={openId} onClose={() => setParam("item", null)} />
       {adding ? (
         <VaultItemDialog
@@ -75,8 +85,17 @@ export function VaultPage() {
   );
 }
 
-function ItemsTab({ onOpen, onAdd }: { onOpen: (id: number) => void; onAdd: () => void }) {
-  const [project, setProject] = useState("");
+function ItemsTab({
+  project,
+  onProject,
+  onOpen,
+  onAdd,
+}: {
+  project: string;
+  onProject: (key: string) => void;
+  onOpen: (id: number) => void;
+  onAdd: () => void;
+}) {
   const [kind, setKind] = useState("");
   const [platform, setPlatform] = useState("");
   const [q, setQ] = useState("");
@@ -122,7 +141,7 @@ function ItemsTab({ onOpen, onAdd }: { onOpen: (id: number) => void; onAdd: () =
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-fg-3" aria-hidden />
           <Input aria-label="Search the vault" placeholder="Search name, identifier, host, tag…" value={q} onChange={(e) => setQ(e.target.value)} className="pl-8" />
         </div>
-        <Select aria-label="Project" className="w-auto" value={project} onChange={(e) => setProject(e.target.value)}>
+        <Select aria-label="Project" className="w-auto" value={project} onChange={(e) => onProject(e.target.value)}>
           <option value="">All projects</option>
           {projects.data?.map((p) => (
             <option key={p.key} value={p.key}>
@@ -149,6 +168,8 @@ function ItemsTab({ onOpen, onAdd }: { onOpen: (id: number) => void; onAdd: () =
           </Select>
         ) : null}
       </div>
+
+      {project ? <RepoFilesPanel projectKey={project} items={vault.data.items} onOpen={onOpen} /> : null}
 
       {groups.length === 0 ? (
         <EmptyState
@@ -202,6 +223,14 @@ function VaultRow({ item, today, onOpen }: { item: VaultItem; today: string; onO
           {item.platform ? <Badge tone="neutral">{item.platform}</Badge> : null}
           {item.host ? <Badge tone="outline">{item.host}</Badge> : null}
           <FileBadge item={item} />
+          {item.repo_name && item.path ? (
+            <Badge tone="outline" title="Written into this repo when a machine is set up">
+              <FolderGit2 className="size-3" aria-hidden />
+              <span className="max-w-56 truncate font-mono">
+                {item.repo_name}/{item.path}
+              </span>
+            </Badge>
+          ) : null}
           {isReference(item) ? (
             <Badge tone="outline" title="Reference only: Forge holds no value or file for this item">
               reference
@@ -216,6 +245,71 @@ function VaultRow({ item, today, onOpen }: { item: VaultItem; today: string; onO
       </div>
       <RelativeTime iso={item.updated_at} className="hidden shrink-0 text-[11px] text-fg-3 sm:block" />
     </button>
+  );
+}
+
+/**
+ * A project's repo files — what a fresh clone is missing — by repo, and the
+ * way to hand them to a machine.
+ */
+export function RepoFilesPanel({ projectKey, items, onOpen }: { projectKey: string; items: VaultItem[]; onOpen: (id: number) => void }) {
+  const project = useProject(projectKey);
+  const [setup, setSetup] = useState(false);
+  const groups = groupByRepo(items.filter((i) => i.project_key === projectKey));
+  const count = groups.reduce((n, g) => n + g.items.length, 0);
+  const repos = (project.data?.repos ?? []).map((r) => ({ id: r.id, name: r.name }));
+  return (
+    <Panel
+      id="vault-repo-files"
+      title={
+        <>
+          Repo files <span className="font-normal text-fg-3">· {count}</span>
+        </>
+      }
+      icon={<FolderGit2 />}
+      bodyClassName="p-0"
+      actions={
+        <Button size="sm" variant="subtle" onClick={() => setSetup(true)} disabled={!count}>
+          <MonitorDown className="size-3.5" aria-hidden /> Set up a machine
+        </Button>
+      }
+    >
+      {groups.length ? (
+        <div className="divide-y divide-line">
+          {groups.map((g) => (
+            <div key={g.repoId} className="px-3.5 py-2">
+              <div className="mb-1 font-mono text-[12.5px] font-semibold">{g.repo}/</div>
+              <ul className="space-y-0.5">
+                {g.items.map((item) => {
+                  const content = repoFileContent(item);
+                  return (
+                    <li key={item.id} className="flex min-w-0 items-center gap-2 text-[12.5px]">
+                      <VaultKindIcon kind={item.kind} className="size-3.5" />
+                      <button type="button" onClick={() => onOpen(item.id)} className="min-w-0 truncate font-mono hover:text-accent hover:underline">
+                        {item.path}
+                      </button>
+                      {content ? (
+                        <span className="text-[11.5px] text-fg-3">{content === "file" ? "file" : content === "fields" ? `${item.secret_keys.length} variables` : "value"}</span>
+                      ) : (
+                        <Badge tone="warning" title="No file, and several secret fields: nothing to write">
+                          <TriangleAlert className="size-3" aria-hidden /> nothing to write
+                        </Badge>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="p-3.5 text-[12.5px] text-fg-3">
+          None yet. Give an item a repo and a path, or run <code className="font-mono">forge agent secrets push</code> inside a
+          checkout to collect its git-ignored .env files and keys.
+        </p>
+      )}
+      {setup ? <MachineSetupDialog projectKey={projectKey} repos={repos} fileCount={count} onClose={() => setSetup(false)} /> : null}
+    </Panel>
   );
 }
 

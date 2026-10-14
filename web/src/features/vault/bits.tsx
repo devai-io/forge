@@ -2,6 +2,7 @@ import clsx from "clsx";
 import {
   BadgeCheck,
   Bot,
+  File,
   FileCode,
   FileKey,
   Key,
@@ -38,6 +39,8 @@ export function VaultKindIcon({ kind, className }: { kind: VaultKind; className?
       return <Bot {...props} />;
     case "env_file":
       return <FileCode {...props} />;
+    case "file":
+      return <File {...props} />;
     case "note":
       return <StickyNote {...props} />;
     default:

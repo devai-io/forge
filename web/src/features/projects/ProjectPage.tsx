@@ -54,6 +54,7 @@ import { ProgressMeter } from "./ProjectCard";
 import { ProjectDialog } from "./ProjectDialog";
 import { ProjectFiles } from "./ProjectFiles";
 import { MemoryPanel } from "@/features/memory/MemoryPanel";
+import { ProjectMachineSetup } from "@/features/vault/ProjectMachineSetup";
 
 type Tab = "overview" | "board" | "list" | "agents" | "memory" | "files" | "activity";
 const TABS: Tab[] = ["overview", "board", "list", "agents", "memory", "files", "activity"];
@@ -306,6 +307,8 @@ function Overview({ project: p }: { project: ProjectDetail }) {
             <p className="px-2 py-2 text-[13px] text-fg-3">Not linked to any server.</p>
           )}
         </Panel>
+
+        <ProjectMachineSetup project={p} />
 
         {p.infra_notes.trim() ? (
           <Panel title="Infrastructure notes" id="proj-infra" bodyClassName="px-4 py-3">

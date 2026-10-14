@@ -379,6 +379,7 @@ type PromptAnswer = {
 | POST | /api/runner/runs/{id}/prompts/expire | `{request_id}` | `204` — Claude Code withdrew it |
 | POST | /api/runner/runs/{id}/inbox | `{after: number}` | long-poll up to 25 s: `{items: [{id, kind: "answer"\|"message"\|"end", data}], done: boolean}` — `answer` data is `{request_id, answer: PromptAnswer}`, `message` is `{text}`; `done` once the run is no longer running |
 | POST | /api/runner/runs/{id}/awaiting | `{awaiting: "reply" \| ""}` | `204` — the session finished a turn / is working again |
+| POST | /api/runner/vault/files | `{cwd, remote_url?, files: [{path, content_base64}], dry_run?}` | `{project_key, repo, repo_id, files: [{path, action: "create"\|"update"\|"same", item_id}]}` — `forge agent secrets push`: stores a checkout's files as repo files (found by `cwd` like the session context, else by git remote; at most 100 files, 1 MB each). Write-only: nothing stored is ever returned |
 
 A runner only ever sees runs addressed to it. Runs stuck `running` on a runner
 that has been offline for 10 minutes are marked `failed` with
@@ -452,10 +453,12 @@ Encrypted at rest with AES-256-GCM under a key that lives outside the database
 
 ```ts
 type VaultKind = "password" | "api_key" | "private_key" | "keystore" | "certificate"
-  | "provisioning_profile" | "service_account" | "token" | "env_file" | "note" | "reference";
+  | "provisioning_profile" | "service_account" | "token" | "env_file" | "file" | "note" | "reference";
 type VaultItem = {
   id: number; name: string; kind: VaultKind;
   project_key: string | null; project_color: string | null;
+  repo_id: number | null; repo_name: string | null; // a repo file: one of the project's repos…
+  path: string;                // …and where in it ("" otherwise); unique per repo
   platform: string;            // "ios" | "android" | "web" | "ci" | "infra" | ""
   host: string;                // where the original lives: "desktop" | "mac" | "1password" | "github" | …
   identifier: string;          // non-secret handle: username, e-mail, key id, alias
@@ -473,14 +476,34 @@ type VaultAudit = { id: number; item_id: number | null; item_name: string;
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | /api/vault | query `project`, `q`, `kind` | `{items: VaultItem[], available: boolean}` |
-| POST | /api/vault | `{name, kind, project_key?, platform?, host?, identifier?, fields?, secret?: Record<string,string>, file?: {name, content_base64}, location?, expires_at?, notes?, tags?}` | `201 VaultItem` |
+| GET | /api/vault | query `project`, `q`, `kind`, `repo` | `{items: VaultItem[], available: boolean}` |
+| POST | /api/vault | `{name, kind, project_key?, repo_id?, path?, platform?, host?, identifier?, fields?, secret?: Record<string,string>, file?: {name, content_base64}, location?, expires_at?, notes?, tags?}` | `201 VaultItem` |
 | GET | /api/vault/{id} | – | `VaultItem` |
 | PATCH | /api/vault/{id} | same keys; `secret` / `file` replace wholesale, `null` removes | `VaultItem` |
 | DELETE | /api/vault/{id} | – (elevation) | `204` |
 | POST | /api/vault/{id}/reveal | – (elevation) | `{secret: Record<string,string>}` |
 | GET | /api/vault/{id}/file | – (elevation) | the file bytes (`Content-Disposition: attachment`) |
 | GET | /api/vault/audit | query `limit` (50) | `{events: VaultAudit[]}` |
+
+### Repo files — setting up a machine
+
+A *repo file* is an item with `repo_id` (a repo of the item's project) and
+`path` (relative to the repo root, no `..`): a git-ignored file a fresh
+clone needs — `.env`, `android/key.properties`, a keystore. Moving an item
+to another project drops its repo and path. What machine setup writes: the
+item's file; else, for an `env_file`, its secret fields as `KEY=value` lines
+(sorted, quoted when needed); else a single secret field's value; otherwise
+the item is skipped (listed as such in the manifest).
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| POST | /api/projects/{key}/vault/bundle | – (elevation); query `repo` to limit to one repo | `application/gzip`: `<repo dir>/<path>` entries (mode 0600; repo dir = the last element of the repo's path, else its name) plus `FORGE-SECRETS.txt` (written / skipped) |
+| POST | /api/projects/{key}/vault/setup-code | `{repo_id?}` (elevation) | `201 {code, url, command, expires_at}` — a one-time code, 10 minutes; `command` = `curl -fsSL '<url>' \| tar -xzvf -`, run in the folder that holds the checkouts |
+| GET | /api/vault-setup/{code} | – (**no session**: the code is the credential) | the same tar.gz, once; unknown, used or expired → `404 bad_code`; 10 wrong codes per address per 15 min → `429` |
+
+Each file handed out is a `download` in the vault audit; the bundle and each
+code issued or used are in the security log. Codes live in the server's
+memory only (a restart voids them).
 
 Integrations read their credentials from the vault by tag: an item tagged
 `integration:grafana` (secret field `value` = a Grafana service-account token)
@@ -690,7 +713,8 @@ type SecurityEvent = {
   id: number;
   kind: "login" | "login_failed" | "login_new_device" | "logout" | "elevate" | "elevate_failed"
     | "password_changed" | "password_reset" | "totp_enabled" | "totp_disabled" | "session_revoked"
-    | "sessions_revoked_others" | "vault_reveal" | "vault_download" | "terminal_attach"
+    | "sessions_revoked_others" | "vault_reveal" | "vault_download" | "vault_bundle"
+    | "vault_setup_code" | "vault_setup_used" | "vault_push" | "terminal_attach"
     | "terminal_keys" | "terminal_create" | "code_open" | "runner_created" | "runner_rotated";
   detail: string; ip: string; user_agent: string; session_id: number | null; at: string;
 };
