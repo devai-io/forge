@@ -263,8 +263,9 @@ type RepoFileResult struct {
 // PushRepoFiles stores files a machine sent from a checkout of repo: each
 // lands on the item at (repo, path), created when missing, replaced when the
 // content differs. With dryRun nothing is written. Nothing secret is ever
-// returned; actor ("machine NAME") goes into the vault audit.
-func (s *Store) PushRepoFiles(ctx context.Context, box *vault.Box, repo *RepoWithProject, files []RepoFileInput, dryRun bool, actor string) ([]RepoFileResult, error) {
+// returned; actor ("machine NAME", or the browser's address) goes into the
+// vault audit, note into a new item's notes.
+func (s *Store) PushRepoFiles(ctx context.Context, box *vault.Box, repo *RepoWithProject, files []RepoFileInput, dryRun bool, actor, note string) ([]RepoFileResult, error) {
 	if !box.Available() {
 		return nil, vault.ErrUnavailable
 	}
@@ -315,7 +316,7 @@ func (s *Store) PushRepoFiles(ctx context.Context, box *vault.Box, repo *RepoWit
 				item, err := s.CreateVault(ctx, box, VaultInput{
 					Name: repo.Name + " · " + f.path, Kind: InferRepoFileKind(f.path), ProjectKey: &key,
 					RepoID: &repo.ID, Path: f.path, File: upload, Tags: []string{"repo-file"},
-					Notes: "Collected by " + actor + " (forge agent secrets push).",
+					Notes: note,
 				}, actor)
 				if err != nil {
 					return nil, err
@@ -345,6 +346,20 @@ func (s *Store) PushRepoFiles(ctx context.Context, box *vault.Box, repo *RepoWit
 		out = append(out, res)
 	}
 	return out, nil
+}
+
+// RepoInProject is one repo of the project key, for pushes from the web app.
+func (s *Store) RepoInProject(ctx context.Context, key string, repoID int64) (*RepoWithProject, error) {
+	repos, err := s.AllRepos(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range repos {
+		if repos[i].ID == repoID && repos[i].ProjectKey == strings.ToUpper(key) {
+			return &repos[i], nil
+		}
+	}
+	return nil, invalid("repo_id", "must be a repo of this project")
 }
 
 // RepoForCheckout finds the repo a machine's checkout is: by its directory

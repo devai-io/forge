@@ -511,6 +511,7 @@ the item is skipped (listed as such in the manifest).
 |---|---|---|---|
 | POST | /api/projects/{key}/vault/bundle | – (elevation); query `repo` to limit to one repo | `application/gzip`: `<repo dir>/<path>` entries (mode 0600; repo dir = the last element of the repo's path, else its name) plus `FORGE-SECRETS.txt` (written / skipped) |
 | POST | /api/projects/{key}/vault/setup-code | `{repo_id?}` (elevation) | `201 {code, url, command, expires_at}` — a one-time code, 10 minutes; `command` = `curl -fsSL '<url>' \| tar -xzvf -`, run in the folder that holds the checkouts |
+| POST | /api/projects/{key}/vault/files | `{repo_id, files: [{path, content_base64}], dry_run?}` | `{project_key, repo, repo_id, files: [{path, action: "create"\|"update"\|"same", item_id}]}` — the vault's "Add files": the browser's twin of `/api/runner/vault/files` for one repo of the project (same limits; new items get a kind from the file name). The web app runs a dry run per file and replaces an existing file only when asked |
 | GET | /api/vault-setup/{code} | – (**no session**: the code is the credential) | the same tar.gz, once; unknown, used or expired → `404 bad_code`; 10 wrong codes per address per 15 min → `429` |
 
 Each file handed out is a `download` in the vault audit; the bundle and each

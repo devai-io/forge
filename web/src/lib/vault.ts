@@ -104,6 +104,52 @@ export function repoFileContent(item: Pick<VaultItem, "has_file" | "kind" | "sec
 /** "android/app/key.properties" → "key.properties" (the default name of an uploaded file's path). */
 export const baseName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
+/** The server's cap on one stored file (maxVaultFile). */
+export const MAX_VAULT_FILE = 1 << 20;
+
+/**
+ * The kind a repo file gets from its name — the same rules as the server's
+ * InferRepoFileKind (used by `forge agent secrets push` and "Add files").
+ */
+export function inferRepoFileKind(path: string): VaultKind {
+  const base = baseName(path).toLowerCase();
+  const dot = base.lastIndexOf(".");
+  const ext = dot >= 0 ? base.slice(dot) : ""; // as Go's path.Ext
+  if (base === ".env" || base.startsWith(".env.") || base.endsWith(".env")) return "env_file";
+  if ([".pem", ".key", ".p8"].includes(ext) || base.startsWith("id_")) return "private_key";
+  if ([".p12", ".jks", ".keystore", ".pfx"].includes(ext)) return "keystore";
+  if ([".crt", ".cer"].includes(ext)) return "certificate";
+  if (ext === ".mobileprovision") return "provisioning_profile";
+  if (
+    base === "google-services.json" ||
+    base === "googleservice-info.plist" ||
+    (ext === ".json" && (base.includes("service-account") || base.includes("service_account") || base.startsWith("credentials")))
+  )
+    return "service_account";
+  return "file";
+}
+
+/**
+ * Where a picked file goes in the repo: its path inside a picked folder (the
+ * folder itself dropped — it stands for the repo), else its name.
+ */
+export function defaultRepoPath(file: { name: string; webkitRelativePath?: string }): string {
+  const rel = file.webkitRelativePath ?? "";
+  const parts = rel.split("/").filter(Boolean);
+  return parts.length > 1 ? parts.slice(1).join("/") : file.name;
+}
+
+/** Client-side check of a repo path (the server has the final say): "" when fine. */
+export function repoPathProblem(path: string): string {
+  const p = path.trim();
+  if (!p) return "needs a path";
+  if (p.startsWith("/")) return "must be relative to the repo";
+  if (p.includes("\\") || p.includes("\0")) return "no backslashes";
+  if (p.split("/").some((seg) => seg === "..")) return "no .. segments";
+  if (p.length > 300) return "at most 300 characters";
+  return "";
+}
+
 /** Read a File as base64 (no data: prefix) for the API's `content_base64`. */
 export function fileToBase64(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {

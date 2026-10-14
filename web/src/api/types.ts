@@ -464,6 +464,9 @@ export type VaultItem = {
 };
 
 /** A one-time machine-setup code: GET `url` (no session) returns the repo files as a tar.gz, once. */
+/** What a repo-file push did (or, on a dry run, would do) with one file. */
+export type RepoFileResult = { path: string; action: "create" | "update" | "same"; item_id: number | null };
+export type RepoFilePush = { project_key: string; repo: string; repo_id: number; files: RepoFileResult[] };
 export type VaultSetupCode = { code: string; url: string; command: string; expires_at: string };
 
 export type VaultAudit = {

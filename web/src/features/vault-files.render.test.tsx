@@ -1,6 +1,7 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Project, ProjectDetail, VaultItem } from "@/api/types";
+import { AddFilesDialog } from "@/features/vault/AddFilesDialog";
 import { VaultItemDialog } from "@/features/vault/VaultItemDialog";
 import { RepoFilesPanel } from "@/features/vault/VaultPage";
 import { jsonResponse, renderWithProviders, routeFetch } from "@/test/render";
@@ -102,5 +103,49 @@ describe("Repo files and machine setup", () => {
     await user.click(screen.getByRole("button", { name: "Add item" }));
     await waitFor(() => expect(bodies).toHaveLength(1));
     expect(bodies[0]).toMatchObject({ project_key: "SHOP", repo_id: 12, path: "config/.env" });
+  });
+
+  it("adds several files: new ones go in, a changed one waits for Replace", async () => {
+    const calls: { dry_run?: boolean; repo_id: number; files: { path: string }[] }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      routeFetch({
+        "GET /projects/SHOP": () => jsonResponse(200, project),
+        "POST /projects/SHOP/vault/files": (init) => {
+          const body = JSON.parse(String(init.body));
+          calls.push(body);
+          const path = body.files[0].path;
+          const action = path === ".env" ? "update" : "create";
+          return jsonResponse(200, { project_key: "SHOP", repo: "shop_ui", repo_id: 12, files: [{ path, action, item_id: body.dry_run ? null : 9 }] });
+        },
+      }),
+    );
+    renderWithProviders(<AddFilesDialog projectKey="SHOP" onClose={() => {}} />);
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByLabelText("Repo"), await screen.findByRole("option", { name: "shop_ui" }));
+    await user.upload(screen.getByLabelText("Files to add"), [
+      new File(["A=1\n"], ".env"),
+      new File(["-----BEGIN-----"], "tls.pem"),
+    ]);
+    const pem = screen.getByLabelText("Path of tls.pem");
+    await user.clear(pem);
+    await user.type(pem, "certs/tls.pem");
+    expect(screen.getByText(/Private key/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Upload 2/ }));
+    expect(await screen.findByText("added")).toBeInTheDocument();
+    expect(await screen.findByText("already in the vault")).toBeInTheDocument();
+    // .env: a dry run only; tls.pem: dry run, then the write.
+    expect(calls.map((c) => [c.files[0].path, !!c.dry_run])).toEqual([
+      [".env", true],
+      ["certs/tls.pem", true],
+      ["certs/tls.pem", false],
+    ]);
+    expect(calls.every((c) => c.repo_id === 12)).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: "Replace" }));
+    expect(await screen.findByText("replaced")).toBeInTheDocument();
+    expect(calls.at(-1)).toMatchObject({ files: [{ path: ".env" }] });
+    expect(calls.at(-1)?.dry_run).toBeUndefined();
   });
 });
