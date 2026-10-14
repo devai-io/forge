@@ -1,6 +1,6 @@
 // Agent-run helpers shared by the agents screens.
 
-import type { CommandDetail, Engine, Pairing, Run, Runner, RunnerCapabilities, RunnerRole } from "@/api/types";
+import type { CLISession, CommandDetail, Engine, Pairing, Run, Runner, RunnerCapabilities, RunnerRole } from "@/api/types";
 
 // Mirrors deploy/runner.example.json, which is the machine's ~/.config/forge/agent.json:
 // the keys an agent needs to start (api_url, token, allowed_roots) plus safe
@@ -27,7 +27,7 @@ export function runnerConfigSnippet(origin: string, token: string): string {
   );
 }
 
-export const ENGINE_LABEL: Record<Engine, string> = { deepseek: "DeepSeek (OpenRouter)", claude: "Claude" };
+export const ENGINE_LABEL: Record<Engine, string> = { openrouter: "DeepSeek (OpenRouter)", claude: "Claude" };
 
 /** Effort levels (claude --effort; the Assistant's DeepSeek loop adds "off"). */
 export const EFFORT_LABEL: Record<string, string> = {
@@ -194,4 +194,28 @@ export function pairingState(
 /** A machine with an unused, unexpired code that has never connected. */
 export function awaitingPairing(r: Pick<Runner, "last_seen_at" | "pair_expires_at">, now: number): boolean {
   return !r.last_seen_at && !!r.pair_expires_at && Date.parse(r.pair_expires_at) > now;
+}
+
+// ── CLI sessions (what agent work can run on, per machine) ───────────────
+
+export const SESSION_CLI_LABEL: Record<CLISession["cli"], string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  cursor: "Cursor",
+};
+
+export const SESSION_STATE_LABEL: Record<CLISession["state"], string> = {
+  logged_in: "logged in",
+  logged_out: "logged out",
+  unknown: "unknown",
+  missing: "not installed",
+};
+
+/** The latest check among a machine's sessions (they are probed together). */
+export function sessionsCheckedAt(sessions: CLISession[]): string | null {
+  let latest: string | null = null;
+  for (const s of sessions) {
+    if (s.checked_at && (!latest || s.checked_at > latest)) latest = s.checked_at;
+  }
+  return latest;
 }

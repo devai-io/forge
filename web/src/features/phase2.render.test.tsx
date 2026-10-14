@@ -230,9 +230,9 @@ describe("NewRunDialog confirm-commands", () => {
     qc.setQueryData(["project", "SHOP"], detail);
     qc.setQueryData(["tasks", { project: "SHOP", open: true }], []);
     qc.setQueryData(["engine"], {
-      settings: { default: "deepseek", model: "deepseek-flash", heavy_model: "deepseek-v4-pro", max_concurrent: 4 },
+      settings: { default: "openrouter", model: "deepseek-flash", heavy_model: "deepseek-v4-pro", max_concurrent: 4 },
       provider_key: true,
-      models: { deepseek: ["deepseek-flash", "deepseek-v4-pro"], claude: ["claude-opus-5-5", "claude-sonnet-5-5"] },
+      models: { openrouter: ["deepseek-flash", "deepseek-v4-pro"], claude: ["claude-opus-5-5", "claude-sonnet-5-5"] },
       efforts: ["low", "medium", "high", "xhigh", "max"],
     });
     renderWithProviders(<NewRunDialog prefill={{ project_key: "SHOP" }} onClose={() => {}} />, { qc });

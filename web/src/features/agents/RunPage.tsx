@@ -156,7 +156,7 @@ function RunView({
             ],
             ["Worktree", run.worktree ? "yes" : "no"],
             // DeepSeek runs are priced by the machine from token counts: an estimate.
-            ["Cost", run.engine === "deepseek" && run.cost_usd != null ? `≈ ${formatCost(run.cost_usd)}` : formatCost(run.cost_usd)],
+            ["Cost", run.engine === "openrouter" && run.cost_usd != null ? `≈ ${formatCost(run.cost_usd)}` : formatCost(run.cost_usd)],
             ["Turns", run.num_turns ?? "—"],
             ["Duration", formatDuration(duration)],
           ].map(([k, v]) => (

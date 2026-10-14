@@ -118,7 +118,7 @@ func (s *Store) SetJevSettings(ctx context.Context, v JevSettings) error {
 
 // AssistantSettings configure the Assistant. Engine is what a new chat
 // starts on: "claude" (a Claude Code session on the master machine, on the
-// subscription logged in there) or "deepseek" (Model through the provider).
+// subscription logged in there) or "openrouter" (Model through the provider).
 // BaseURL is the provider's, filled in when read.
 type AssistantSettings struct {
 	Enabled bool   `json:"enabled"`
@@ -132,8 +132,9 @@ func (s *Store) AssistantSettings(ctx context.Context) (AssistantSettings, error
 	if _, err := s.getSetting(ctx, "assistant", &v); err != nil {
 		return v, err
 	}
+	v.Engine = NormEngine(v.Engine)
 	if !OneOf(v.Engine, Engines) {
-		v.Engine = "claude"
+		v.Engine = EngineClaude
 	}
 	v.Model = ModelID(v.Model)
 	p, err := s.ProviderSettings(ctx)
@@ -148,7 +149,7 @@ func (s *Store) SetAssistantSettings(ctx context.Context, v AssistantSettings) e
 
 // EngineSettings say which backend agent runs use when the run does not pick
 // one. "claude" is Claude Code as logged in on the machine (the
-// subscription); "deepseek" runs the same Claude Code against the provider's
+// subscription); "openrouter" runs the same Claude Code against the provider's
 // Anthropic-compatible endpoint with Model (HeavyModel when Jev judges the
 // task heavy).
 //
@@ -168,6 +169,9 @@ const DefaultMaxConcurrent = 4
 func (s *Store) EngineSettings(ctx context.Context) (EngineSettings, error) {
 	v := EngineSettings{Default: "claude", Model: DefaultModel, HeavyModel: DefaultHeavyModel, MaxConcurrent: DefaultMaxConcurrent}
 	_, err := s.getSetting(ctx, "engine", &v)
+	if v.Default = NormEngine(v.Default); !OneOf(v.Default, Engines) {
+		v.Default = EngineClaude
+	}
 	if v.MaxConcurrent <= 0 {
 		v.MaxConcurrent = DefaultMaxConcurrent
 	}

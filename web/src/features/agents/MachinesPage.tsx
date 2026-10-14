@@ -37,6 +37,7 @@ import { awaitingPairing, commandDetails, defaultNewRole, ROLE_LABEL, ROLE_ORDER
 import { useNow } from "@/lib/now";
 import { CopyButton, PairingDialog } from "./PairingDialog";
 import { RoleBadge } from "./RoleBadge";
+import { SessionBadges } from "./SessionBadges";
 
 type Issued = { runner: Runner; pairing: Pairing };
 
@@ -278,6 +279,7 @@ function RunnerRow({
               {caps.ci ? <Badge tone="outline">CI status</Badge> : null}
             </div>
           ) : null}
+          {r.last_seen_at ? <SessionBadges sessions={r.sessions} /> : null}
           {r.last_seen_at ? <RunnerCommands details={commandDetails(caps)} /> : null}
         </div>
         <Menu

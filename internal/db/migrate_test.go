@@ -59,3 +59,67 @@ func TestVaultRebuildKeepsRows(t *testing.T) {
 		t.Fatalf("audit item_id = %v, %v", orphan, err)
 	}
 }
+
+// 0016 renames the "deepseek" engine to "openrouter" everywhere it is
+// stored — runs, chats, chat turns, the engine and Assistant settings — and
+// leaves everything else alone.
+func TestOpenRouterRenameMigration(t *testing.T) {
+	ctx := context.Background()
+	d, err := Open(ctx, filepath.Join(t.TempDir(), "forge.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if err := Migrate(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	// Back to just before 0016, with data from then.
+	for _, stmt := range []string{
+		`ALTER TABLE runners DROP COLUMN sessions`,
+		`DELETE FROM schema_migrations WHERE name = '0016_sessions_openrouter.sql'`,
+		`INSERT INTO runners (name, token_hash) VALUES ('desk', x'01')`,
+		`INSERT INTO runs (runner_id, kind, prompt, engine) VALUES (1, 'agent', 'a', 'deepseek'), (1, 'agent', 'b', 'claude'), (1, 'command', '', '')`,
+		`INSERT INTO chats (title, engine) VALUES ('one', 'deepseek'), ('two', 'claude')`,
+		`INSERT INTO chat_turns (chat_id, seq, engine) VALUES (1, 1, 'deepseek'), (2, 1, 'claude')`,
+		`INSERT INTO settings (key, value) VALUES ('engine', '{"default":"deepseek","model":"deepseek/deepseek-v4-flash","max_concurrent":3}'),
+			('assistant', '{"enabled":true,"engine":"deepseek","model":"deepseek/deepseek-v4-flash"}'),
+			('jev', '{"engine":"deepseek"}')`,
+	} {
+		if _, err := d.Exec(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	if err := Migrate(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	strs := func(q string) string {
+		t.Helper()
+		rows, err := d.Query(ctx, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		out := ""
+		for rows.Next() {
+			var s string
+			if err := rows.Scan(&s); err != nil {
+				t.Fatal(err)
+			}
+			out += s + ";"
+		}
+		return out
+	}
+	for q, want := range map[string]string{
+		`SELECT engine FROM runs ORDER BY id`:                                          "openrouter;claude;;",
+		`SELECT engine FROM chats ORDER BY id`:                                         "openrouter;claude;",
+		`SELECT engine FROM chat_turns ORDER BY id`:                                    "openrouter;claude;",
+		`SELECT value FROM settings WHERE key = 'engine'`:                              `{"default":"openrouter","model":"deepseek/deepseek-v4-flash","max_concurrent":3};`,
+		`SELECT json_extract(value, '$.engine') FROM settings WHERE key = 'assistant'`: "openrouter;",
+		`SELECT value FROM settings WHERE key = 'jev'`:                                 `{"engine":"deepseek"};`, // not an engine setting
+		`SELECT sessions FROM runners`:                                                 "[];",
+	} {
+		if got := strs(q); got != want {
+			t.Errorf("%s = %s, want %s", q, got, want)
+		}
+	}
+}

@@ -11,7 +11,7 @@ import (
 
 // The engine an agent run's Claude Code talks to. "claude" is Claude Code
 // as logged in on the machine (the subscription) and is the default.
-// "deepseek" is the same claude binary pointed at the provider's
+// "openrouter" (once "deepseek") is the same claude binary pointed at the provider's
 // Anthropic-compatible endpoint (OpenRouter's /api) with the provider key
 // and DeepSeek's models — a fraction of the price, no subscription limits.
 
@@ -25,7 +25,7 @@ func (s *Server) prepareRun(ctx context.Context, in *store.RunInput) {
 		in.Engine = ""
 		return
 	}
-	in.Engine = strings.ToLower(strings.TrimSpace(in.Engine))
+	in.Engine = store.NormEngine(in.Engine)
 	if in.ResumeRunID != nil {
 		return
 	}
@@ -36,14 +36,14 @@ func (s *Server) prepareRun(ctx context.Context, in *store.RunInput) {
 	if in.Engine == "" {
 		in.Engine = set.Default
 	}
-	if in.Engine == "deepseek" {
+	if in.Engine == store.EngineOpenRouter {
 		if k, _ := s.providerKey(ctx); k == "" {
 			in.Engine = "claude"
 			in.ModelNote = providerHint("ran on Claude")
 		}
 	}
 	s.jevRoute(ctx, in, set)
-	if in.Engine == "deepseek" {
+	if in.Engine == store.EngineOpenRouter {
 		in.Model = store.ModelID(in.Model)
 		if in.Model == "" {
 			in.Model = set.Model
@@ -55,15 +55,23 @@ func (s *Server) prepareRun(ctx context.Context, in *store.RunInput) {
 // nothing for Claude; for DeepSeek the provider's Anthropic endpoint, the
 // key and the models. A run stored with one of DeepSeek's own model names
 // (before the switch to OpenRouter) gets the OpenRouter id.
-func (s *Server) runnerEngine(ctx context.Context, run *store.Run) map[string]any {
-	if run.Engine != "deepseek" {
+//
+// An agent older than v0.1.30 (no "openrouter" among its engines) knows the
+// engine as "deepseek", so it gets that name, on the run and the setup.
+func (s *Server) runnerEngine(ctx context.Context, run *store.Run, rn *store.Runner) map[string]any {
+	if run.Engine != store.EngineOpenRouter {
 		return nil
+	}
+	name := store.EngineOpenRouter
+	if rn != nil && !store.OneOf(store.EngineOpenRouter, rn.Capabilities.Engines) {
+		name = "deepseek"
+		run.Engine = name
 	}
 	run.Model = store.ModelID(run.Model)
 	set, _ := s.store.EngineSettings(ctx)
 	p, _ := s.store.ProviderSettings(ctx)
 	k, _ := s.providerKey(ctx)
-	return map[string]any{"name": "deepseek", "base_url": p.AnthropicURL(), "api_key": k,
+	return map[string]any{"name": name, "base_url": p.AnthropicURL(), "api_key": k,
 		"model": set.Model, "heavy_model": set.HeavyModel}
 }
 
@@ -86,7 +94,7 @@ func (s *Server) engineStatus(ctx context.Context) (map[string]any, error) {
 		}
 	}
 	return map[string]any{"settings": set, "provider_key": k != "",
-		"models":  map[string]any{"deepseek": deepseek, "claude": store.ClaudeModels},
+		"models":  map[string]any{store.EngineOpenRouter: deepseek, "claude": store.ClaudeModels},
 		"efforts": store.ClaudeEfforts}, nil
 }
 
@@ -123,11 +131,12 @@ func (s *Server) updateEngine(w http.ResponseWriter, r *http.Request, u *store.U
 		set.MaxConcurrent = *in.MaxConcurrent
 	}
 	if in.Default != nil {
-		if !store.OneOf(*in.Default, store.Engines) {
-			writeErr(w, r, &store.ValidationError{Field: "default", Message: "must be claude or deepseek"})
+		def := store.NormEngine(*in.Default)
+		if !store.OneOf(def, store.Engines) {
+			writeErr(w, r, &store.ValidationError{Field: "default", Message: "must be claude or openrouter"})
 			return
 		}
-		set.Default = *in.Default
+		set.Default = def
 	}
 	for field, p := range map[string]*string{"model": in.Model, "heavy_model": in.HeavyModel} {
 		if p == nil {

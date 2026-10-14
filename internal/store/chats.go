@@ -115,7 +115,7 @@ func (s *Store) ChatByID(ctx context.Context, id int64) (*Chat, error) {
 func (s *Store) CreateChat(ctx context.Context, title string, set ChatSettings) (*Chat, error) {
 	return scanChat(s.DB.QueryRow(ctx, `INSERT INTO chats (title, engine, model, effort, edits, skip_permissions)
 		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING `+chatCols, chatTitle(title), set.Engine, set.Model, set.Effort, set.Edits, set.SkipPermissions))
+		RETURNING `+chatCols, chatTitle(title), NormEngine(set.Engine), set.Model, set.Effort, set.Edits, set.SkipPermissions))
 }
 
 // BotChat is the project's bot chat, or ErrNotFound before its first message.
@@ -132,7 +132,7 @@ func (s *Store) EnsureBotChat(ctx context.Context, projectID int64, title string
 	}
 	c, err = scanChat(s.DB.QueryRow(ctx, `INSERT INTO chats (title, engine, model, effort, edits, skip_permissions, project_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING `+chatCols, chatTitle(title), set.Engine, set.Model, set.Effort, set.Edits, set.SkipPermissions, projectID))
+		RETURNING `+chatCols, chatTitle(title), NormEngine(set.Engine), set.Model, set.Effort, set.Edits, set.SkipPermissions, projectID))
 	if errors.Is(err, ErrConflict) { // created meanwhile
 		return s.BotChat(ctx, projectID)
 	}
@@ -235,7 +235,7 @@ func (s *Store) ListBots(ctx context.Context, today string) ([]Bot, error) {
 // SetChatSettings changes what answers the chat from its next turn on.
 func (s *Store) SetChatSettings(ctx context.Context, id int64, set ChatSettings) (*Chat, error) {
 	return scanChat(s.DB.QueryRow(ctx, `UPDATE chats SET engine = $2, model = $3, effort = $4, edits = $5, skip_permissions = $6,
-		updated_at = now() WHERE id = $1 RETURNING `+chatCols, id, set.Engine, set.Model, set.Effort, set.Edits, set.SkipPermissions))
+		updated_at = now() WHERE id = $1 RETURNING `+chatCols, id, NormEngine(set.Engine), set.Model, set.Effort, set.Edits, set.SkipPermissions))
 }
 
 // chatTitle is the first line of the first message, shortened.

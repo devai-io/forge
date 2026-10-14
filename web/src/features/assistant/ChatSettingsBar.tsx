@@ -21,13 +21,13 @@ export function ChatSettingsBar({
 }) {
   const status = useAssistant();
   const engines = status.data?.engines;
-  const deepseek = engines?.deepseek;
+  const deepseek = engines?.openrouter;
   const claude = engines?.claude;
   const current = value.engine === "claude" ? claude : deepseek;
 
   const models = [...(current?.models ?? [])];
   if (value.model && !models.includes(value.model)) models.unshift(value.model);
-  const defaultModel = value.engine === "deepseek" && status.data?.settings.model ? ` (${status.data.settings.model})` : "";
+  const defaultModel = value.engine === "openrouter" && status.data?.settings.model ? ` (${status.data.settings.model})` : "";
   const efforts = current?.efforts ?? [];
 
   return (
@@ -46,8 +46,8 @@ export function ChatSettingsBar({
           {claude?.machine ? ` · ${claude.machine}` : ""}
           {claude && !claude.available ? ` (${claude.reason})` : claude?.online === false ? " (offline)" : ""}
         </option>
-        <option value="deepseek" disabled={deepseek ? !deepseek.available : false}>
-          {ENGINE_NAME.deepseek}
+        <option value="openrouter" disabled={deepseek ? !deepseek.available : false}>
+          {ENGINE_NAME.openrouter}
           {deepseek && !deepseek.available ? " (no key)" : ""}
         </option>
       </Select>
