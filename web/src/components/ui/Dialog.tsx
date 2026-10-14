@@ -160,7 +160,7 @@ export function Sheet({
         aria-modal="true"
         aria-label={label}
         tabIndex={-1}
-        className="animate-slide relative flex h-dvh w-full flex-col border-line-strong bg-surface shadow-pop outline-none md:max-w-[640px] md:border-l"
+        className="animate-slide relative flex h-dvh w-full flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] border-line-strong bg-surface shadow-pop outline-none md:max-w-[640px] md:border-l"
       >
         {children}
       </div>

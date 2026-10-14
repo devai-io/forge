@@ -321,7 +321,7 @@ function TopBar() {
   const projectKey = /^\/p\/([^/]+)/.exec(location.pathname)?.[1];
   const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
   return (
-    <header className="sticky top-0 z-30 flex h-13 items-center gap-2 border-b border-line bg-bg/85 px-4 backdrop-blur sm:px-6">
+    <header className="sticky top-0 z-30 flex h-[calc(3.25rem+env(safe-area-inset-top))] items-center pt-[env(safe-area-inset-top)] gap-2 border-b border-line bg-bg/85 px-4 backdrop-blur sm:px-6">
       <div className="md:hidden">
         <Logo />
       </div>
