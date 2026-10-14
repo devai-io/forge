@@ -201,6 +201,30 @@ export type ProjectDetail = Project & {
   endpoints: Endpoint[];
 };
 
+// ── Focus (a project's now / next / roadmap) ───────────────────────────────
+
+export type FocusKind = "task" | "checkup" | "repo" | "endpoint" | "run" | "other";
+export type FocusItem = { title: string; why: string; ref: string | null; kind: FocusKind };
+export type RoadmapStep = { title: string; status: "done" | "active" | "planned"; refs: string[] };
+export type Focus = {
+  headline: string;
+  now: FocusItem[];
+  next: FocusItem[];
+  roadmap: RoadmapStep[];
+  blockers: FocusItem[];
+};
+export type ProjectFocus = {
+  focus: Focus;
+  source: "ai" | "rules";
+  model: string;
+  trigger: string;
+  generated_at: string | null;
+  dirty: boolean;
+  dirty_reason: string;
+  error: string;
+  tasks: Record<string, { id: number; status: TaskStatus; title: string }>;
+};
+
 export type TaskStatus = "backlog" | "todo" | "in_progress" | "blocked" | "done";
 export type Priority = "urgent" | "high" | "medium" | "low";
 export type TaskType = "feature" | "bug" | "chore" | "research" | "ops";

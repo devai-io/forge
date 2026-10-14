@@ -245,6 +245,8 @@ type Dashboard = {
 | PATCH | /api/projects/{key} | any Project editable field (not `key`) | `ProjectDetail` |
 | DELETE | /api/projects/{key} | – | `204` (cascades tasks, repos, endpoints, runs) |
 | GET | /api/projects/{key}/activity | query `limit` (default 50) | `{activity: Activity[]}` |
+| GET | /api/projects/{key}/focus | – | `ProjectFocus` (see [Project focus](#project-focus)); the first call computes it by rules and leaves it `dirty` |
+| POST | /api/projects/{key}/focus/refresh | – | `ProjectFocus`, recomputed now (the model when a provider key is set) |
 | PUT | /api/projects/{key}/servers | `{servers: [{server_id, role}]}` | `{servers: ProjectServer[]}` (replaces the set) |
 | POST | /api/projects/{key}/repos | `{name, path?, remote_url?, default_branch?, kind?, deploy?, notes?}` | `201 Repo` |
 | PATCH | /api/repos/{id} | Repo editable fields | `Repo` |
@@ -1217,3 +1219,44 @@ What the bot does (`internal/api/telegram.go`):
   replies and button presses find their target.
 
 CLI on the server: `forge telegram status | on | off | set-token (stdin) | chat <id> | test`.
+
+## Project focus
+
+What to do now in a project, what comes next, its roadmap and what blocks it —
+the Focus panel on the project overview, and a "Focus now" section in the
+Claude session context.
+
+```ts
+type FocusKind = "task" | "checkup" | "repo" | "endpoint" | "run" | "other";
+type FocusItem = { title: string; why: string; ref: string | null; kind: FocusKind };
+type RoadmapStep = { title: string; status: "done" | "active" | "planned"; refs: string[] };
+type Focus = { headline: string; now: FocusItem[]; next: FocusItem[];   // now ≤ 5, next ≤ 7
+  roadmap: RoadmapStep[]; blockers: FocusItem[] };                       // roadmap ≤ 8, blockers ≤ 5
+type ProjectFocus = {
+  focus: Focus;
+  source: "ai" | "rules";
+  model: string;              // the provider model when source = "ai"
+  trigger: string;            // "after SHOP-3 updated", "after run #12 succeeded", "recalculated by hand", "first look"
+  generated_at: string | null;
+  dirty: boolean;             // the project changed since; a recomputation is due
+  dirty_reason: string;
+  error: string;              // the model failed and rules were used instead
+  tasks: Record<string, { id: number; status: TaskStatus; title: string }>;  // the refs it names, as they are now
+};
+```
+
+- **Dirty marks** (`project_focus.dirty_since`, the first mark of a burst kept):
+  a task created, updated, moved, commented or deleted; an agent run finishing;
+  the check-up finishing (each project it has items for) or one of its actions
+  being changed. Marks happen in the store, so every path counts (web app,
+  machines' MCP, the Assistant, Telegram).
+- **Recomputation**: the server's focus loop looks every 30 s and recomputes
+  up to 3 projects whose first mark is at least 2 minutes old (not archived
+  ones). A change that arrives while one is being computed keeps it dirty.
+- **The model**: with a provider key, Settings → Agent engine's fast model is
+  asked for the `Focus` JSON from the project's state (open tasks, tasks done in
+  14 days, the latest 8 runs, the check-up's open actions for the project, repo
+  git/CI state, endpoints down, pinned and decision memories). The answer is
+  clipped and every ref checked against the project's tasks. On any failure, or
+  without a key, rules decide and `error` says why.
+

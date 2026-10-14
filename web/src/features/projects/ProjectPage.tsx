@@ -49,6 +49,7 @@ import { useUser } from "@/lib/auth";
 import { countdown, todayInTz } from "@/lib/format";
 import { EndpointDialog, RepoDialog, ServersLinkDialog } from "./dialogs";
 import { CIBadge } from "./CIBadge";
+import { FocusPanel } from "./FocusPanel";
 import { ProgressMeter } from "./ProjectCard";
 import { ProjectDialog } from "./ProjectDialog";
 import { ProjectFiles } from "./ProjectFiles";
@@ -175,6 +176,7 @@ function Overview({ project: p }: { project: ProjectDetail }) {
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
+      <FocusPanel projectKey={p.key} className="lg:col-span-5" />
       <div className="space-y-4 lg:col-span-3">
         <section className="rounded-xl border border-line bg-surface p-4">
           <div className="mb-2 flex items-baseline justify-between text-[13px]">
