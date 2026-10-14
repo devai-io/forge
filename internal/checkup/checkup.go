@@ -157,6 +157,10 @@ func (r *Runner) endpoints(ctx context.Context) []store.CheckItem {
 			detail := e.LastError
 			out = append(out, item(key, "endpoints", "fail", e.Name+" is down", detail+" — "+e.URL,
 				"Check the service and its Nomad job; see Monitoring for the host", link, e.ProjectKey))
+		case e.LastStatus == "warning":
+			out = append(out, item(key, "endpoints", "warn",
+				fmt.Sprintf("%s is failing (retry %d/%d)", e.Name, e.FailStreak, e.RetryLimit), e.LastError+" — "+e.URL,
+				"Being rechecked; it turns down if the retries fail too", link, e.ProjectKey))
 		case e.Uptime24h != nil && *e.Uptime24h < 0.98:
 			out = append(out, item(key, "endpoints", "warn", fmt.Sprintf("%s flapped (%.1f%% up in 24 h)", e.Name, *e.Uptime24h*100),
 				e.URL, "Look at the check history for when it failed and why", link, e.ProjectKey))

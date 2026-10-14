@@ -2,7 +2,7 @@
 // latency, 24h uptime and a strip of the last day's checks.
 
 import clsx from "clsx";
-import { CircleAlert, CircleCheck, CircleDashed, MoreHorizontal, Pencil, RefreshCw, Trash2 } from "lucide-react";
+import { CircleAlert, CircleCheck, CircleDashed, MoreHorizontal, Pencil, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { useCheckEndpoint, useDeleteEndpoint, useEndpointChecks } from "@/api/hooks";
 import type { Endpoint } from "@/api/types";
@@ -14,9 +14,15 @@ import { RelativeTime } from "@/components/ui/RelativeTime";
 import { useToast } from "@/components/ui/Toast";
 import { EndpointDialog } from "@/features/projects/dialogs";
 import { formatTime, percent } from "@/lib/format";
-import { bucketChecks } from "@/lib/infra";
+import { bucketChecks, retryLabel } from "@/lib/infra";
 
-export function EndpointStatus({ endpoint, compact = false }: { endpoint: Pick<Endpoint, "last_status" | "enabled">; compact?: boolean }) {
+export function EndpointStatus({
+  endpoint,
+  compact = false,
+}: {
+  endpoint: Pick<Endpoint, "last_status" | "enabled"> & Partial<Pick<Endpoint, "fail_streak" | "retry_limit">>;
+  compact?: boolean;
+}) {
   if (!endpoint.enabled) {
     return (
       <span className="inline-flex items-center gap-1 text-[12px] text-fg-3">
@@ -32,10 +38,20 @@ export function EndpointStatus({ endpoint, compact = false }: { endpoint: Pick<E
         <CircleCheck className="size-3.5 text-good" aria-hidden />
       ) : s === "down" ? (
         <CircleAlert className="size-3.5 text-critical" aria-hidden />
+      ) : s === "warning" ? (
+        <TriangleAlert className="size-3.5 text-warning" aria-hidden />
       ) : (
         <CircleDashed className="size-3.5 text-fg-3" aria-hidden />
       )}
-      <span className={compact ? "sr-only" : undefined}>{s === "up" ? "Up" : s === "down" ? "Down" : "Unknown"}</span>
+      <span className={compact ? "sr-only" : undefined}>
+        {s === "up"
+          ? "Up"
+          : s === "down"
+            ? "Error: down"
+            : s === "warning"
+              ? `Warning: failing, ${retryLabel({ fail_streak: endpoint.fail_streak ?? 1, retry_limit: endpoint.retry_limit ?? 2 })}`
+              : "Unknown"}
+      </span>
     </span>
   );
 }
@@ -116,7 +132,12 @@ export function EndpointsTable({
             <dl className="flex shrink-0 items-center gap-4 text-[12px]">
               <div className="text-right">
                 <dt className="sr-only">Status</dt>
-                <dd className={clsx("tabular", e.last_status === "down" ? "font-medium text-critical-ink" : "text-fg-2")}>
+                <dd
+                  className={clsx(
+                    "tabular",
+                    e.last_status === "down" ? "font-medium text-critical-ink" : e.last_status === "warning" ? "font-medium text-fg" : "text-fg-2",
+                  )}
+                >
                   {e.last_code ?? (e.last_error ? "error" : "—")}
                 </dd>
               </div>
@@ -144,7 +165,10 @@ export function EndpointsTable({
                 disabled={check.isPending && check.variables === e.id}
                 onClick={() =>
                   check.mutate(e.id, {
-                    onSuccess: (r) => toast.info(`${r.name}: ${r.last_status === "up" ? "up" : r.last_status}${r.last_code ? ` (${r.last_code})` : ""}`),
+                    onSuccess: (r) =>
+                      toast.info(
+                        `${r.name}: ${r.last_status === "warning" ? `failing, ${retryLabel(r)}` : r.last_status}${r.last_code ? ` (${r.last_code})` : ""}`,
+                      ),
                     onError: (err) => toast.error(err),
                   })
                 }
@@ -162,7 +186,24 @@ export function EndpointsTable({
               />
             </div>
             {e.last_status === "down" && e.last_error ? (
-              <p className="w-full pl-6 text-[11.5px] text-critical-ink">{e.last_error}</p>
+              <p className="w-full pl-6 text-[11.5px] text-critical-ink">
+                <span className="font-semibold">Error</span> · {e.last_error}
+              </p>
+            ) : null}
+            {e.last_status === "warning" && e.enabled ? (
+              <p className="flex w-full flex-wrap items-center gap-x-1.5 pl-6 text-[11.5px] text-fg-2">
+                <span className="rounded bg-warning/20 px-1 font-semibold text-fg">Warning</span>
+                <span>
+                  failing, {retryLabel(e)}
+                  {e.next_check_at ? (
+                    <>
+                      {" "}
+                      · rechecking <RelativeTime iso={e.next_check_at} />
+                    </>
+                  ) : null}
+                </span>
+                {e.last_error ? <span className="text-fg-3">· {e.last_error}</span> : null}
+              </p>
             ) : null}
           </li>
         ))}

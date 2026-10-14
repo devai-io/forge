@@ -103,8 +103,10 @@ func TestQueriesRunOnSQLite(t *testing.T) {
 	// Endpoints and their probe history.
 	e := must(st.CreateEndpoint(ctx, "SHOP", store.EndpointInput{Name: "home", URL: "https://example.com/"}))
 	code, ms := 500, 120
-	ok(t, st.RecordCheck(ctx, *e, store.CheckResult{OK: false, Code: &code, LatencyMS: &ms, Error: "HTTP 500"}))
-	ok(t, st.RecordCheck(ctx, *e, store.CheckResult{OK: true, Code: &code, LatencyMS: &ms}))
+	for _, r := range []store.CheckResult{{OK: false, Code: &code, LatencyMS: &ms, Error: "HTTP 500"}, {OK: true, Code: &code, LatencyMS: &ms}} {
+		_, _, err := st.RecordCheck(ctx, *e, r)
+		ok(t, err)
+	}
 	e = must(st.EndpointByID(ctx, e.ID))
 	if e.LastStatus != "up" || e.LastChangeAt == nil {
 		t.Fatalf("endpoint = %+v", e)
@@ -115,6 +117,7 @@ func TestQueriesRunOnSQLite(t *testing.T) {
 	must(st.UpdateEndpoint(ctx, e.ID, store.Patch{"enabled": []byte(`false`)}))
 	ok(t, st.PruneChecks(ctx, time.Hour))
 	must(st.DownEndpoints(ctx))
+	must(st.WarningEndpoints(ctx))
 	ok(t, st.DeleteEndpoint(ctx, e.ID))
 
 	// Tasks: search, labels, overdue, done, comments, refs.

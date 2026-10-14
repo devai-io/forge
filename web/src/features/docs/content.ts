@@ -25,7 +25,7 @@ export type Source = {
 
 export const SOURCES: Source[] = [
   { name: "Endpoint monitor", tier: "automated", who: "the Forge server", when: "Every 2 minutes (and when you press ⟳ on an endpoint)", factKey: "endpoint_check",
-    what: "GET on every enabled endpoint URL, 10 s timeout, redirects are not followed. Up = the status code you expect. Each probe is kept 7 days (the 24 h uptime figure, latency and the check strips come from them). A change between up and down lands in the activity feed." },
+    what: "GET on every enabled endpoint URL, 10 s timeout, redirects are not followed. Up = the status code you expect. Each probe is kept 7 days (the 24 h uptime figure, latency and the check strips come from them). A failed probe makes the endpoint WARNING (amber dot on the project in the sidebar) and it is rechecked after 30 s, then 60 s; only when those 2 retries fail too is it ERROR / down (a softly glowing red dot). Any success makes it up again. Only going down and coming back up land in the activity feed." },
   { name: "Repository scan", tier: "automated", who: "the agent on the master machine", when: "Every 5 minutes, and right after an agent run finishes", factKey: "repo_scan",
     what: "`git status --porcelain --branch` and `git log` in every registered repo path that exists on that machine: branch, changed and untracked files, ahead/behind the last fetch, last commit, commits in the last 7 days. Only the master's view is kept; other machines are told not to scan." },
   { name: "Repository sync", tier: "automated", who: "the agent on the master machine, with that machine's own git credentials", when: "Every 30 minutes, before the repo scan (`pull_interval` in its agent.json; \"0\" turns it off)", factKey: "repo_sync",
@@ -71,7 +71,8 @@ export const SOURCES: Source[] = [
 export type Check = { category: string; rule: string; severity: string; source: string };
 
 export const CHECKS: Check[] = [
-  { category: "Endpoints", rule: "An endpoint is down at the last probe", severity: "fail", source: "endpoint monitor" },
+  { category: "Endpoints", rule: "An endpoint is down: its last probe and both quick retries failed", severity: "fail", source: "endpoint monitor" },
+  { category: "Endpoints", rule: "An endpoint is failing and still being rechecked (warning)", severity: "warn", source: "endpoint monitor" },
   { category: "Endpoints", rule: "Uptime over the last 24 h below 98 %, or last latency above 3 s", severity: "warn", source: "endpoint monitor" },
   { category: "TLS", rule: "Certificate of any https endpoint host expires in under 7 days (own TLS handshake at check time)", severity: "fail", source: "check-up itself" },
   { category: "TLS", rule: "…in under 21 days (ACME clients usually renew at 30, so this means renewal is not happening)", severity: "warn", source: "check-up itself" },

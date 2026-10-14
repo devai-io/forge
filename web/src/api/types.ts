@@ -63,6 +63,7 @@ export type ProjectStats = {
   endpoints_total: number;
   endpoints_up: number;
   endpoints_down: number;
+  endpoints_warning: number; // failing, still being rechecked before "down"
   active_runs: number;
   last_activity_at: string | null;
   progress: number; // 0..1
@@ -176,7 +177,10 @@ export type Endpoint = {
   kind: EndpointKind;
   expect_status: number;
   enabled: boolean;
-  last_status: "up" | "down" | "unknown";
+  last_status: "up" | "warning" | "down" | "unknown";
+  fail_streak: number; // consecutive failed checks
+  retry_limit: number; // rechecks a failure gets before it is "down"
+  next_check_at: string | null; // the next quick recheck, while "warning"
   last_code: number | null;
   last_latency_ms: number | null;
   last_error: string;
@@ -404,6 +408,7 @@ export type Dashboard = {
   overdue: Task[];
   projects: Project[];
   endpoints_down: Endpoint[];
+  endpoints_warning: Endpoint[];
   runners: Runner[];
   active_runs: Run[];
   recent_runs: Run[];

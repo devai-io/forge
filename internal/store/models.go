@@ -44,23 +44,25 @@ type Link struct {
 }
 
 type ProjectStats struct {
-	Total          int        `json:"total"`
-	Backlog        int        `json:"backlog"`
-	Todo           int        `json:"todo"`
-	InProgress     int        `json:"in_progress"`
-	Blocked        int        `json:"blocked"`
-	Done           int        `json:"done"`
-	Overdue        int        `json:"overdue"`
-	Done7d         int        `json:"done_7d"`
-	Created7d      int        `json:"created_7d"`
-	Commits7d      int        `json:"commits_7d"`
-	DirtyRepos     int        `json:"dirty_repos"`
-	EndpointsTotal int        `json:"endpoints_total"`
-	EndpointsUp    int        `json:"endpoints_up"`
-	EndpointsDown  int        `json:"endpoints_down"`
-	ActiveRuns     int        `json:"active_runs"`
-	LastActivityAt *time.Time `json:"last_activity_at"`
-	Progress       float64    `json:"progress"`
+	Total          int `json:"total"`
+	Backlog        int `json:"backlog"`
+	Todo           int `json:"todo"`
+	InProgress     int `json:"in_progress"`
+	Blocked        int `json:"blocked"`
+	Done           int `json:"done"`
+	Overdue        int `json:"overdue"`
+	Done7d         int `json:"done_7d"`
+	Created7d      int `json:"created_7d"`
+	Commits7d      int `json:"commits_7d"`
+	DirtyRepos     int `json:"dirty_repos"`
+	EndpointsTotal int `json:"endpoints_total"`
+	EndpointsUp    int `json:"endpoints_up"`
+	EndpointsDown  int `json:"endpoints_down"`
+	// EndpointsWarning: failing, still being rechecked before "down".
+	EndpointsWarning int        `json:"endpoints_warning"`
+	ActiveRuns       int        `json:"active_runs"`
+	LastActivityAt   *time.Time `json:"last_activity_at"`
+	Progress         float64    `json:"progress"`
 }
 
 type Project struct {
@@ -191,6 +193,9 @@ type Endpoint struct {
 	ExpectStatus  int        `json:"expect_status"`
 	Enabled       bool       `json:"enabled"`
 	LastStatus    string     `json:"last_status"`
+	FailStreak    int        `json:"fail_streak"`
+	RetryLimit    int        `json:"retry_limit"`
+	NextCheckAt   *time.Time `json:"next_check_at"`
 	LastCode      *int       `json:"last_code"`
 	LastLatencyMS *int       `json:"last_latency_ms"`
 	LastError     string     `json:"last_error"`
@@ -400,18 +405,20 @@ type DashboardStats struct {
 }
 
 type Dashboard struct {
-	Today         string          `json:"today"`
-	Stats         DashboardStats  `json:"stats"`
-	Daily         []DayCount      `json:"daily"`
-	Focus         []Task          `json:"focus"`
-	Overdue       []Task          `json:"overdue"`
-	Projects      []Project       `json:"projects"`
-	EndpointsDown []Endpoint      `json:"endpoints_down"`
-	Runners       []Runner        `json:"runners"`
-	ActiveRuns    []Run           `json:"active_runs"`
-	RecentRuns    []Run           `json:"recent_runs"`
-	Activity      []Activity      `json:"activity"`
-	Checkup       *CheckupSummary `json:"checkup"`
+	Today         string         `json:"today"`
+	Stats         DashboardStats `json:"stats"`
+	Daily         []DayCount     `json:"daily"`
+	Focus         []Task         `json:"focus"`
+	Overdue       []Task         `json:"overdue"`
+	Projects      []Project      `json:"projects"`
+	EndpointsDown []Endpoint     `json:"endpoints_down"`
+	// EndpointsWarning: failing, still being rechecked before "down".
+	EndpointsWarning []Endpoint      `json:"endpoints_warning"`
+	Runners          []Runner        `json:"runners"`
+	ActiveRuns       []Run           `json:"active_runs"`
+	RecentRuns       []Run           `json:"recent_runs"`
+	Activity         []Activity      `json:"activity"`
+	Checkup          *CheckupSummary `json:"checkup"`
 }
 
 // Enumerations, shared by validation and the seed loader.

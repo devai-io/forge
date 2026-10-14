@@ -15,7 +15,7 @@ import { Markdown } from "@/components/ui/Markdown";
 import { PageHeader, Panel } from "@/components/ui/Panel";
 import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import { Segmented } from "@/components/ui/Tabs";
-import { environmentTone, serverPath } from "@/lib/infra";
+import { environmentTone, isFailing, serverPath } from "@/lib/infra";
 import { EndpointsTable } from "./endpoints";
 import { ServerDialog } from "./ServerDialog";
 
@@ -24,8 +24,10 @@ export function InfraPage() {
   const endpoints = useEndpoints();
   const [creating, setCreating] = useState(false);
   const [filter, setFilter] = useState<"all" | "down">("all");
-  const eps = (endpoints.data ?? []).filter((e) => filter === "all" || e.last_status === "down");
+  // "Failing": confirmed down, and those still being rechecked (warning).
+  const eps = (endpoints.data ?? []).filter((e) => filter === "all" || isFailing(e));
   const down = (endpoints.data ?? []).filter((e) => e.last_status === "down").length;
+  const failing = (endpoints.data ?? []).filter(isFailing).length;
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-6">
@@ -85,7 +87,7 @@ export function InfraPage() {
             onChange={setFilter}
             items={[
               { value: "all", label: "All" },
-              { value: "down", label: `Down${down ? ` · ${down}` : ""}` },
+              { value: "down", label: `Failing${failing ? ` · ${failing}` : ""}` },
             ]}
           />
         }
@@ -100,7 +102,7 @@ export function InfraPage() {
             <EndpointsTable endpoints={eps} showProject strip />
           </>
         ) : (
-          <p className="p-4 text-[13px] text-fg-3">{filter === "down" ? "Nothing is down." : "No endpoints yet — add them from a project's overview."}</p>
+          <p className="p-4 text-[13px] text-fg-3">{filter === "down" ? "Nothing is failing." : "No endpoints yet — add them from a project's overview."}</p>
         )}
       </Panel>
 

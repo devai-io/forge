@@ -143,6 +143,9 @@ func (s *Store) Dashboard(ctx context.Context, tz string) (*Dashboard, error) {
 	if d.EndpointsDown, err = s.DownEndpoints(ctx); err != nil {
 		return nil, err
 	}
+	if d.EndpointsWarning, err = s.WarningEndpoints(ctx); err != nil {
+		return nil, err
+	}
 	if d.Runners, err = s.ListRunners(ctx); err != nil {
 		return nil, err
 	}
