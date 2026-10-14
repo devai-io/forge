@@ -11,7 +11,7 @@ import (
 
 const endpointSelect = `
 SELECT e.id, e.project_id, p.key, p.name, p.color, e.name, e.url, e.kind, e.expect_status, e.enabled,
-       e.last_status, e.last_code, e.last_latency_ms, e.last_error, e.last_checked_at, e.last_change_at,
+       e.last_status, e.fail_streak, e.last_code, e.last_latency_ms, e.last_error, e.last_checked_at, e.last_change_at,
        (SELECT avg(CASE WHEN c.ok THEN 1.0 ELSE 0.0 END)
           FROM endpoint_checks c WHERE c.endpoint_id = e.id AND c.at > ts_add(now(), -86400))
 FROM endpoints e JOIN projects p ON p.id = e.project_id`
@@ -19,11 +19,37 @@ FROM endpoints e JOIN projects p ON p.id = e.project_id`
 func scanEndpoint(row interface{ Scan(...any) error }) (*Endpoint, error) {
 	var e Endpoint
 	if err := row.Scan(&e.ID, &e.ProjectID, &e.ProjectKey, &e.ProjectName, &e.ProjectColor, &e.Name, &e.URL,
-		&e.Kind, &e.ExpectStatus, &e.Enabled, &e.LastStatus, &e.LastCode, &e.LastLatencyMS, &e.LastError,
+		&e.Kind, &e.ExpectStatus, &e.Enabled, &e.LastStatus, &e.FailStreak, &e.LastCode, &e.LastLatencyMS, &e.LastError,
 		&e.LastCheckedAt, &e.LastChangeAt, &e.Uptime24h); err != nil {
 		return nil, mapErr(err)
 	}
+	e.RetryLimit = EndpointRetries
+	if e.LastStatus == "warning" && e.LastCheckedAt != nil {
+		next := e.LastCheckedAt.Add(RecheckDelay(e.FailStreak))
+		e.NextCheckAt = &next
+	}
 	return &e, nil
+}
+
+// EndpointRetries is how many quick rechecks a failing endpoint gets before
+// it is called down: one failed check puts it at "warning", and it is "down"
+// once EndpointRetries more checks in a row have failed too.
+const EndpointRetries = 2
+
+// endpointRecheckDelays are the waits before each recheck of a "warning"
+// endpoint (first retry, second retry, …).
+var endpointRecheckDelays = []time.Duration{30 * time.Second, 60 * time.Second}
+
+// RecheckDelay is how long after its streak-th consecutive failure a
+// "warning" endpoint is checked again.
+func RecheckDelay(streak int) time.Duration {
+	if streak < 1 {
+		streak = 1
+	}
+	if streak > len(endpointRecheckDelays) {
+		return endpointRecheckDelays[len(endpointRecheckDelays)-1]
+	}
+	return endpointRecheckDelays[streak-1]
 }
 
 func (s *Store) queryEndpoints(ctx context.Context, where string, args ...any) ([]Endpoint, error) {
@@ -53,6 +79,11 @@ func (s *Store) ListEndpoints(ctx context.Context, projectID int64) ([]Endpoint,
 
 func (s *Store) DownEndpoints(ctx context.Context) ([]Endpoint, error) {
 	return s.queryEndpoints(ctx, "WHERE e.enabled AND e.last_status = 'down' AND p.status <> 'archived'")
+}
+
+// WarningEndpoints are the ones failing but still being rechecked.
+func (s *Store) WarningEndpoints(ctx context.Context) ([]Endpoint, error) {
+	return s.queryEndpoints(ctx, "WHERE e.enabled AND e.last_status = 'warning' AND p.status <> 'archived'")
 }
 
 func (s *Store) EnabledEndpoints(ctx context.Context) ([]Endpoint, error) {
@@ -133,14 +164,14 @@ var endpointFields = map[string]field{
 func (s *Store) UpdateEndpoint(ctx context.Context, id int64, p Patch) (*Endpoint, error) {
 	set, args, err := updateSet(p, endpointFields, []string{"id", "project_id", "project_key", "project_name",
 		"project_color", "last_status", "last_code", "last_latency_ms", "last_error", "last_checked_at",
-		"last_change_at", "uptime_24h"}, 2)
+		"last_change_at", "uptime_24h", "fail_streak", "retry_limit", "next_check_at"}, 2)
 	if err != nil {
 		return nil, err
 	}
 	if set != "" {
 		// A new URL or expectation invalidates the last verdict.
 		if p.Has("url") || p.Has("expect_status") {
-			set += ", last_status = 'unknown'"
+			set += ", last_status = 'unknown', fail_streak = 0"
 		}
 		tag, err := s.DB.Exec(ctx, `UPDATE endpoints SET `+set+`, updated_at = now() WHERE id = $1`,
 			append([]any{id}, args...)...)
@@ -173,43 +204,70 @@ type CheckResult struct {
 	Error     string
 }
 
-// RecordCheck stores a probe and moves the endpoint's verdict. A change of
-// verdict (up → down or back) lands in the activity feed; "unknown" → up is
-// not news and stays out of it.
-func (s *Store) RecordCheck(ctx context.Context, e Endpoint, r CheckResult) error {
-	status := "down"
-	if r.OK {
-		status = "up"
-	}
-	return s.tx(ctx, func(tx pgxTx) error {
+// RecordCheck stores a probe and moves the endpoint's verdict: a success
+// is "up"; a failure is "warning" until EndpointRetries rechecks in a row
+// have failed as well, then "down". It returns the new status and failure
+// streak, so the caller can schedule the recheck. Only confirmed changes
+// (→ down, down → up) land in the activity feed; a warning that clears is
+// not news.
+func (s *Store) RecordCheck(ctx context.Context, e Endpoint, r CheckResult) (status string, streak int, err error) {
+	err = s.tx(ctx, func(tx pgxTx) error {
 		if _, err := tx.Exec(ctx, `INSERT INTO endpoint_checks (endpoint_id, ok, code, latency_ms, error)
 			VALUES ($1, $2, $3, $4, $5)`, e.ID, r.OK, r.Code, r.LatencyMS, truncate(r.Error, 500)); err != nil {
 			return err
 		}
 		var prev string
-		if err := tx.QueryRow(ctx, `SELECT last_status FROM endpoints WHERE id = $1`, e.ID).Scan(&prev); err != nil {
+		var prevStreak int
+		if err := tx.QueryRow(ctx, `SELECT last_status, fail_streak FROM endpoints WHERE id = $1`, e.ID).
+			Scan(&prev, &prevStreak); err != nil {
 			return mapErr(err)
 		}
+		status, streak = nextEndpointState(prev, prevStreak, r.OK)
 		if _, err := tx.Exec(ctx, `
-			UPDATE endpoints SET last_status = $2, last_code = $3, last_latency_ms = $4, last_error = $5,
-			       last_checked_at = now(),
+			UPDATE endpoints SET last_status = $2, fail_streak = $3, last_code = $4, last_latency_ms = $5,
+			       last_error = $6, last_checked_at = now(),
 			       last_change_at = CASE WHEN last_status <> $2 THEN now() ELSE last_change_at END
-			WHERE id = $1`, e.ID, status, r.Code, r.LatencyMS, truncate(r.Error, 500)); err != nil {
+			WHERE id = $1`, e.ID, status, streak, r.Code, r.LatencyMS, truncate(r.Error, 500)); err != nil {
 			return mapErr(err)
 		}
-		if prev == status || (prev == "unknown" && status == "up") {
-			return nil
-		}
-		summary := fmt.Sprintf("%s is down", e.Name)
-		if r.OK {
+		var summary string
+		switch {
+		case status == "down" && prev != "down":
+			summary = fmt.Sprintf("%s is down", e.Name)
+			if r.Error != "" {
+				summary += ": " + truncate(r.Error, 120)
+			} else if r.Code != nil {
+				summary += fmt.Sprintf(" (HTTP %d)", *r.Code)
+			}
+			if streak > 1 {
+				summary += fmt.Sprintf(" — %d checks in a row failed", streak)
+			}
+		case status == "up" && prev == "down":
 			summary = fmt.Sprintf("%s is back up", e.Name)
-		} else if r.Error != "" {
-			summary += ": " + truncate(r.Error, 120)
-		} else if r.Code != nil {
-			summary += fmt.Sprintf(" (HTTP %d)", *r.Code)
+		default:
+			return nil
 		}
 		return logActivity(ctx, tx, ActivityInput{ProjectID: &e.ProjectID, Kind: "endpoint." + status, Summary: summary})
 	})
+	return status, streak, err
+}
+
+// nextEndpointState is the verdict state machine: up/unknown/warning --fail-->
+// warning (streak+1) until the streak exceeds EndpointRetries, then down; any
+// success --> up with the streak reset. A down endpoint stays down until it
+// answers.
+func nextEndpointState(prev string, prevStreak int, ok bool) (string, int) {
+	if ok {
+		return "up", 0
+	}
+	streak := prevStreak + 1
+	if prev == "up" || prev == "unknown" {
+		streak = 1 // a stale streak from before a reset does not count
+	}
+	if prev == "down" || streak > EndpointRetries {
+		return "down", streak
+	}
+	return "warning", streak
 }
 
 func (s *Store) EndpointChecks(ctx context.Context, id int64, hours int) ([]EndpointCheck, error) {

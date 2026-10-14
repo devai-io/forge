@@ -57,6 +57,7 @@ type ProjectStats = {
   commits_7d: number;        // sum over repos from the latest runner scan
   dirty_repos: number;       // repos with uncommitted changes
   endpoints_total: number; endpoints_up: number; endpoints_down: number;
+  endpoints_warning: number; // failing, still being rechecked before "down"
   active_runs: number;       // queued + running agent runs
   last_activity_at: string | null;
   progress: number;          // done / total, 0..1 (0 when total = 0)
@@ -118,7 +119,10 @@ type EndpointKind = "web" | "api" | "health";
 type Endpoint = {
   id: number; project_id: number; project_key: string; project_name: string; project_color: string;
   name: string; url: string; kind: EndpointKind; expect_status: number; enabled: boolean;
-  last_status: "up" | "down" | "unknown";
+  last_status: "up" | "warning" | "down" | "unknown"; // warning = failing, being rechecked
+  fail_streak: number;         // consecutive failed checks (0 when up)
+  retry_limit: number;         // rechecks a failure gets before it is "down" (2)
+  next_check_at: string | null; // the next quick recheck, while "warning"
   last_code: number | null; last_latency_ms: number | null; last_error: string;
   last_checked_at: string | null; last_change_at: string | null;
   uptime_24h: number | null; // 0..1, null when no checks in the window
@@ -210,6 +214,7 @@ type Dashboard = {
   overdue: Task[];             // not done, due before today (max 20)
   projects: Project[];         // status != archived, ordered by priority, then name
   endpoints_down: Endpoint[];
+  endpoints_warning: Endpoint[]; // failing, being rechecked (not down yet)
   runners: Runner[];
   active_runs: Run[];          // queued + running
   recent_runs: Run[];          // latest 6 finished
@@ -260,6 +265,15 @@ type Dashboard = {
 The API checks every enabled endpoint every 2 minutes (GET, 10 s timeout, no
 redirect following; up = status == expect_status). Checks older than 7 days are
 pruned.
+
+A failed check does not make an endpoint `down` straight away: it turns
+`warning` and is rechecked after 30 s, then after another 60 s. If both retries
+fail too (three failures in a row) it is `down`; any success makes it `up` and
+resets `fail_streak`. A down endpoint stays down until a check succeeds. Only
+the confirmed transitions — to `down`, and `down` → `up` — are written to the
+activity feed (`endpoint.down`, `endpoint.up`); a warning that clears is not.
+`POST …/check` runs through the same steps (a manual check counts as an
+attempt). Changing `url` or `expect_status` resets the verdict to `unknown`.
 
 ### Servers (shared infrastructure)
 | GET | /api/servers | – | `{servers: Server[]}` |

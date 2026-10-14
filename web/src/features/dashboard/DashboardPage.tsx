@@ -18,6 +18,7 @@ import {
   Plus,
   Star,
   TrendingUp,
+  TriangleAlert,
   WifiOff,
 } from "lucide-react";
 import { useState } from "react";
@@ -31,6 +32,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { useToast } from "@/components/ui/Toast";
 import { RunRow } from "@/features/agents/RunBits";
 import { roleOf } from "@/lib/agents";
+import { retryLabel } from "@/lib/infra";
 import { CheckupPanel } from "@/features/checkup/CheckupPage";
 import { ProjectCard } from "@/features/projects/ProjectCard";
 import { useShell } from "@/features/shell/context";
@@ -188,6 +190,19 @@ function Alerts({ d }: { d: Dashboard }) {
         </>
       ),
       to: "/infra",
+    });
+  }
+  for (const e of d.endpoints_warning ?? []) {
+    items.push({
+      key: `w${e.id}`,
+      icon: <TriangleAlert className="size-4 text-warning" aria-hidden />,
+      text: (
+        <>
+          <strong className="font-semibold">{e.name}</strong> is failing ({retryLabel(e)})
+          {e.last_code ? ` — HTTP ${e.last_code}` : e.last_error ? ` — ${e.last_error}` : ""} · {e.project_key}
+        </>
+      ),
+      to: `/p/${e.project_key}`,
     });
   }
   if (offline.length) {

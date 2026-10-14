@@ -305,14 +305,20 @@ func (s *Store) ContextForPath(ctx context.Context, cwd string, trim TaskTrimmer
 		}
 		w("Servers: %s\n", strings.Join(sv, "; "))
 	}
-	var down []string
+	var down, failing []string
 	for _, e := range p.Endpoints {
-		if e.LastStatus == "down" {
+		switch e.LastStatus {
+		case "down":
 			down = append(down, e.Name+" ("+e.URL+")")
+		case "warning":
+			failing = append(failing, e.Name+" ("+e.URL+")")
 		}
 	}
 	if len(down) > 0 {
 		w("**Down right now:** %s\n", strings.Join(down, ", "))
+	}
+	if len(failing) > 0 {
+		w("Failing, being rechecked: %s\n", strings.Join(failing, ", "))
 	}
 
 	var repoID *int64

@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { CircleAlert, CircleCheck, CircleDashed, GitBranch, GitCommitHorizontal, Hourglass, Target } from "lucide-react";
+import { CircleAlert, CircleCheck, CircleDashed, GitBranch, GitCommitHorizontal, Hourglass, Target, TriangleAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { Project } from "@/api/types";
 import { Badge } from "@/components/ui/Badge";
@@ -26,7 +26,7 @@ export function ProgressMeter({ value, color, label }: { value: number; color: s
   );
 }
 
-export function EndpointHealth({ up, total, down }: { up: number; total: number; down: number }) {
+export function EndpointHealth({ up, total, down, warning = 0 }: { up: number; total: number; down: number; warning?: number }) {
   if (!total) return null;
   const allUp = down === 0 && up === total;
   return (
@@ -35,6 +35,8 @@ export function EndpointHealth({ up, total, down }: { up: number; total: number;
         <CircleCheck className="size-3.5 text-good" aria-hidden />
       ) : down > 0 ? (
         <CircleAlert className="size-3.5 text-critical" aria-hidden />
+      ) : warning > 0 ? (
+        <TriangleAlert className="size-3.5 text-warning" aria-hidden />
       ) : (
         <CircleDashed className="size-3.5 text-fg-3" aria-hidden />
       )}
@@ -42,6 +44,7 @@ export function EndpointHealth({ up, total, down }: { up: number; total: number;
         {up}/{total} up
       </span>
       {down > 0 ? <span className="sr-only">, {down} down</span> : null}
+      {warning > 0 ? <span className="sr-only">, {warning} failing (being rechecked)</span> : null}
     </span>
   );
 }
@@ -108,7 +111,7 @@ export function ProjectCard({ project, today }: { project: Project; today: strin
           <GitCommitHorizontal className="size-3.5 text-fg-3" aria-hidden />
           <span className="tabular">{s.commits_7d}</span> commits 7d
         </span>
-        <EndpointHealth up={s.endpoints_up} total={s.endpoints_total} down={s.endpoints_down} />
+        <EndpointHealth up={s.endpoints_up} total={s.endpoints_total} down={s.endpoints_down} warning={s.endpoints_warning} />
         {s.dirty_repos > 0 ? (
           <span className="inline-flex items-center gap-1" title="Repos with uncommitted changes">
             <GitBranch className="size-3.5 text-fg-3" aria-hidden />

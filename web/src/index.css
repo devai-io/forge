@@ -455,7 +455,24 @@
 .animate-up {
   animation: forge-up 180ms ease-out;
 }
+/* A confirmed failure (an endpoint down): a red dot that breathes a soft halo. */
+@keyframes forge-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--critical) 55%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 5px 2px color-mix(in oklab, var(--critical) 45%, transparent);
+  }
+}
+.glow-critical {
+  animation: forge-glow 2.4s ease-in-out infinite;
+}
 @media (prefers-reduced-motion: reduce) {
+  .glow-critical {
+    animation: none;
+    box-shadow: 0 0 4px 1px color-mix(in oklab, var(--critical) 45%, transparent);
+  }
   .animate-pulse-soft,
   .animate-in,
   .animate-slide,

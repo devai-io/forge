@@ -8,6 +8,7 @@ import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useLogout, useProjects, useWaitingRuns } from "@/api/hooks";
 import { ColorDot, Kbd } from "@/components/ui/Badge";
+import { HealthDot } from "@/features/infra/HealthDot";
 import { Button } from "@/components/ui/Button";
 import { Menu } from "@/components/ui/Menu";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -200,9 +201,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
                   {collapsed ? null : (
                     <>
                       <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                      {p.stats.endpoints_down > 0 ? (
-                        <span className="size-1.5 rounded-full bg-critical" title={`${p.stats.endpoints_down} endpoint(s) down`} />
-                      ) : null}
+                      <HealthDot stats={p.stats} />
                       {open > 0 ? <span className="tabular text-[11px] text-fg-3">{open}</span> : null}
                     </>
                   )}
