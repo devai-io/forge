@@ -221,3 +221,16 @@ func TestAgentHome(t *testing.T) {
 		t.Fatalf("legacy %s", got)
 	}
 }
+
+func TestValidSSHTarget(t *testing.T) {
+	for _, ok := range []string{"web-1", "root@web-1.example.com", "deploy@192.0.2.10", "admin@[2001:db8::1]", "alias_2"} {
+		if !validSSHTarget(ok) {
+			t.Errorf("%q should be accepted", ok)
+		}
+	}
+	for _, bad := range []string{"", "-oProxyCommand=x", "a b", "host;rm", "$(id)", "a'b", strings.Repeat("a", 201)} {
+		if validSSHTarget(bad) {
+			t.Errorf("%q should be refused", bad)
+		}
+	}
+}

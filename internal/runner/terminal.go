@@ -217,10 +217,12 @@ type controlMsg struct {
 	Start   string `json:"start"`
 	Prompt  string `json:"prompt"`
 	// SkipPermissions starts Claude with --dangerously-skip-permissions.
-	SkipPermissions bool            `json:"skip_permissions"`
-	Name            string          `json:"name"`
-	Folder          string          `json:"folder"`
-	Folders         json.RawMessage `json:"folders"`
+	SkipPermissions bool `json:"skip_permissions"`
+	// SSH is the destination a Start "ssh" session connects to.
+	SSH     string          `json:"ssh"`
+	Name    string          `json:"name"`
+	Folder  string          `json:"folder"`
+	Folders json.RawMessage `json:"folders"`
 }
 
 func (r *Runner) serveControl(ctx context.Context, c *websocket.Conn) {
@@ -316,6 +318,12 @@ func (r *Runner) sendKeys(ctx context.Context, m controlMsg) error {
 	return nil
 }
 
+// sshTargetRe matches the server's check: user@host, an address or an
+// ssh-config alias; no spaces and no leading dash, so never an option.
+var sshTargetRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.@:\[\]-]*$`)
+
+func validSSHTarget(t string) bool { return len(t) <= 200 && sshTargetRe.MatchString(t) }
+
 // shellQuote single-quotes s for sh/zsh/bash.
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
@@ -334,11 +342,18 @@ func (r *Runner) createSession(ctx context.Context, m controlMsg) error {
 		}
 		dir = resolved
 	}
+	if m.Start == "ssh" && !validSSHTarget(m.SSH) {
+		return errors.New("invalid ssh target")
+	}
 	if m.SkipPermissions && (m.Start != "claude" || !contains(r.cfg.PermissionModes, "bypassPermissions")) {
 		return errors.New("skipping permissions is not enabled on this runner (bypassPermissions in its permission_modes)")
 	}
 	if _, err := r.tmux(ctx, "new-session", "-d", "-s", m.Session, "-c", dir, "-x", "200", "-y", "50"); err != nil {
 		return err
+	}
+	if m.Start == "ssh" {
+		time.Sleep(300 * time.Millisecond) // let the shell print its prompt
+		return r.sendKeys(ctx, controlMsg{Session: m.Session, Text: "ssh " + shellQuote(m.SSH), Enter: true})
 	}
 	if m.Start != "claude" {
 		return nil

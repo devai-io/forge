@@ -108,6 +108,7 @@ type Server = {
   id: number; name: string; role: string; provider: string; arch: string;
   public_address: string; tailscale_ip: string; environment: Environment;
   critical: boolean; tags: string[]; notes: string /* markdown */;
+  ssh_target: string;   // what "Open shell" runs `ssh` to: user@host, an address or an ssh alias; "" = name
   projects: { key: string; name: string; color: string; role: string }[];
   created_at: string; updated_at: string;
 };
@@ -263,10 +264,20 @@ pruned.
 
 ### Servers (shared infrastructure)
 | GET | /api/servers | – | `{servers: Server[]}` |
-| POST | /api/servers | `{name, role?, provider?, arch?, public_address?, tailscale_ip?, environment?, critical?, tags?, notes?}` | `201 Server` |
+| POST | /api/servers | `{name, role?, provider?, arch?, public_address?, tailscale_ip?, environment?, critical?, tags?, notes?, ssh_target?}` | `201 Server` |
 | GET | /api/servers/{id} | – | `Server` |
 | PATCH | /api/servers/{id} | Server editable fields | `Server` |
 | DELETE | /api/servers/{id} | – | `204` |
+| POST | /api/servers/{id}/shell | `{runner_id?}` (elevated) | `201 {runner_id, session}` |
+
+`ssh_target` must match `^[A-Za-z0-9_][A-Za-z0-9_.@:\[\]-]*$` (max 200: no
+spaces, no leading dash). **Open shell** starts (or re-attaches to) the tmux
+session `ssh-<name>` on a machine with terminals on — `runner_id`, else the
+master, else any connected one — and types `ssh <ssh_target or name>` into
+it; attach with the terminal routes. `409 runner_offline` when no machine is
+connected, `422` when the target is not usable. The control message is
+`{type: "create", session, start: "ssh", ssh}`; agents older than this open a
+plain shell instead. Logged as `terminal_create` in the security log.
 
 ### Tasks
 | Method | Path | Body | Response |

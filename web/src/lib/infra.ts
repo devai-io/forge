@@ -22,3 +22,6 @@ export function bucketChecks(checks: EndpointCheck[], now: number, hours = 24, b
   }
   return out;
 }
+
+/** The page of one server. */
+export const serverPath = (id: number) => `/infra/servers/${id}`;

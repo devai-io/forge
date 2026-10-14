@@ -86,9 +86,10 @@ func TestQueriesRunOnSQLite(t *testing.T) {
 	ok(t, st.DeleteRepo(ctx, repo.ID))
 
 	sv := must(st.CreateServer(ctx, store.ServerInput{Name: "edge-1", PublicAddress: "203.0.113.9", Tags: []string{"edge", "eu"}}))
-	must(st.UpdateServer(ctx, sv.ID, store.Patch{"critical": []byte(`true`), "tags": []byte(`["edge"]`)}))
+	must(st.UpdateServer(ctx, sv.ID, store.Patch{"critical": []byte(`true`), "tags": []byte(`["edge"]`),
+		"ssh_target": []byte(`"root@203.0.113.9"`)}))
 	got := must(st.ServerByID(ctx, sv.ID))
-	if !got.Critical || len(got.Tags) != 1 {
+	if !got.Critical || len(got.Tags) != 1 || got.SSHTarget != "root@203.0.113.9" {
 		t.Fatalf("server = %+v", got)
 	}
 	links := must(st.SetProjectServers(ctx, "SHOP", []store.ProjectServerInput{{ServerID: sv.ID, Role: "edge"}}))

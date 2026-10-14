@@ -150,6 +150,8 @@ export type Server = {
   critical: boolean;
   tags: string[];
   notes: string;
+  /** What "Open shell" runs `ssh` to; "" means the name. */
+  ssh_target: string;
   projects: { key: string; name: string; color: string; role: string }[];
   created_at: string;
   updated_at: string;
@@ -567,6 +569,7 @@ export type ServerInput = Partial<
     | "critical"
     | "tags"
     | "notes"
+    | "ssh_target"
   >
 >;
 

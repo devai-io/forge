@@ -217,6 +217,7 @@ func (s *Server) Handler() http.Handler {
 	h("GET /api/servers/{id}", s.authed(s.getServer))
 	h("PATCH /api/servers/{id}", s.authed(s.updateServer))
 	h("DELETE /api/servers/{id}", s.authed(s.deleteServer))
+	h("POST /api/servers/{id}/shell", s.authed(s.elevated(s.serverShell)))
 
 	h("GET /api/tasks", s.authed(s.listTasks))
 	h("POST /api/tasks", s.authed(s.createTask))

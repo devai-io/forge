@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -525,6 +526,95 @@ func (s *Server) terminalCreate(w http.ResponseWriter, r *http.Request, u *store
 		s.sec(r, "terminal_create", name+" ("+what+")")
 		writeJSON(w, http.StatusCreated, map[string]string{"session": name})
 	}
+}
+
+// serverShell opens a shell on a server: a tmux session on one of the
+// machines (the given one, else the master, else any connected) that types
+// `ssh <target>` once its shell is up. The target is the server's ssh_target,
+// or its name (an ssh-config alias). Re-opening attaches to the same session.
+func (s *Server) serverShell(w http.ResponseWriter, r *http.Request, u *store.User) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		RunnerID *int64 `json:"runner_id"`
+	}
+	if r.ContentLength != 0 && !decode(w, r, &in) {
+		return
+	}
+	sv, err := s.store.ServerByID(r.Context(), id)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	target := sv.SSHTarget
+	if target == "" {
+		target = sv.Name
+	}
+	if !store.ValidSSHTarget(target) {
+		writeErr(w, r, &store.ValidationError{Field: "ssh_target", Message: "set an SSH target for " + sv.Name + " (user@host, an address or an ssh alias)"})
+		return
+	}
+	runnerID, cc := int64(0), (*controlConn)(nil)
+	if in.RunnerID != nil {
+		rn, err := s.store.RunnerByID(r.Context(), *in.RunnerID)
+		if err != nil {
+			writeErr(w, r, &store.ValidationError{Field: "runner_id", Message: "no such machine"})
+			return
+		}
+		if !rn.Capabilities.Terminal {
+			writeError(w, http.StatusConflict, "terminal_disabled", "terminals are off on "+rn.Name+" (\"terminal\": true in its agent.json)")
+			return
+		}
+		if cc = s.terminals.control(rn.ID); cc == nil {
+			writeError(w, http.StatusConflict, "runner_offline", rn.Name+" is not connected")
+			return
+		}
+		runnerID = rn.ID
+	} else {
+		hosts, err := s.store.TerminalHosts(r.Context())
+		if err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		for _, h := range hosts {
+			c := s.terminals.control(h.RunnerID)
+			if !h.Terminal || c == nil {
+				continue
+			}
+			if cc == nil || h.Role == "master" {
+				runnerID, cc = h.RunnerID, c
+			}
+			if h.Role == "master" {
+				break
+			}
+		}
+		if cc == nil {
+			writeError(w, http.StatusConflict, "runner_offline", "no machine with terminals is connected")
+			return
+		}
+	}
+	name := shellSessionName(sv.Name)
+	if _, err := cc.call(r.Context(), map[string]any{"type": "create", "session": name, "start": "ssh", "ssh": target}, 20*time.Second); err != nil {
+		writeError(w, http.StatusBadGateway, "runner_error", err.Error())
+		return
+	}
+	slog.Info("server shell opened", "server", sv.Name, "session", name, "runner", runnerID, "ip", s.clientIP(r))
+	s.sec(r, "terminal_create", name+" (ssh "+target+")")
+	writeJSON(w, http.StatusCreated, map[string]any{"runner_id": runnerID, "session": name})
+}
+
+var sessionUnsafe = regexp.MustCompile(`[^A-Za-z0-9_.-]+`)
+
+// shellSessionName is the tmux session for a server's shell: ssh-<name>,
+// cut down to what a session name allows.
+func shellSessionName(server string) string {
+	name := "ssh-" + strings.Trim(sessionUnsafe.ReplaceAllString(server, "-"), "-")
+	if len(name) > 40 {
+		name = name[:40]
+	}
+	return name
 }
 
 // ── Runner-side context and task access (backs `forge agent mcp`) ─────────

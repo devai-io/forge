@@ -27,6 +27,7 @@ const MonitoringPage = lazy(() => import("@/features/monitoring/MonitoringPage")
 const SettingsPage = lazy(() => import("@/features/settings/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const VaultPage = lazy(() => import("@/features/vault/VaultPage").then((m) => ({ default: m.VaultPage })));
 const AssistantPage = lazy(() => import("@/features/assistant/AssistantPage").then((m) => ({ default: m.AssistantPage })));
+const ServerPage = lazy(() => import("@/features/infra/ServerPage").then((m) => ({ default: m.ServerPage })));
 const DocsPage = lazy(() => import("@/features/docs/DocsPage").then((m) => ({ default: m.DocsPage })));
 
 const page = (el: React.ReactNode) => <Suspense fallback={<FullPageSpinner />}>{el}</Suspense>;
@@ -61,6 +62,7 @@ export function App() {
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="p/:key" element={<ProjectPage />} />
           <Route path="infra" element={<InfraPage />} />
+          <Route path="infra/servers/:id" element={page(<ServerPage />)} />
           <Route path="monitoring" element={page(<MonitoringPage />)} />
           <Route path="vault" element={page(<VaultPage />)} />
           <Route path="agents" element={<AgentsPage />} />

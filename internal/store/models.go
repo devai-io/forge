@@ -165,6 +165,7 @@ type Server struct {
 	Critical      bool            `json:"critical"`
 	Tags          []string        `json:"tags"`
 	Notes         string          `json:"notes"`
+	SSHTarget     string          `json:"ssh_target"`
 	Projects      []ServerProject `json:"projects"`
 	CreatedAt     time.Time       `json:"created_at"`
 	UpdatedAt     time.Time       `json:"updated_at"`

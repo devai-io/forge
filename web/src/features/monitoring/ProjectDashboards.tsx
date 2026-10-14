@@ -2,7 +2,7 @@ import { LayoutDashboard } from "lucide-react";
 import { useMonitoring } from "@/api/hooks";
 import { Panel } from "@/components/ui/Panel";
 import { dashboardsForProject } from "@/lib/monitoring";
-import { DashboardLink } from "./MonitoringPage";
+import { DashboardLink } from "./parts";
 
 /**
  * Grafana dashboards that look like they belong to this project (title or

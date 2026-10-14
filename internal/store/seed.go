@@ -186,10 +186,10 @@ func seedServer(ctx context.Context, tx pgxTx, sv ServerInput) (int64, error) {
 	tags, _ := CleanStrings("tags", sv.Tags, 30, 40)
 	var id int64
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO servers (name, role, provider, arch, public_address, tailscale_ip, environment, critical, tags, notes)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+		INSERT INTO servers (name, role, provider, arch, public_address, tailscale_ip, environment, critical, tags, notes, ssh_target)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
 		strings.TrimSpace(sv.Name), sv.Role, sv.Provider, sv.Arch, sv.PublicAddress, sv.TailscaleIP,
-		sv.Environment, sv.Critical, tags, sv.Notes).Scan(&id); err != nil {
+		sv.Environment, sv.Critical, tags, sv.Notes, strings.TrimSpace(sv.SSHTarget)).Scan(&id); err != nil {
 		return 0, fmt.Errorf("server %s: %w", sv.Name, mapErr(err))
 	}
 	return id, nil

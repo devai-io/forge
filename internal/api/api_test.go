@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -607,7 +608,9 @@ func TestTerminalRelay(t *testing.T) {
 	}
 	defer control.CloseNow()
 
-	// The fake runner: answers capture, and for open dials the tty and echoes.
+	// The fake runner: answers capture and create, and for open dials the tty and echoes.
+	var createdMu sync.Mutex
+	var createdMsgs []map[string]any
 	go func() {
 		for {
 			_, data, err := control.Read(ctx)
@@ -619,6 +622,12 @@ func TestTerminalRelay(t *testing.T) {
 			switch m["type"] {
 			case "capture":
 				raw, _ := json.Marshal(map[string]any{"type": "result", "id": m["id"], "ok": true, "text": "claude> hello"})
+				_ = control.Write(ctx, websocket.MessageText, raw)
+			case "create":
+				createdMu.Lock()
+				createdMsgs = append(createdMsgs, m)
+				createdMu.Unlock()
+				raw, _ := json.Marshal(map[string]any{"type": "result", "id": m["id"], "ok": true})
 				_ = control.Write(ctx, websocket.MessageText, raw)
 			case "open":
 				go func() {
@@ -648,6 +657,22 @@ func TestTerminalRelay(t *testing.T) {
 		t.Fatalf("capture = %q", cap.Text)
 	}
 
+	// A server's shell: a session on the connected machine that types ssh.
+	var web store.Server
+	expect(t, "server", h.do("POST", "/api/servers", map[string]any{"name": "web.1", "ssh_target": "deploy@192.0.2.10"}, &web), 201)
+	var shell struct {
+		RunnerID int64  `json:"runner_id"`
+		Session  string `json:"session"`
+	}
+	expect(t, "shell", h.do("POST", fmt.Sprintf("/api/servers/%d/shell", web.ID), map[string]any{}, &shell), 201)
+	createdMu.Lock()
+	last := createdMsgs[len(createdMsgs)-1]
+	createdMu.Unlock()
+	if shell.RunnerID != created.Runner.ID || shell.Session != "ssh-web.1" || last["start"] != "ssh" ||
+		last["ssh"] != "deploy@192.0.2.10" || last["session"] != "ssh-web.1" {
+		t.Fatalf("shell = %+v, create = %v", shell, last)
+	}
+
 	u, _ := url.Parse(h.srv.URL)
 	cookies := h.client.Jar.Cookies(u)
 	bh := http.Header{"Origin": {h.srv.URL}}
@@ -670,6 +695,27 @@ func TestTerminalRelay(t *testing.T) {
 	if err != nil || typ != websocket.MessageBinary || string(got) != "echo:ls\r" {
 		t.Fatalf("relay: %v %q %v", typ, got, err)
 	}
+}
+
+func TestServerShell(t *testing.T) {
+	h := setup(t)
+	h.login()
+	var sv store.Server
+	expect(t, "bad ssh target", h.do("POST", "/api/servers", map[string]any{"name": "edge-1", "ssh_target": "-oProxyCommand=x"}, nil), 422)
+	expect(t, "server", h.do("POST", "/api/servers", map[string]any{"name": "edge-1"}, &sv), 201)
+	expect(t, "bad patch", h.do("PATCH", fmt.Sprintf("/api/servers/%d", sv.ID), map[string]any{"ssh_target": "a b"}, nil), 422)
+	expect(t, "patch", h.do("PATCH", fmt.Sprintf("/api/servers/%d", sv.ID), map[string]any{"ssh_target": "root@edge-1.example.com"}, &sv), 200)
+	if sv.SSHTarget != "root@edge-1.example.com" {
+		t.Fatalf("ssh_target = %q", sv.SSHTarget)
+	}
+	shell := fmt.Sprintf("/api/servers/%d/shell", sv.ID)
+	expect(t, "shell needs elevation", h.do("POST", shell, map[string]any{}, nil), 403)
+	expect(t, "elevate", h.do("POST", "/api/auth/elevate", map[string]string{"password": testPassword}, nil), 200)
+	expect(t, "no machine connected", h.do("POST", shell, map[string]any{}, nil), 409)
+	var spaced store.Server
+	expect(t, "spaced", h.do("POST", "/api/servers", map[string]any{"name": "old box"}, &spaced), 201)
+	expect(t, "name is no ssh target", h.do("POST", fmt.Sprintf("/api/servers/%d/shell", spaced.ID), map[string]any{}, nil), 422)
+	expect(t, "unknown machine", h.do("POST", shell, map[string]any{"runner_id": 999}, nil), 422)
 }
 
 func TestContextForPath(t *testing.T) {

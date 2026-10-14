@@ -3,12 +3,13 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"strings"
 )
 
 const serverSelect = `
 SELECT sv.id, sv.name, sv.role, sv.provider, sv.arch, sv.public_address, sv.tailscale_ip, sv.environment,
-       sv.critical, sv.tags, sv.notes, sv.created_at, sv.updated_at,
+       sv.critical, sv.tags, sv.notes, sv.ssh_target, sv.created_at, sv.updated_at,
        coalesce((SELECT json_group_array(json_object('key', p.key, 'name', p.name, 'color', p.color, 'role', ps.role)
                                 ORDER BY p.priority, p.name)
                  FROM project_servers ps JOIN projects p ON p.id = ps.project_id
@@ -19,7 +20,7 @@ func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	var x Server
 	var projects []byte
 	if err := row.Scan(&x.ID, &x.Name, &x.Role, &x.Provider, &x.Arch, &x.PublicAddress, &x.TailscaleIP,
-		&x.Environment, &x.Critical, &x.Tags, &x.Notes, &x.CreatedAt, &x.UpdatedAt, &projects); err != nil {
+		&x.Environment, &x.Critical, &x.Tags, &x.Notes, &x.SSHTarget, &x.CreatedAt, &x.UpdatedAt, &projects); err != nil {
 		return nil, mapErr(err)
 	}
 	x.Tags = nonNil(x.Tags)
@@ -62,6 +63,7 @@ type ServerInput struct {
 	Critical      bool     `json:"critical"`
 	Tags          []string `json:"tags"`
 	Notes         string   `json:"notes"`
+	SSHTarget     string   `json:"ssh_target"`
 }
 
 func (s *Store) CreateServer(ctx context.Context, in ServerInput) (*Server, error) {
@@ -79,12 +81,16 @@ func (s *Store) CreateServer(ctx context.Context, in ServerInput) (*Server, erro
 	if err != nil {
 		return nil, err
 	}
+	in.SSHTarget = strings.TrimSpace(in.SSHTarget)
+	if in.SSHTarget != "" && !ValidSSHTarget(in.SSHTarget) {
+		return nil, invalid("ssh_target", "must be user@host, an address or an ssh alias (no spaces, no leading dash)")
+	}
 	var id int64
 	err = s.DB.QueryRow(ctx, `
-		INSERT INTO servers (name, role, provider, arch, public_address, tailscale_ip, environment, critical, tags, notes)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+		INSERT INTO servers (name, role, provider, arch, public_address, tailscale_ip, environment, critical, tags, notes, ssh_target)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
 		in.Name, in.Role, in.Provider, in.Arch, in.PublicAddress, in.TailscaleIP, in.Environment, in.Critical,
-		tags, in.Notes).Scan(&id)
+		tags, in.Notes, in.SSHTarget).Scan(&id)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -102,6 +108,26 @@ var serverFields = map[string]field{
 	"critical":       {"critical", pBool},
 	"tags":           {"tags", pStrings(30, 40)},
 	"notes":          {"notes", pString(50000, false)},
+	"ssh_target":     {"ssh_target", pSSHTarget},
+}
+
+// sshTargetRe is what "Open shell" will type after `ssh`: user@host, an
+// address (IPv6 in brackets) or an ssh-config alias. No spaces, and no
+// leading dash, so it can never be read as an option.
+var sshTargetRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.@:\[\]-]*$`)
+
+// ValidSSHTarget reports whether t is a usable SSH destination.
+func ValidSSHTarget(t string) bool { return len(t) <= 200 && sshTargetRe.MatchString(t) }
+
+func pSSHTarget(key string, raw json.RawMessage) (any, error) {
+	v, err := pString(200, false)(key, raw)
+	if err != nil {
+		return nil, err
+	}
+	if t := v.(string); t != "" && !ValidSSHTarget(t) {
+		return nil, invalid(key, "must be user@host, an address or an ssh alias (no spaces, no leading dash)")
+	}
+	return v, nil
 }
 
 func (s *Store) UpdateServer(ctx context.Context, id int64, p Patch) (*Server, error) {

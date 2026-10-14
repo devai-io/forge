@@ -493,6 +493,16 @@ export function useSaveServer() {
   });
 }
 
+/** Open a shell on a server: a tmux session on a machine that runs ssh to it. */
+export function useServerShell() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, runnerId }: { id: number; runnerId?: number }) =>
+      api.post<{ runner_id: number; session: string }>(`/servers/${id}/shell`, runnerId ? { runner_id: runnerId } : {}),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.terminalHosts }),
+  });
+}
+
 export function useDeleteServer() {
   const qc = useQueryClient();
   return useMutation({
