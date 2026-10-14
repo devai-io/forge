@@ -68,6 +68,8 @@ import type {
   TaskFilters,
   TaskInput,
   User,
+  EndpointSettings,
+  FocusUsage,
   EngineSettings,
   EngineStatus,
   JevSettings,
@@ -1131,6 +1133,28 @@ export function useSystemFacts(enabled = true) {
     queryFn: ({ signal }) => api.get<SystemFacts>("/system", undefined, signal),
     refetchInterval: 60_000,
     enabled,
+  });
+}
+
+/** What focus computations have cost, every project. */
+export function useFocusUsage() {
+  return useQuery({ queryKey: ["focus-usage"], queryFn: () => api.get<FocusUsage>("/focus/usage") });
+}
+
+// ── Endpoint retries ──────────────────────────────────────────────────────
+
+export function useEndpointSettings() {
+  return useQuery({ queryKey: ["endpoint-settings"], queryFn: () => api.get<EndpointSettings>("/endpoint-settings") });
+}
+
+export function useUpdateEndpointSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: Partial<EndpointSettings>) => api.patch<EndpointSettings>("/endpoint-settings", patch),
+    onSuccess: (s) => {
+      qc.setQueryData(["endpoint-settings"], s);
+      void qc.invalidateQueries(); // every endpoint list carries retry_limit
+    },
   });
 }
 

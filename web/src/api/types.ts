@@ -226,8 +226,13 @@ export type ProjectFocus = {
   dirty: boolean;
   dirty_reason: string;
   error: string;
+  usage: UsageEntry[]; // every model call for this project's focus, added up (note "focus")
+  last_usage: UsageEntry[]; // the latest computation's calls; [] when rules made it
   tasks: Record<string, { id: number; status: TaskStatus; title: string }>;
 };
+
+/** GET /api/focus/usage: what focus computations have cost, all projects. */
+export type FocusUsage = { usage: UsageEntry[]; total_usd: number; unpriced: boolean };
 
 export type TaskStatus = "backlog" | "todo" | "in_progress" | "blocked" | "done";
 export type Priority = "urgent" | "high" | "medium" | "low";
@@ -833,6 +838,13 @@ export type ProviderStatus = {
   key_configured: boolean; // vault item tagged integration:openrouter; never returned
   anthropic_url: string; // what Claude Code gets as ANTHROPIC_BASE_URL for DeepSeek runs
   default_url: string;
+};
+
+// ── Endpoint retries ──────────────────────────────────────────────────────
+
+export type EndpointSettings = {
+  retries: number; // quick rechecks a failing endpoint gets before it is "down" (0–5, default 2)
+  recheck_seconds: number[]; // wait before each recheck, 10–900 s; the last one repeats (default [30, 60])
 };
 
 // ── Agent engine ──────────────────────────────────────────────────────────

@@ -6,20 +6,43 @@ export function environmentTone(env: Environment) {
   return env === "production" ? "serious" : env === "staging" ? "warning" : env === "infra" ? "accent" : "neutral";
 }
 
-export type Bucket = { start: number; ok: number; fail: number };
+/**
+ * One window of the check strip. `fail` counts failures that were confirmed
+ * (part of a run of more than `retries` failures in a row: the endpoint went
+ * down); `warn` the ones that cleared on a recheck or are still being
+ * rechecked.
+ */
+export type Bucket = { start: number; ok: number; warn: number; fail: number };
 
-/** Split the window into equal buckets; a bucket with any failure reads as down. */
-export function bucketChecks(checks: EndpointCheck[], now: number, hours = 24, buckets = 48): Bucket[] {
+/**
+ * Split the window into equal buckets. A failure counts as confirmed when it
+ * belongs to a run of more than `retries` consecutive failures — what turns
+ * an endpoint down; shorter runs are warnings.
+ */
+export function bucketChecks(checks: EndpointCheck[], now: number, hours = 24, buckets = 48, retries = 2): Bucket[] {
   const span = (hours * 3_600_000) / buckets;
   const start = now - hours * 3_600_000;
-  const out: Bucket[] = Array.from({ length: buckets }, (_, i) => ({ start: start + i * span, ok: 0, fail: 0 }));
-  for (const c of checks) {
-    const t = new Date(c.at).getTime();
-    const i = Math.floor((t - start) / span);
-    if (i < 0 || i >= buckets) continue;
-    if (c.ok) out[i].ok++;
-    else out[i].fail++;
+  const out: Bucket[] = Array.from({ length: buckets }, (_, i) => ({ start: start + i * span, ok: 0, warn: 0, fail: 0 }));
+  const sorted = checks.map((c) => ({ ok: c.ok, t: new Date(c.at).getTime() })).sort((a, b) => a.t - b.t);
+  // Mark each failure with the length of the run of failures it belongs to.
+  const runLength = new Array<number>(sorted.length).fill(0);
+  for (let i = 0; i < sorted.length; ) {
+    if (sorted[i].ok) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < sorted.length && !sorted[j].ok) j++;
+    for (let k = i; k < j; k++) runLength[k] = j - i;
+    i = j;
   }
+  sorted.forEach((c, n) => {
+    const i = Math.floor((c.t - start) / span);
+    if (i < 0 || i >= buckets) return;
+    if (c.ok) out[i].ok++;
+    else if (runLength[n] > retries) out[i].fail++;
+    else out[i].warn++;
+  });
   return out;
 }
 
@@ -46,4 +69,15 @@ export function isFailing(e: Pick<Endpoint, "last_status">): boolean {
 export function retryLabel(e: Pick<Endpoint, "fail_streak" | "retry_limit">): string {
   const limit = e.retry_limit || 2;
   return `retry ${Math.min(Math.max(e.fail_streak, 1), limit)}/${limit}`;
+}
+
+/** "30, 60" → [30, 60]; null unless 1–5 whole numbers from 10 to 900. */
+export function parseDelays(text: string): number[] | null {
+  const parts = text
+    .split(/[\s,]+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length < 1 || parts.length > 5) return null;
+  const nums = parts.map(Number);
+  return nums.every((n) => Number.isInteger(n) && n >= 10 && n <= 900) ? nums : null;
 }

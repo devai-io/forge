@@ -122,7 +122,7 @@ type Endpoint = {
   name: string; url: string; kind: EndpointKind; expect_status: number; enabled: boolean;
   last_status: "up" | "warning" | "down" | "unknown"; // warning = failing, being rechecked
   fail_streak: number;         // consecutive failed checks (0 when up)
-  retry_limit: number;         // rechecks a failure gets before it is "down" (2)
+  retry_limit: number;         // rechecks a failure gets before it is "down" (EndpointSettings.retries, default 2)
   next_check_at: string | null; // the next quick recheck, while "warning"
   last_code: number | null; last_latency_ms: number | null; last_error: string;
   last_checked_at: string | null; last_change_at: string | null;
@@ -252,6 +252,7 @@ type Dashboard = {
 | GET | /api/projects/{key}/activity | query `limit` (default 50) | `{activity: Activity[]}` |
 | GET | /api/projects/{key}/focus | – | `ProjectFocus` (see [Project focus](#project-focus)); the first call computes it by rules and leaves it `dirty` |
 | POST | /api/projects/{key}/focus/refresh | – | `ProjectFocus`, recomputed now (the model when a provider key is set) |
+| GET | /api/focus/usage | – | `{usage: UsageEntry[], total_usd, unpriced}`: what focus model calls have cost, every project |
 | PUT | /api/projects/{key}/servers | `{servers: [{server_id, role}]}` | `{servers: ProjectServer[]}` (replaces the set) |
 | POST | /api/projects/{key}/repos | `{name, path?, remote_url?, default_branch?, kind?, deploy?, notes?}` | `201 Repo` |
 | PATCH | /api/repos/{id} | Repo editable fields | `Repo` |
@@ -264,19 +265,30 @@ type Dashboard = {
 | DELETE | /api/endpoints/{id} | – | `204` |
 | POST | /api/endpoints/{id}/check | – | `Endpoint` (checks now) |
 | GET | /api/endpoints/{id}/checks | query `hours` (default 24, max 168) | `{checks: EndpointCheck[]}` newest first |
+| GET | /api/endpoint-settings | – | `EndpointSettings` |
+| PATCH | /api/endpoint-settings | `Partial<EndpointSettings>` | `EndpointSettings` (422 out of range) |
+
+```ts
+type EndpointSettings = {
+  retries: number;           // quick rechecks before "down": 0–5 (default 2; 0 = down on the first failure)
+  recheck_seconds: number[]; // wait before each recheck: 1–5 values of 10–900 s, the last repeats (default [30, 60])
+};
+```
 
 The API checks every enabled endpoint every 2 minutes (GET, 10 s timeout, no
 redirect following; up = status == expect_status). Checks older than 7 days are
 pruned.
 
 A failed check does not make an endpoint `down` straight away: it turns
-`warning` and is rechecked after 30 s, then after another 60 s. If both retries
-fail too (three failures in a row) it is `down`; any success makes it `up` and
+`warning` and is rechecked after `recheck_seconds[0]` (30 s), then after
+`recheck_seconds[1]` (60 s), and so on. If all `retries` rechecks fail too
+(by default three failures in a row) it is `down`; any success makes it `up` and
 resets `fail_streak`. A down endpoint stays down until a check succeeds. Only
 the confirmed transitions — to `down`, and `down` → `up` — are written to the
 activity feed (`endpoint.down`, `endpoint.up`); a warning that clears is not.
 `POST …/check` runs through the same steps (a manual check counts as an
 attempt). Changing `url` or `expect_status` resets the verdict to `unknown`.
+Going down and coming back up also mark the project's focus dirty.
 
 ### Servers (shared infrastructure)
 | GET | /api/servers | – | `{servers: Server[]}` |
@@ -1279,13 +1291,17 @@ type ProjectFocus = {
   dirty: boolean;             // the project changed since; a recomputation is due
   dirty_reason: string;
   error: string;              // the model failed and rules were used instead
+  usage: UsageEntry[];        // every model call for this project's focus, added up (note "focus")
+  last_usage: UsageEntry[];   // the latest computation's calls; [] when rules made it
   tasks: Record<string, { id: number; status: TaskStatus; title: string }>;  // the refs it names, as they are now
 };
 ```
 
 - **Dirty marks** (`project_focus.dirty_since`, the first mark of a burst kept):
   a task created, updated, moved, commented or deleted; an agent run finishing;
-  the check-up finishing (each project it has items for) or one of its actions
+  a Claude Code session in one of its repos ending (a machine's heartbeat no
+  longer lists a tmux window or session where Claude was running); an
+  endpoint going down or coming back up; the check-up finishing (each project it has items for) or one of its actions
   being changed. Marks happen in the store, so every path counts (web app,
   machines' MCP, the Assistant, Telegram).
 - **Recomputation**: the server's focus loop looks every 30 s and recomputes
@@ -1297,4 +1313,9 @@ type ProjectFocus = {
   git/CI state, endpoints down, pinned and decision memories). The answer is
   clipped and every ref checked against the project's tasks. On any failure, or
   without a key, rules decide and `error` says why.
+- **Spend**: each model call is recorded (`usage.Entry`, api `openrouter`,
+  note `focus`; the provider's cost, else the DeepSeek list-price estimate),
+  even when its answer was unusable. `GET /api/focus/usage` →
+  `{usage: UsageEntry[], total_usd: number, unpriced: boolean}` adds it up
+  across projects.
 

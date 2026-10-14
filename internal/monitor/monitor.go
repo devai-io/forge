@@ -30,8 +30,8 @@ type Monitor struct {
 	base     context.Context
 	rechecks map[int64]*time.Timer
 	// delay is how long to wait before rechecking after the streak-th
-	// failure (store.RecheckDelay; tests shorten it).
-	delay func(streak int) time.Duration
+	// failure (the endpoint settings; tests shorten it).
+	delay func(ctx context.Context, streak int) time.Duration
 }
 
 func New(st *store.Store, interval time.Duration, version string) *Monitor {
@@ -40,7 +40,10 @@ func New(st *store.Store, interval time.Duration, version string) *Monitor {
 		interval: interval,
 		version:  version,
 		rechecks: map[int64]*time.Timer{},
-		delay:    store.RecheckDelay,
+		delay: func(ctx context.Context, streak int) time.Duration {
+			set, _ := st.EndpointSettings(ctx) // the defaults when unreadable
+			return set.Delay(streak)
+		},
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 			// A redirect is an answer, not something to follow: /health
@@ -119,7 +122,7 @@ func (m *Monitor) Check(ctx context.Context, e store.Endpoint) error {
 		return err
 	}
 	if status == "warning" {
-		m.scheduleRecheck(e.ID, m.delay(streak))
+		m.scheduleRecheck(e.ID, m.delay(ctx, streak))
 	} else {
 		m.cancelRecheck(e.ID)
 	}

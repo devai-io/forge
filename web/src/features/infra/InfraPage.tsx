@@ -18,6 +18,7 @@ import { Segmented } from "@/components/ui/Tabs";
 import { environmentTone, isFailing, serverPath } from "@/lib/infra";
 import { EndpointsTable } from "./endpoints";
 import { ServerDialog } from "./ServerDialog";
+import { ShellIconButton } from "./shell";
 
 export function InfraPage() {
   const servers = useServers();
@@ -97,7 +98,7 @@ export function InfraPage() {
         ) : eps.length ? (
           <>
             <p className="border-b border-line px-3 py-1.5 text-[11.5px] text-fg-3">
-              Strip: last 24 hours in half-hour windows — green all checks passed, red any check failed, grey no checks.
+              Strip: last 24 hours in half-hour windows — green all checks passed, amber a check failed but passed on a recheck (or is being rechecked), red the endpoint was down, grey no checks.
             </p>
             <EndpointsTable endpoints={eps} showProject strip />
           </>
@@ -135,6 +136,7 @@ function ServerCard({ server: s }: { server: Server }) {
           </div>
           {s.role ? <p className="mt-1 line-clamp-2 text-[12.5px] text-fg-2">{s.role}</p> : null}
         </div>
+        <ShellIconButton server={s} />
         <Button size="icon-sm" variant="ghost" aria-label={`Edit ${s.name}`} onClick={() => setEditing(true)}>
           <Pencil className="size-3.5" />
         </Button>

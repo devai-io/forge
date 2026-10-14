@@ -65,8 +65,66 @@ func (s *Store) saveTmux(ctx context.Context, runnerID int64, sessions []TmuxSes
 			w.ProjectKey, w.ProjectColor, w.RepoID, w.RepoName = nil, nil, nil, nil
 		}
 	}
+	var prevRaw []byte
+	_ = s.DB.QueryRow(ctx, `SELECT tmux FROM runners WHERE id = $1`, runnerID).Scan(&prevRaw)
 	_, err := s.DB.Exec(ctx, `UPDATE runners SET tmux = $2, tmux_at = now() WHERE id = $1`, runnerID, sessions)
-	return err
+	if err != nil {
+		return err
+	}
+	var prev []TmuxSession
+	if len(prevRaw) > 0 && json.Unmarshal(prevRaw, &prev) == nil {
+		s.claudeSessionsEnded(ctx, prev, sessions)
+	}
+	return nil
+}
+
+// claudeTab is one place Claude Code was running: a session's window, or the
+// session itself for runners that do not list windows.
+type claudeTab struct{ session, path string }
+
+func claudeTabs(sessions []TmuxSession) map[string]claudeTab {
+	out := map[string]claudeTab{}
+	for _, se := range sessions {
+		if len(se.WindowList) == 0 {
+			if se.Claude {
+				out[se.Name] = claudeTab{se.Name, se.Path}
+			}
+			continue
+		}
+		for _, w := range se.WindowList {
+			if w.Claude {
+				out[fmt.Sprintf("%s:%d", se.Name, w.Index)] = claudeTab{se.Name, w.Path}
+			}
+		}
+	}
+	return out
+}
+
+// claudeSessionsEnded marks the focus of each project where a Claude Code
+// session stopped running since the machine's last report (the window or
+// session closed, or Claude exited in it): its work may have moved tasks.
+func (s *Store) claudeSessionsEnded(ctx context.Context, prev, cur []TmuxSession) {
+	before, now := claudeTabs(prev), claudeTabs(cur)
+	var ended []claudeTab
+	for k, t := range before {
+		if _, ok := now[k]; !ok {
+			ended = append(ended, t)
+		}
+	}
+	if len(ended) == 0 {
+		return
+	}
+	idx, err := s.loadPathIndex(ctx)
+	if err != nil {
+		return
+	}
+	marked := map[string]bool{}
+	for _, t := range ended {
+		if key, _ := idx.match(t.path, t.session); key != "" && !marked[key] {
+			marked[key] = true
+			s.markFocusDirtyKey(ctx, key, "Claude session "+t.session+" ended")
+		}
+	}
 }
 
 // pathIndex resolves working directories to repos and projects.

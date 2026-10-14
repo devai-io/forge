@@ -56,25 +56,35 @@ export function EndpointStatus({
   );
 }
 
-export function CheckStrip({ endpointId }: { endpointId: number }) {
+export function CheckStrip({ endpointId, retries = 2 }: { endpointId: number; retries?: number }) {
   const checks = useEndpointChecks(endpointId, 24);
   const [now] = useState(() => Date.now());
   if (!checks.data) return <div className="h-4 w-full max-w-60 animate-pulse-soft rounded bg-surface-2" aria-hidden />;
-  const buckets = bucketChecks(checks.data, now);
+  const buckets = bucketChecks(checks.data, now, 24, 48, retries);
   const failed = buckets.filter((b) => b.fail).length;
+  const warned = buckets.filter((b) => b.warn && !b.fail).length;
   return (
     <div
       className="flex h-4 w-full max-w-60 items-stretch gap-px"
       role="img"
-      aria-label={`Last 24 hours: ${failed ? `${failed} half-hour window${failed > 1 ? "s" : ""} with failures` : "no failures"}`}
+      aria-label={`Last 24 hours: ${
+        failed || warned
+          ? [
+              failed ? `${failed} half-hour window${failed > 1 ? "s" : ""} down` : "",
+              warned ? `${warned} with failures that cleared on a recheck` : "",
+            ]
+              .filter(Boolean)
+              .join(", ")
+          : "no failures"
+      }`}
     >
       {buckets.map((b) => (
         <span
           key={b.start}
-          title={`${formatTime(new Date(b.start).toISOString()).slice(0, 5)} — ${b.ok} ok, ${b.fail} failed`}
+          title={`${formatTime(new Date(b.start).toISOString()).slice(0, 5)} — ${b.ok} ok${b.warn ? `, ${b.warn} failed then rechecked` : ""}${b.fail ? `, ${b.fail} failed while down` : ""}`}
           className={clsx(
             "flex-1 rounded-[1.5px]",
-            b.fail ? "bg-critical" : b.ok ? "bg-good/70" : "bg-surface-3",
+            b.fail ? "bg-critical" : b.warn ? "bg-warning" : b.ok ? "bg-good/70" : "bg-surface-3",
           )}
         />
       ))}
@@ -126,7 +136,7 @@ export function EndpointsTable({
             </div>
             {strip ? (
               <div className="order-last w-full sm:order-none sm:w-60">
-                <CheckStrip endpointId={e.id} />
+                <CheckStrip endpointId={e.id} retries={e.retry_limit ?? 2} />
               </div>
             ) : null}
             <dl className="flex shrink-0 items-center gap-4 text-[12px]">

@@ -324,3 +324,10 @@ export function turnSpend(turn: ChatTurn): TurnSpend {
   }
   return { lines, billed, subscription, pending: lines.some((l) => l.pending), unpriced };
 }
+
+/** The priced total of usage entries; null when none was priced. */
+export function usageCost(entries: UsageEntry[] | null | undefined): number | null {
+  let total: number | null = null;
+  for (const e of entries ?? []) if (e.cost_usd !== null) total = (total ?? 0) + e.cost_usd;
+  return total;
+}

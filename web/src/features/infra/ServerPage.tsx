@@ -17,28 +17,25 @@ import {
   Pencil,
   ServerCog,
   ShieldAlert,
-  SquareTerminal,
   StickyNote,
 } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useEndpoints, useMonitoring, useServers, useServerShell, useTerminalHosts } from "@/api/hooks";
+import { useEndpoints, useMonitoring, useServers } from "@/api/hooks";
 import type { Monitoring, Server } from "@/api/types";
 import { Badge, ColorDot } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
-import { Select } from "@/components/ui/Input";
 import { Markdown } from "@/components/ui/Markdown";
 import { PageHeader, Panel } from "@/components/ui/Panel";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
-import { useToast } from "@/components/ui/Toast";
 import { AlertRow, ConnectGrafana, DashboardLink, NomadJobList, UsageBar } from "@/features/monitoring/parts";
 import { environmentTone } from "@/lib/infra";
 import { alertMentions, dashboardsMentioning, formatUptime, hostAliases, serverAliases, sortAlerts } from "@/lib/monitoring";
-import { attachPath, pickHost, readStoredHost, storeHost } from "@/lib/terminal";
 import { EndpointsTable } from "./endpoints";
 import { ServerDialog } from "./ServerDialog";
+import { ShellButton } from "./shell";
 
 export function ServerPage() {
   const { id } = useParams();
@@ -301,59 +298,3 @@ function ServerDashboards({ server: s, m }: { server: Server; m: Monitoring }) {
   );
 }
 
-/**
- * "Open shell": a tmux session on one of your machines that runs ssh to the
- * server, then attaches to it. With more than one machine online, pick which.
- */
-function ShellButton({ server: s }: { server: Server }) {
-  const hosts = useTerminalHosts({ refetchInterval: false });
-  const shell = useServerShell();
-  const toast = useToast();
-  const navigate = useNavigate();
-  const [picked, setPicked] = useState<string>("");
-  const online = (hosts.data?.hosts ?? []).filter((h) => h.terminal && h.online);
-  const effective =
-    picked ||
-    String(
-      pickHost(
-        online.map((h) => h.runner_id),
-        readStoredHost(),
-        hosts.data?.default_runner_id ?? null,
-      ) ?? "",
-    );
-  const none = !!hosts.data && online.length === 0;
-  const open = () =>
-    shell.mutate(
-      { id: s.id, runnerId: effective ? Number(effective) : undefined },
-      {
-        onSuccess: ({ runner_id, session }) => {
-          storeHost(runner_id);
-          navigate(attachPath(runner_id, session));
-        },
-        onError: (err) => toast.error(err),
-      },
-    );
-  return (
-    <div className="flex items-center gap-1.5">
-      {online.length > 1 ? (
-        <Select compact aria-label="Machine to open the shell from" value={effective} onChange={(e) => setPicked(e.target.value)} className="w-36">
-          {online.map((h) => (
-            <option key={h.runner_id} value={h.runner_id}>
-              from {h.runner_name}
-            </option>
-          ))}
-        </Select>
-      ) : null}
-      <Button
-        size="sm"
-        variant="primary"
-        onClick={open}
-        loading={shell.isPending}
-        disabled={none}
-        title={none ? "No machine with terminals is connected" : `ssh ${s.ssh_target || s.name}${online.length === 1 ? ` from ${online[0]!.runner_name}` : ""}`}
-      >
-        {!shell.isPending ? <SquareTerminal className="size-3.5" aria-hidden /> : null} Open shell
-      </Button>
-    </div>
-  );
-}

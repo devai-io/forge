@@ -143,3 +143,42 @@ func TestCleanFocus(t *testing.T) {
 		t.Fatalf("headline / lists: %+v", f)
 	}
 }
+
+// A Claude Code session that stops (its window closes, or Claude exits in
+// it) marks the focus of the project its directory belongs to.
+func TestFocusDirtyWhenClaudeSessionEnds(t *testing.T) {
+	cur = t
+	st := open(t)
+	ctx := context.Background()
+	shop := must(st.ProjectIDByKey(ctx, "SHOP"))
+	rn := must(st.CreateRunner(ctx, "desk", []byte("tok")))
+	beat := func(sessions []store.TmuxSession) {
+		t.Helper()
+		must(st.Heartbeat(ctx, rn.ID, store.HeartbeatInput{Hostname: "desk", Running: []int64{}, Tmux: sessions}))
+	}
+	dirty := func() (bool, string) {
+		t.Helper()
+		for _, d := range must(st.DirtyFocuses(ctx, 0, 10)) {
+			if d.ProjectID == shop {
+				return true, d.Reason
+			}
+		}
+		return false, ""
+	}
+	claude := []store.TmuxSession{{Name: "SHOP-api", Path: "/home/demo/dev/shop/shop_api", Claude: true,
+		WindowList: []store.TmuxWindow{
+			{Index: 0, Path: "/home/demo/dev/shop/shop_api", Claude: true},
+			{Index: 1, Path: "/home/demo/dev/shop/shop_api", Command: "zsh"},
+		}}}
+	beat(claude)
+	beat(claude) // still running: nothing to say
+	if d, _ := dirty(); d {
+		t.Fatal("a running session marked the focus")
+	}
+	// Claude exits; the shell window stays.
+	beat([]store.TmuxSession{{Name: "SHOP-api", Path: "/home/demo/dev/shop/shop_api",
+		WindowList: []store.TmuxWindow{{Index: 0, Path: "/home/demo/dev/shop/shop_api", Command: "zsh"}}}})
+	if d, why := dirty(); !d || !strings.Contains(why, "SHOP-api ended") {
+		t.Fatalf("after Claude exited: dirty=%v %q", d, why)
+	}
+}

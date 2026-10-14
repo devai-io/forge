@@ -1,6 +1,6 @@
 import { makeTask } from "@/test/fixtures";
 import { niceMax } from "./chart";
-import { bucketChecks } from "./infra";
+import { bucketChecks, parseDelays } from "./infra";
 import { passwordStrength } from "./password";
 import { isStale, syncLabel } from "./projects";
 import { defaultListFilters, filterTasks } from "./taskFilters";
@@ -28,8 +28,34 @@ describe("bucketChecks", () => {
       now,
     );
     expect(b).toHaveLength(48);
-    expect(b[47]).toMatchObject({ ok: 1, fail: 1 });
-    expect(b.reduce((n, x) => n + x.ok + x.fail, 0)).toBe(2);
+    expect(b[47]).toMatchObject({ ok: 1, warn: 1, fail: 0 });
+    expect(b.reduce((n, x) => n + x.ok + x.warn + x.fail, 0)).toBe(2);
+  });
+
+  it("tells failures that cleared on a recheck (amber) from confirmed ones (red)", () => {
+    const now = Date.parse("2026-09-27T12:00:00Z");
+    const at = (m: number, ok: boolean) => ({ at: new Date(now - m * 60_000).toISOString(), ok, code: ok ? 200 : 502, latency_ms: 80, error: "" });
+    // 3 h ago: one blip that cleared. 2 h ago: three failures in a row (down
+    // with 2 retries), then back up. Now: two failures, still being rechecked.
+    const checks = [at(180, false), at(179, true), at(122, false), at(121, false), at(120, false), at(100, true), at(2, false), at(1, false)];
+    const b = bucketChecks(checks.reverse(), now);
+    const blip = b.find((x) => x.start <= now - 180 * 60_000 && now - 180 * 60_000 < x.start + 1_800_000)!;
+    expect(blip).toMatchObject({ warn: 1, fail: 0, ok: 1 });
+    expect(b.reduce((n, x) => n + x.fail, 0)).toBe(3);
+    expect(b[47]).toMatchObject({ warn: 2, fail: 0 });
+    // With no retries every failure is confirmed.
+    expect(bucketChecks(checks, now, 24, 48, 0).reduce((n, x) => n + x.fail, 0)).toBe(6);
+  });
+});
+
+describe("parseDelays", () => {
+  it("reads 1–5 delays from 10 to 900 seconds", () => {
+    expect(parseDelays("30, 60")).toEqual([30, 60]);
+    expect(parseDelays(" 15 45 ")).toEqual([15, 45]);
+    expect(parseDelays("")).toBeNull();
+    expect(parseDelays("5")).toBeNull();
+    expect(parseDelays("30, x")).toBeNull();
+    expect(parseDelays("10,20,30,40,50,60")).toBeNull();
   });
 });
 

@@ -48,12 +48,28 @@ func TestFocusRulesThenModel(t *testing.T) {
 	if len(fake.seen) != 1 || !strings.Contains(fmt.Sprint(fake.seen[0]), "open_tasks") {
 		t.Fatalf("the model saw the project state: %v", fake.seen)
 	}
+	if len(f.LastUsage) != 1 || f.LastUsage[0].Note != "focus" || f.LastUsage[0].Calls != 1 ||
+		f.LastUsage[0].OutputTokens != 10 || f.LastUsage[0].CostUSD == nil || len(f.Usage) != 1 {
+		t.Fatalf("model call not metered: last %+v, total %+v", f.LastUsage, f.Usage)
+	}
 
 	// A model that answers nonsense falls back to rules, saying so.
 	fake.steps = []map[string]any{{"role": "assistant", "content": "I cannot help with that."}}
 	expect(t, "refresh, bad answer", h.do("POST", "/api/projects/SHOP/focus/refresh", nil, &f), 200)
 	if f.Source != "rules" || f.Error == "" {
 		t.Fatalf("fallback = %+v", f)
+	}
+	// The unusable answer was still paid for.
+	if len(f.Usage) != 1 || f.Usage[0].Calls != 2 || len(f.LastUsage) != 1 {
+		t.Fatalf("usage after a bad answer: total %+v, last %+v", f.Usage, f.LastUsage)
+	}
+	var spend struct {
+		Usage    []struct{ Calls int }
+		TotalUSD float64 `json:"total_usd"`
+	}
+	expect(t, "focus usage", h.do("GET", "/api/focus/usage", nil, &spend), 200)
+	if len(spend.Usage) != 1 || spend.Usage[0].Calls != 2 || spend.TotalUSD <= 0 {
+		t.Fatalf("focus usage = %+v", spend)
 	}
 
 	// A task change marks it dirty; the loop picks it up once settled.

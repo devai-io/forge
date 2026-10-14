@@ -26,6 +26,7 @@ import { RelativeTime } from "@/components/ui/RelativeTime";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { useToast } from "@/components/ui/Toast";
 import { useShell } from "@/features/shell/context";
+import { formatSpend, usageCost } from "@/lib/assistant";
 
 const KIND_ICON: Record<FocusKind, typeof ListTodo> = {
   task: ListTodo,
@@ -124,6 +125,12 @@ function FocusBody({ f }: { f: ProjectFocus }) {
           Updated <RelativeTime iso={f.generated_at} />
           {f.trigger ? <> · {f.trigger}</> : null} · {f.source === "ai" ? `AI${f.model ? ` (${f.model})` : ""}` : "rules"}
         </span>
+        {usageCost(f.usage) !== null ? (
+          <span title="What the model calls for this project's focus cost: the latest computation, and in all">
+            · {usageCost(f.last_usage) !== null ? `${formatSpend(usageCost(f.last_usage))} this time, ` : ""}
+            {formatSpend(usageCost(f.usage))} in all
+          </span>
+        ) : null}
         {f.dirty ? (
           <span className="inline-flex items-center gap-1 text-fg-2" title={f.dirty_reason ? `Changed: ${f.dirty_reason}` : undefined}>
             · <span className="size-1.5 rounded-full bg-warning" aria-hidden /> stale — recalculating soon

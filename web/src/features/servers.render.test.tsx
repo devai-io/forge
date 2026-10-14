@@ -2,6 +2,7 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Route, Routes, useParams } from "react-router-dom";
 import type { Monitoring, Server } from "@/api/types";
+import { InfraPage } from "@/features/infra/InfraPage";
 import { ServerPage } from "@/features/infra/ServerPage";
 import { MonitoringPage } from "@/features/monitoring/MonitoringPage";
 import { jsonResponse, renderWithProviders, routeFetch } from "@/test/render";
@@ -130,6 +131,21 @@ describe("server page", () => {
     const open = screen.getByRole("button", { name: /Open shell/ });
     await screen.findByTitle("ssh root@web-1.example.com from desk");
     await userEvent.click(open);
+    expect(await screen.findByText("attached 7/ssh-web-1")).toBeInTheDocument();
+    expect(shellBody).toEqual({ runner_id: 7 });
+  });
+
+  it("opens a shell from a server card on Infrastructure", async () => {
+    renderWithProviders(
+      <Routes>
+        <Route path="/infra" element={<InfraPage />} />
+        <Route path="/terminal/:runnerId/:session" element={<Attached />} />
+      </Routes>,
+      { route: "/infra" },
+    );
+    const icon = await screen.findByRole("button", { name: "Open a shell on web-1" });
+    await screen.findByTitle("ssh root@web-1.example.com from desk");
+    await userEvent.click(icon);
     expect(await screen.findByText("attached 7/ssh-web-1")).toBeInTheDocument();
     expect(shellBody).toEqual({ runner_id: 7 });
   });

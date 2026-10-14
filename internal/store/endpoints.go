@@ -23,36 +23,95 @@ func scanEndpoint(row interface{ Scan(...any) error }) (*Endpoint, error) {
 		&e.LastCheckedAt, &e.LastChangeAt, &e.Uptime24h); err != nil {
 		return nil, mapErr(err)
 	}
-	e.RetryLimit = EndpointRetries
-	if e.LastStatus == "warning" && e.LastCheckedAt != nil {
-		next := e.LastCheckedAt.Add(RecheckDelay(e.FailStreak))
-		e.NextCheckAt = &next
-	}
 	return &e, nil
 }
 
+// withRetries fills in what the endpoint settings decide: how many rechecks
+// it gets, and when a "warning" endpoint is checked next.
+func (e *Endpoint) withRetries(v EndpointSettings) {
+	e.RetryLimit = v.Retries
+	e.NextCheckAt = nil
+	if e.LastStatus == "warning" && e.LastCheckedAt != nil {
+		next := e.LastCheckedAt.Add(v.Delay(e.FailStreak))
+		e.NextCheckAt = &next
+	}
+}
+
 // EndpointRetries is how many quick rechecks a failing endpoint gets before
-// it is called down: one failed check puts it at "warning", and it is "down"
-// once EndpointRetries more checks in a row have failed too.
+// it is called down, until Settings change it: one failed check puts it at
+// "warning", and it is "down" once that many more checks in a row have
+// failed too.
 const EndpointRetries = 2
 
-// endpointRecheckDelays are the waits before each recheck of a "warning"
-// endpoint (first retry, second retry, …).
-var endpointRecheckDelays = []time.Duration{30 * time.Second, 60 * time.Second}
+// EndpointSettings tune the retries: Retries quick rechecks (0 = down on the
+// first failure), RecheckSeconds the waits before each (the last one
+// repeats).
+type EndpointSettings struct {
+	Retries        int   `json:"retries"`
+	RecheckSeconds []int `json:"recheck_seconds"`
+}
 
-// RecheckDelay is how long after its streak-th consecutive failure a
-// "warning" endpoint is checked again.
-func RecheckDelay(streak int) time.Duration {
+func DefaultEndpointSettings() EndpointSettings {
+	return EndpointSettings{Retries: EndpointRetries, RecheckSeconds: []int{30, 60}}
+}
+
+// Validate checks the ranges the settings page offers.
+func (v EndpointSettings) Validate() error {
+	if v.Retries < 0 || v.Retries > 5 {
+		return invalid("retries", "must be between 0 and 5")
+	}
+	if len(v.RecheckSeconds) < 1 || len(v.RecheckSeconds) > 5 {
+		return invalid("recheck_seconds", "give 1 to 5 delays")
+	}
+	for _, d := range v.RecheckSeconds {
+		if d < 10 || d > 900 {
+			return invalid("recheck_seconds", "each delay is 10 to 900 seconds")
+		}
+	}
+	return nil
+}
+
+// Delay is how long after its streak-th consecutive failure a "warning"
+// endpoint is checked again.
+func (v EndpointSettings) Delay(streak int) time.Duration {
+	d := v.RecheckSeconds
+	if len(d) == 0 {
+		d = DefaultEndpointSettings().RecheckSeconds
+	}
 	if streak < 1 {
 		streak = 1
 	}
-	if streak > len(endpointRecheckDelays) {
-		return endpointRecheckDelays[len(endpointRecheckDelays)-1]
+	if streak > len(d) {
+		streak = len(d)
 	}
-	return endpointRecheckDelays[streak-1]
+	return time.Duration(d[streak-1]) * time.Second
+}
+
+// EndpointSettings are the retry settings; the defaults until saved, or
+// when what is stored no longer validates.
+func (s *Store) EndpointSettings(ctx context.Context) (EndpointSettings, error) {
+	v := DefaultEndpointSettings()
+	if _, err := s.getSetting(ctx, "endpoints", &v); err != nil {
+		return DefaultEndpointSettings(), err
+	}
+	if v.Validate() != nil {
+		return DefaultEndpointSettings(), nil
+	}
+	return v, nil
+}
+
+func (s *Store) SetEndpointSettings(ctx context.Context, v EndpointSettings) error {
+	if err := v.Validate(); err != nil {
+		return err
+	}
+	return s.putSetting(ctx, "endpoints", v)
 }
 
 func (s *Store) queryEndpoints(ctx context.Context, where string, args ...any) ([]Endpoint, error) {
+	set, err := s.EndpointSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.DB.Query(ctx, endpointSelect+" "+where+` ORDER BY p.priority, p.name, e.name`, args...)
 	if err != nil {
 		return nil, err
@@ -64,6 +123,7 @@ func (s *Store) queryEndpoints(ctx context.Context, where string, args ...any) (
 		if err != nil {
 			return nil, err
 		}
+		e.withRetries(set)
 		out = append(out, *e)
 	}
 	return out, rows.Err()
@@ -91,7 +151,16 @@ func (s *Store) EnabledEndpoints(ctx context.Context) ([]Endpoint, error) {
 }
 
 func (s *Store) EndpointByID(ctx context.Context, id int64) (*Endpoint, error) {
-	return scanEndpoint(s.DB.QueryRow(ctx, endpointSelect+` WHERE e.id = $1`, id))
+	set, err := s.EndpointSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	e, err := scanEndpoint(s.DB.QueryRow(ctx, endpointSelect+` WHERE e.id = $1`, id))
+	if err != nil {
+		return nil, err
+	}
+	e.withRetries(set)
+	return e, nil
 }
 
 type EndpointInput struct {
@@ -205,12 +274,16 @@ type CheckResult struct {
 }
 
 // RecordCheck stores a probe and moves the endpoint's verdict: a success
-// is "up"; a failure is "warning" until EndpointRetries rechecks in a row
+// is "up"; a failure is "warning" until the configured rechecks in a row
 // have failed as well, then "down". It returns the new status and failure
 // streak, so the caller can schedule the recheck. Only confirmed changes
 // (→ down, down → up) land in the activity feed; a warning that clears is
 // not news.
 func (s *Store) RecordCheck(ctx context.Context, e Endpoint, r CheckResult) (status string, streak int, err error) {
+	set, err := s.EndpointSettings(ctx)
+	if err != nil {
+		return "", 0, err
+	}
 	var prev string
 	err = s.tx(ctx, func(tx pgxTx) error {
 		if _, err := tx.Exec(ctx, `INSERT INTO endpoint_checks (endpoint_id, ok, code, latency_ms, error)
@@ -222,7 +295,7 @@ func (s *Store) RecordCheck(ctx context.Context, e Endpoint, r CheckResult) (sta
 			Scan(&prev, &prevStreak); err != nil {
 			return mapErr(err)
 		}
-		status, streak = nextEndpointState(prev, prevStreak, r.OK)
+		status, streak = nextEndpointState(prev, prevStreak, r.OK, set.Retries)
 		if _, err := tx.Exec(ctx, `
 			UPDATE endpoints SET last_status = $2, fail_streak = $3, last_code = $4, last_latency_ms = $5,
 			       last_error = $6, last_checked_at = now(),
@@ -256,10 +329,10 @@ func (s *Store) RecordCheck(ctx context.Context, e Endpoint, r CheckResult) (sta
 }
 
 // nextEndpointState is the verdict state machine: up/unknown/warning --fail-->
-// warning (streak+1) until the streak exceeds EndpointRetries, then down; any
+// warning (streak+1) until the streak exceeds retries, then down; any
 // success --> up with the streak reset. A down endpoint stays down until it
 // answers.
-func nextEndpointState(prev string, prevStreak int, ok bool) (string, int) {
+func nextEndpointState(prev string, prevStreak int, ok bool, retries int) (string, int) {
 	if ok {
 		return "up", 0
 	}
@@ -267,7 +340,7 @@ func nextEndpointState(prev string, prevStreak int, ok bool) (string, int) {
 	if prev == "up" || prev == "unknown" {
 		streak = 1 // a stale streak from before a reset does not count
 	}
-	if prev == "down" || streak > EndpointRetries {
+	if prev == "down" || streak > retries {
 		return "down", streak
 	}
 	return "warning", streak

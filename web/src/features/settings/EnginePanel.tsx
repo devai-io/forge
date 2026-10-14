@@ -5,7 +5,7 @@
 // the provider key. Also how many runs each machine works on at once.
 
 import { useState } from "react";
-import { useEngine, useUpdateEngine } from "@/api/hooks";
+import { useEngine, useFocusUsage, useUpdateEngine } from "@/api/hooks";
 import type { Engine, EngineSettings } from "@/api/types";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -14,9 +14,11 @@ import { Panel } from "@/components/ui/Panel";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { Segmented } from "@/components/ui/Tabs";
 import { useToast } from "@/components/ui/Toast";
+import { formatSpend } from "@/lib/assistant";
 
 export function EnginePanel() {
   const engine = useEngine();
+  const focusUsage = useFocusUsage();
   const update = useUpdateEngine();
   const toast = useToast();
   const [models, setModels] = useState<Pick<EngineSettings, "model" | "heavy_model"> | null>(null);
@@ -130,6 +132,14 @@ export function EnginePanel() {
             </Button>
           </form>
 
+          {focusUsage.data && focusUsage.data.usage.length ? (
+            <p className="text-[12.5px] text-fg-3">
+              Project focus (the DeepSeek model above writes it) has cost{" "}
+              <span className="tabular font-medium text-fg-2">{formatSpend(focusUsage.data.total_usd)}</span> over{" "}
+              {focusUsage.data.usage.reduce((n, e) => n + e.calls, 0)} calls
+              {focusUsage.data.unpriced ? ", plus calls without a price" : ""}.
+            </p>
+          ) : null}
         </>
       )}
     </Panel>

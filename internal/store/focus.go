@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/devai-io/forge/internal/usage"
 )
 
 // Focus is a project's "what now": the immediate actions, what comes after,
@@ -56,6 +58,10 @@ type ProjectFocus struct {
 	Dirty       bool       `json:"dirty"`
 	DirtyReason string     `json:"dirty_reason"`
 	Error       string     `json:"error"`
+	// Usage is what the model calls for this project's focus have cost in
+	// all; LastUsage the latest computation's (empty when rules made it).
+	Usage     []usage.Entry `json:"usage"`
+	LastUsage []usage.Entry `json:"last_usage"`
 	// Tasks are the tasks the focus names, by ref, as they are now (a step
 	// done since the focus was computed shows as done).
 	Tasks map[string]FocusTaskLink `json:"tasks"`
@@ -87,11 +93,15 @@ func (s *Store) FocusByProject(ctx context.Context, projectID int64) (*ProjectFo
 	var f ProjectFocus
 	var raw []byte
 	var dirty *time.Time
-	if err := s.DB.QueryRow(ctx, `SELECT focus, source, model, trigger, generated_at, dirty_since, dirty_reason, error
+	var total, last string
+	if err := s.DB.QueryRow(ctx, `SELECT focus, source, model, trigger, generated_at, dirty_since, dirty_reason, error,
+		usage, last_usage
 		FROM project_focus WHERE project_id = $1 AND generated_at IS NOT NULL`, projectID).
-		Scan(&raw, &f.Source, &f.Model, &f.Trigger, &f.GeneratedAt, &dirty, &f.DirtyReason, &f.Error); err != nil {
+		Scan(&raw, &f.Source, &f.Model, &f.Trigger, &f.GeneratedAt, &dirty, &f.DirtyReason, &f.Error,
+			&total, &last); err != nil {
 		return nil, mapErr(err)
 	}
+	f.Usage, f.LastUsage = usageEntries(total), usageEntries(last)
 	_ = json.Unmarshal(raw, &f.Focus)
 	f.Focus = f.Focus.normalized()
 	f.Dirty = dirty != nil
@@ -666,4 +676,59 @@ func (s *Store) TaskRefs(ctx context.Context, projectID int64) (map[string]bool,
 		out[r] = true
 	}
 	return out, rows.Err()
+}
+
+func usageEntries(raw string) []usage.Entry {
+	var es []usage.Entry
+	if json.Unmarshal([]byte(raw), &es) != nil || es == nil {
+		return []usage.Entry{}
+	}
+	return es
+}
+
+// SetFocusUsage records what one focus computation cost: last_usage becomes
+// es, and es is added to the project's running total. Best effort, like the
+// dirty marks.
+func (s *Store) SetFocusUsage(ctx context.Context, projectID int64, es []usage.Entry) {
+	_ = s.tx(ctx, func(tx pgxTx) error {
+		var raw string
+		if err := tx.QueryRow(ctx, `SELECT usage FROM project_focus WHERE project_id = $1`, projectID).Scan(&raw); err != nil {
+			return err
+		}
+		m := usage.NewMeter()
+		for _, e := range usageEntries(raw) {
+			m.Add(e)
+		}
+		for _, e := range es {
+			m.Add(e)
+		}
+		if es == nil {
+			es = []usage.Entry{}
+		}
+		all, _ := json.Marshal(m.Entries())
+		last, _ := json.Marshal(es)
+		_, err := tx.Exec(ctx, `UPDATE project_focus SET usage = $2, last_usage = $3 WHERE project_id = $1`,
+			projectID, string(all), string(last))
+		return err
+	})
+}
+
+// FocusUsage adds up what focus computations have cost across projects.
+func (s *Store) FocusUsage(ctx context.Context) ([]usage.Entry, error) {
+	rows, err := s.DB.Query(ctx, `SELECT usage FROM project_focus WHERE usage <> '[]'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	m := usage.NewMeter()
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		for _, e := range usageEntries(raw) {
+			m.Add(e)
+		}
+	}
+	return m.Entries(), rows.Err()
 }

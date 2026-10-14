@@ -30,6 +30,8 @@ const focus = (over: Partial<ProjectFocus> = {}): ProjectFocus => ({
   dirty: true,
   dirty_reason: "SHOP-2 updated",
   error: "",
+  usage: [],
+  last_usage: [],
   tasks: {
     "SHOP-1": { id: 1, status: "in_progress", title: "Redesign the checkout flow" },
     "SHOP-4": { id: 4, status: "blocked", title: "Publish mobile app 2.1" },
@@ -48,8 +50,9 @@ describe("Focus panel", () => {
         "GET /projects/SHOP/focus": () => jsonResponse(200, focus()),
         "POST /projects/SHOP/focus/refresh": () => {
           refreshed++;
+          const call = { api: "openrouter", model: "fake-small", calls: 1, input_tokens: 900, cached_tokens: 0, output_tokens: 200, cost_usd: 0.0021, note: "focus" };
           return jsonResponse(200, focus({ source: "ai", model: "fake-small", dirty: false, trigger: "recalculated by hand",
-            focus: { ...focus().focus, headline: "Fresh take" } }));
+            focus: { ...focus().focus, headline: "Fresh take" }, last_usage: [call], usage: [{ ...call, calls: 3, cost_usd: 0.0063 }] }));
         },
       }),
     );
@@ -83,5 +86,6 @@ describe("Focus panel", () => {
     expect(refreshed).toBe(1);
     expect(screen.getByText(/AI \(fake-small\)/)).toBeInTheDocument();
     expect(screen.queryByText(/stale/)).not.toBeInTheDocument();
+    expect(screen.getByText(/\$0\.0021 this time, \$0\.0063 in all/)).toBeInTheDocument();
   });
 });

@@ -13,6 +13,7 @@ import (
 
 	"github.com/devai-io/forge/internal/llm"
 	"github.com/devai-io/forge/internal/store"
+	"github.com/devai-io/forge/internal/usage"
 )
 
 // Focus: per project, what to do now, what comes next, the roadmap and what
@@ -89,6 +90,7 @@ func (s *Server) computeFocus(ctx context.Context, projectID int64, today, trigg
 		return nil, err
 	}
 	focus, source, model, errText := store.FocusRules(in), "rules", "", ""
+	var calls []usage.Entry // what the model was paid, even for an unusable answer
 	if useAI {
 		if k, _ := s.providerKey(ctx); k != "" {
 			set, _ := s.store.EngineSettings(ctx)
@@ -96,7 +98,10 @@ func (s *Server) computeFocus(ctx context.Context, projectID int64, today, trigg
 			if model == "" {
 				model = llm.DefaultModel
 			}
-			f, err := s.focusFromModel(ctx, projectID, model, in)
+			f, spent, err := s.focusFromModel(ctx, projectID, model, in)
+			if spent != nil {
+				calls = append(calls, *spent)
+			}
 			if err != nil {
 				slog.Warn("focus: model failed, using rules", "project", in.Key, "err", err)
 				errText, model = "The model did not answer usably ("+err.Error()+"); showing the rules' version.", ""
@@ -108,6 +113,7 @@ func (s *Server) computeFocus(ctx context.Context, projectID int64, today, trigg
 	if err := s.store.SaveFocus(ctx, projectID, focus, source, model, trigger, errText, started); err != nil {
 		return nil, err
 	}
+	s.store.SetFocusUsage(ctx, projectID, calls)
 	return s.store.FocusByProject(ctx, projectID)
 }
 
@@ -121,28 +127,54 @@ const focusPrompt = `You keep a software project's focus for its single owner: w
 
 Rules: "now" has at most 5 concrete, immediately actionable steps, most important first (in-progress work, failing CI or check-up actions, urgent or overdue tasks, follow-ups of failed or finished agent runs). "next" has at most 7. "roadmap" has 2 to 8 steps in order, derived from the tasks (labels, themes, what was shipped), mixing done, active and planned. "blockers" only when something really blocks progress (may be empty). Only use task refs that appear in the data. Keep titles under 100 characters and reasons under 200. Be specific; no filler.`
 
-func (s *Server) focusFromModel(ctx context.Context, projectID int64, model string, in *store.FocusInputs) (store.Focus, error) {
+// focusFromModel asks the model for the focus. The usage entry (labelled
+// "focus") is set whenever the call was answered, usable or not.
+func (s *Server) focusFromModel(ctx context.Context, projectID int64, model string, in *store.FocusInputs) (store.Focus, *usage.Entry, error) {
 	state, _ := json.Marshal(in)
-	msg, _, err := s.llmClient(ctx).Chat(ctx, model, "off", []llm.Message{
+	msg, u, err := s.llmClient(ctx).Chat(ctx, model, "off", []llm.Message{
 		{Role: "system", Content: focusPrompt},
 		{Role: "user", Content: string(state)},
 	}, nil)
 	if err != nil {
-		return store.Focus{}, err
+		return store.Focus{}, nil, err
 	}
+	spent := focusUsage(model, u, time.Now())
 	f, err := parseFocus(msg.Content)
 	if err != nil {
-		return store.Focus{}, err
+		return store.Focus{}, spent, err
 	}
 	refs, err := s.store.TaskRefs(ctx, projectID)
 	if err != nil {
-		return store.Focus{}, err
+		return store.Focus{}, spent, err
 	}
 	f = store.CleanFocus(f, refs)
 	if f.Headline == "" && len(f.Now) == 0 {
-		return store.Focus{}, errors.New("empty focus")
+		return store.Focus{}, spent, errors.New("empty focus")
 	}
-	return f, nil
+	return f, spent, nil
+}
+
+// focusUsage is one focus call's bill line: the provider's reported cost,
+// else the DeepSeek list price estimate (as the Assistant does).
+func focusUsage(model string, u llm.Usage, at time.Time) *usage.Entry {
+	miss := int64(u.InputTokens - u.CachedTokens)
+	cost := u.CostUSD
+	if cost == nil {
+		cost = usage.DeepSeekCost(model, miss, int64(u.CachedTokens), int64(u.OutputTokens), at)
+	}
+	return &usage.Entry{API: "openrouter", Model: model, Calls: 1, InputTokens: miss,
+		CachedTokens: int64(u.CachedTokens), OutputTokens: int64(u.OutputTokens), CostUSD: cost, Note: "focus"}
+}
+
+// getFocusUsage adds up what focus computations have cost, every project.
+func (s *Server) getFocusUsage(w http.ResponseWriter, r *http.Request, u *store.User) {
+	es, err := s.store.FocusUsage(r.Context())
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	total, unpriced := usage.Total(es)
+	writeJSON(w, http.StatusOK, map[string]any{"usage": es, "total_usd": total, "unpriced": unpriced})
 }
 
 // parseFocus reads the model's answer: JSON, possibly fenced or with prose

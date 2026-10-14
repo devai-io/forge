@@ -69,7 +69,7 @@ func TestFailingEndpointIsRecheckedBeforeDown(t *testing.T) {
 	defer cancel()
 	m := New(st, time.Hour, "test")
 	m.base = ctx
-	m.delay = func(int) time.Duration { return 20 * time.Millisecond }
+	m.delay = func(context.Context, int) time.Duration { return 20 * time.Millisecond }
 
 	e, err := st.CreateEndpoint(ctx, "SHOP", store.EndpointInput{Name: "flaky", URL: srv.URL})
 	if err != nil {
@@ -134,5 +134,38 @@ func TestRecheckBookkeeping(t *testing.T) {
 	m.stopRechecks()
 	if len(m.rechecks) != 0 {
 		t.Fatal("stop left timers")
+	}
+}
+
+// The settings decide how many rechecks run and how long they wait.
+func TestRechecksFollowSettings(t *testing.T) {
+	st := openStore(t)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := st.SetEndpointSettings(ctx, store.EndpointSettings{Retries: 4, RecheckSeconds: []int{20, 40}}); err != nil {
+		t.Fatal(err)
+	}
+	m := New(st, time.Hour, "test")
+	if d := m.delay(ctx, 2); d != 40*time.Second {
+		t.Fatalf("default delay func = %v, want the setting's 40s", d)
+	}
+	m.base = ctx
+	m.delay = func(context.Context, int) time.Duration { return 10 * time.Millisecond }
+	e, err := st.CreateEndpoint(ctx, "SHOP", store.EndpointInput{Name: "four", URL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Check(ctx, *e); err != nil {
+		t.Fatal(err)
+	}
+	down := waitStatus(t, st, e.ID, "down")
+	if down.FailStreak != 5 || hits.Load() != 5 || down.RetryLimit != 4 {
+		t.Fatalf("down after %d checks, streak %d, limit %d", hits.Load(), down.FailStreak, down.RetryLimit)
 	}
 }

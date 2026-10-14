@@ -105,9 +105,9 @@ func hasEndpoint(list []store.Endpoint, id int64) bool {
 }
 
 func TestRecheckDelay(t *testing.T) {
-	if store.RecheckDelay(0) != store.RecheckDelay(1) || store.RecheckDelay(1) >= store.RecheckDelay(2) ||
-		store.RecheckDelay(9) != store.RecheckDelay(2) {
-		t.Fatalf("delays: %v %v %v", store.RecheckDelay(1), store.RecheckDelay(2), store.RecheckDelay(9))
+	d := store.DefaultEndpointSettings()
+	if d.Delay(0) != d.Delay(1) || d.Delay(1) >= d.Delay(2) || d.Delay(9) != d.Delay(2) {
+		t.Fatalf("delays: %v %v %v", d.Delay(1), d.Delay(2), d.Delay(9))
 	}
 }
 
@@ -150,4 +150,52 @@ func TestEndpointRetriesMigrationKeepsRows(t *testing.T) {
 func exec(st *store.Store, q string, args ...any) error {
 	_, err := st.DB.Exec(context.Background(), q, args...)
 	return err
+}
+
+// The retry count and delays come from the endpoint settings: zero retries
+// is down on the first failure; more retries keep it a warning longer.
+func TestEndpointSettingsRetries(t *testing.T) {
+	cur = t
+	st := open(t)
+	ctx := context.Background()
+	if v := must(st.EndpointSettings(ctx)); v.Retries != store.EndpointRetries || len(v.RecheckSeconds) != 2 {
+		t.Fatalf("defaults = %+v", v)
+	}
+	for _, bad := range []store.EndpointSettings{
+		{Retries: -1, RecheckSeconds: []int{30}},
+		{Retries: 6, RecheckSeconds: []int{30}},
+		{Retries: 1},
+		{Retries: 1, RecheckSeconds: []int{5}},
+		{Retries: 1, RecheckSeconds: []int{30, 30, 30, 30, 30, 30}},
+	} {
+		if err := st.SetEndpointSettings(ctx, bad); err == nil {
+			t.Fatalf("accepted %+v", bad)
+		}
+	}
+	code := 500
+	fail := store.CheckResult{Code: &code}
+
+	ok(t, st.SetEndpointSettings(ctx, store.EndpointSettings{Retries: 0, RecheckSeconds: []int{30}}))
+	e := must(st.CreateEndpoint(ctx, "SHOP", store.EndpointInput{Name: "zero-retries", URL: "https://example.com/zero"}))
+	if s, _, err := st.RecordCheck(ctx, *e, fail); err != nil || s != "down" {
+		t.Fatalf("zero retries = %s, %v", s, err)
+	}
+
+	ok(t, st.SetEndpointSettings(ctx, store.EndpointSettings{Retries: 4, RecheckSeconds: []int{15, 45}}))
+	e = must(st.CreateEndpoint(ctx, "SHOP", store.EndpointInput{Name: "four-retries", URL: "https://example.com/four"}))
+	for i := 1; i <= 4; i++ {
+		if s, n, err := st.RecordCheck(ctx, *e, fail); err != nil || s != "warning" || n != i {
+			t.Fatalf("failure %d = %s/%d, %v", i, s, n, err)
+		}
+	}
+	got := must(st.EndpointByID(ctx, e.ID))
+	if got.RetryLimit != 4 || got.NextCheckAt == nil || got.NextCheckAt.Sub(*got.LastCheckedAt).Seconds() != 45 {
+		t.Fatalf("endpoint = %+v", got)
+	}
+	if s, _, _ := st.RecordCheck(ctx, *e, fail); s != "down" {
+		t.Fatalf("fifth failure = %s", s)
+	}
+	if d := must(st.EndpointSettings(ctx)).Delay(1); d.Seconds() != 15 {
+		t.Fatalf("first delay = %v", d)
+	}
 }

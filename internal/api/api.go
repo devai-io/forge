@@ -213,6 +213,7 @@ func (s *Server) Handler() http.Handler {
 	h("GET /api/projects/{key}/activity", s.authed(s.projectActivity))
 	h("GET /api/projects/{key}/focus", s.authed(s.getFocus))
 	h("POST /api/projects/{key}/focus/refresh", s.authed(s.refreshFocus))
+	h("GET /api/focus/usage", s.authed(s.getFocusUsage))
 	h("GET /api/projects/{key}/files", s.authed(s.listFiles))
 	h("POST /api/projects/{key}/files", s.authed(s.uploadFile))
 	h("GET /api/projects/{key}/files/{name}", s.authed(s.downloadFile))
@@ -224,6 +225,8 @@ func (s *Server) Handler() http.Handler {
 	h("DELETE /api/repos/{id}", s.authed(s.deleteRepo))
 
 	h("GET /api/endpoints", s.authed(s.listEndpoints))
+	h("GET /api/endpoint-settings", s.authed(s.getEndpointSettings))
+	h("PATCH /api/endpoint-settings", s.authed(s.updateEndpointSettings))
 	h("PATCH /api/endpoints/{id}", s.authed(s.updateEndpoint))
 	h("DELETE /api/endpoints/{id}", s.authed(s.deleteEndpoint))
 	h("POST /api/endpoints/{id}/check", s.authed(s.checkEndpoint))
