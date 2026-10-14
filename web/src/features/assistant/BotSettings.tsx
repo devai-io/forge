@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { Field, Input, Switch, Textarea } from "@/components/ui/Input";
 import { useToast } from "@/components/ui/Toast";
+import { useCurrentUser } from "@/lib/auth";
+import { todayInTz } from "@/lib/format";
 
 /** The gear in a bot's chat header; opens the settings. */
 export function BotSettingsButton({ projectKey }: { projectKey: string }) {
@@ -30,6 +32,7 @@ export function BotSettingsButton({ projectKey }: { projectKey: string }) {
 }
 
 export function BotSettingsDialog({ projectKey, settings, onClose }: { projectKey: string; settings: Settings; onClose: () => void }) {
+  const { user } = useCurrentUser();
   const update = useUpdateBot(projectKey);
   const review = useReviewBot(projectKey);
   const toast = useToast();
@@ -38,7 +41,7 @@ export function BotSettingsDialog({ projectKey, settings, onClose }: { projectKe
   const [proactive, setProactive] = useState(settings.proactive);
   const [reviewAt, setReviewAt] = useState(settings.review_at);
   const [instructions, setInstructions] = useState(settings.instructions);
-  const today = settings.proactive_date === new Date().toISOString().slice(0, 10) ? settings.proactive_today : 0;
+  const today = settings.proactive_date === todayInTz(user?.timezone) ? settings.proactive_today : 0;
 
   const save = (e: React.FormEvent) => {
     e.preventDefault();

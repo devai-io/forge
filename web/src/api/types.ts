@@ -771,7 +771,13 @@ export type SecurityKind =
   | "engine_settings"
   | "deepseek_key" // before the provider key
   | "provider_settings"
-  | "provider_key";
+  | "provider_key"
+  | "telegram_settings"
+  | "telegram_token"
+  | "telegram_answer"
+  | "telegram_run_message"
+  | "telegram_end_run"
+  | "telegram_bot_message";
 
 export type SecurityEvent = {
   id: number;

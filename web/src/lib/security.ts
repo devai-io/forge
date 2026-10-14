@@ -40,6 +40,12 @@ export const SECURITY_KINDS: Record<SecurityKind, KindMeta> = {
   provider_settings: { label: "AI provider changed", tone: "neutral", group: "account" },
   provider_key: { label: "OpenRouter API key replaced", tone: "warning", group: "sensitive" },
   runner_rotated: { label: "Machine token rotated", tone: "neutral", group: "machines" },
+  telegram_settings: { label: "Telegram settings changed", tone: "neutral", group: "account" },
+  telegram_token: { label: "Telegram bot token replaced", tone: "warning", group: "sensitive" },
+  telegram_answer: { label: "Prompt answered from Telegram", tone: "accent", group: "sensitive" },
+  telegram_run_message: { label: "Message sent to a run from Telegram", tone: "accent", group: "sensitive" },
+  telegram_end_run: { label: "Run ended from Telegram", tone: "accent", group: "sensitive" },
+  telegram_bot_message: { label: "Message sent to a project bot from Telegram", tone: "accent", group: "sensitive" },
 };
 
 /** Label for a kind; unknown kinds (a newer API) are shown as typed. */
