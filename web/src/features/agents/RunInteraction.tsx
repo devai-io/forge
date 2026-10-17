@@ -1,7 +1,7 @@
 // An interactive run's side of the conversation: what the session is asking
 // (a question, a tool permission, a plan to approve) as cards to answer, and
 // a composer for follow-ups — the browser stand-in for Claude Code's
-// terminal. The machine decides what an answer may allow (see the agent's
+// terminal. The machine decides what an answer may allow (see Claude's
 // "approvals" setting); this only collects the user's choice.
 
 import clsx from "clsx";
@@ -44,12 +44,13 @@ export function RunInteraction({ run, prompts }: { run: Run; prompts: RunPrompt[
 
 function PromptCard({ prompt, busy, onAnswer }: { prompt: RunPrompt; busy: boolean; onAnswer: (a: PromptAnswer) => void }) {
   const Icon = prompt.kind === "question" ? CircleHelp : prompt.kind === "plan" ? ClipboardCheck : ShieldQuestion;
+  const agent = prompt.request_id.startsWith("codex-") ? "Codex" : "Claude";
   const title =
     prompt.kind === "question"
-      ? "Claude has a question"
+      ? `${agent} has a question`
       : prompt.kind === "plan"
-        ? "Claude has a plan ready"
-        : `Claude wants to use ${prompt.tool_name}`;
+        ? `${agent} has a plan ready`
+        : `${agent} wants to use ${prompt.tool_name}`;
   return (
     <section
       aria-label={title}
@@ -155,7 +156,8 @@ function QuestionForm({ prompt, busy, onAnswer }: { prompt: RunPrompt; busy: boo
 
 function PermissionForm({ prompt, busy, onAnswer }: { prompt: RunPrompt; busy: boolean; onAnswer: (a: PromptAnswer) => void }) {
   const [message, setMessage] = useState("");
-  const summary = toolSummary(prompt.tool_name, prompt.input);
+  const agent = prompt.request_id.startsWith("codex-") ? "Codex" : "Claude";
+  const summary = prompt.request_id.startsWith("codex-") ? prompt.input?.command ?? prompt.input?.reason ?? prompt.input?.grantRoot ?? "" : toolSummary(prompt.tool_name, prompt.input);
   return (
     <div className="space-y-2">
       {prompt.description && prompt.description !== summary ? (
@@ -171,10 +173,10 @@ function PermissionForm({ prompt, busy, onAnswer }: { prompt: RunPrompt; busy: b
         </pre>
       </details>
       <input
-        aria-label="Note for Claude"
+        aria-label={`Note for ${agent}`}
         value={message}
         onChange={(e) => setMessage(e.target.value)}
-        placeholder="If you deny: tell Claude why, or what to do instead (optional)"
+        placeholder={`If you deny: tell ${agent} why, or what to do instead (optional)`}
         className="w-full rounded-md border border-line bg-surface px-2.5 py-1.5 text-[13px] placeholder:text-fg-3 focus:border-accent focus:outline-none"
       />
       <div className="flex flex-wrap justify-end gap-2">
@@ -261,7 +263,7 @@ function RunComposer({ run }: { run: Run }) {
           aria-label="Message"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder={run.awaiting === "reply" ? "Reply to Claude…" : "Send a message — Claude reads it when it can…"}
+          placeholder={run.engine === "codex" ? (run.awaiting === "reply" ? "Reply to Codex…" : "Send a message to Codex…") : run.awaiting === "reply" ? "Reply to Claude…" : "Send a message — Claude reads it when it can…"}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();

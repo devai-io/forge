@@ -52,7 +52,7 @@ func (s *Store) PromptByID(ctx context.Context, id int64) (*RunPrompt, error) {
 // LastRunText is the newest thing Claude said in a run: the text of its last
 // result, else of its last assistant message ("" when there is none).
 func (s *Store) LastRunText(ctx context.Context, runID int64) string {
-	rows, err := s.DB.Query(ctx, `SELECT data FROM run_events WHERE run_id = $1 AND kind = 'claude'
+	rows, err := s.DB.Query(ctx, `SELECT data FROM run_events WHERE run_id = $1 AND kind IN ('claude', 'codex')
 		ORDER BY seq DESC LIMIT 60`, runID)
 	if err != nil {
 		return ""
@@ -62,6 +62,9 @@ func (s *Store) LastRunText(ctx context.Context, runID int64) string {
 		var raw string
 		if rows.Scan(&raw) != nil {
 			continue
+		}
+		if t := codexText(raw); t != "" {
+			return t
 		}
 		if t := claudeText(raw); t != "" {
 			return t
@@ -97,6 +100,22 @@ func claudeText(raw string) string {
 			}
 		}
 		return strings.Join(parts, "\n\n")
+	}
+	return ""
+}
+
+func codexText(raw string) string {
+	var m struct {
+		Method string `json:"method"`
+		Params struct {
+			Item struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"item"`
+		} `json:"params"`
+	}
+	if json.Unmarshal([]byte(raw), &m) == nil && m.Method == "item/completed" && m.Params.Item.Type == "agentMessage" {
+		return m.Params.Item.Text
 	}
 	return ""
 }

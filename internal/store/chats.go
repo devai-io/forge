@@ -488,6 +488,10 @@ func (s *Store) RunningChatTurn(ctx context.Context, chatID int64) (*ChatTurn, e
 // LastSessionRun is the chat's latest Claude Code session run that has a
 // session to resume.
 func (s *Store) LastSessionRun(ctx context.Context, chatID int64) (*Run, error) {
-	return scanRun(s.DB.QueryRow(ctx, runSelect+` WHERE r.repo_id IS NULL AND r.session_id <> ''
-		AND r.chat_turn_id IN (SELECT id FROM chat_turns WHERE chat_id = $1) ORDER BY r.id DESC LIMIT 1`, chatID))
+	return s.LastEngineSessionRun(ctx, chatID, "claude")
+}
+
+func (s *Store) LastEngineSessionRun(ctx context.Context, chatID int64, engine string) (*Run, error) {
+	return scanRun(s.DB.QueryRow(ctx, runSelect+` WHERE r.repo_id IS NULL AND r.session_id <> '' AND r.engine = $2
+		AND r.chat_turn_id IN (SELECT id FROM chat_turns WHERE chat_id = $1) ORDER BY r.id DESC LIMIT 1`, chatID, engine))
 }

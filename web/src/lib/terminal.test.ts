@@ -35,8 +35,9 @@ describe("sortSessions", () => {
       makeSession({ name: "new-shell", activity: "2026-09-27T11:00:00Z" }),
       makeSession({ name: "claude-old", claude: true, activity: "2026-09-26T08:00:00Z" }),
       makeSession({ name: "claude-new", claude: true, activity: "2026-09-27T09:00:00Z" }),
+      makeSession({ name: "codex", codex: true, activity: "2026-09-27T08:30:00Z" }),
     ]);
-    expect(sorted.map((s) => s.name)).toEqual(["claude-new", "claude-old", "new-shell", "old-shell"]);
+    expect(sorted.map((s) => s.name)).toEqual(["claude-new", "codex", "claude-old", "new-shell", "old-shell"]);
   });
 });
 
@@ -47,6 +48,7 @@ describe("session names", () => {
     expect(deriveSessionName("SHOP", null)).toBe("SHOP");
     expect(deriveSessionName(null, null)).toBe("claude");
     expect(deriveSessionName(null, null, [], "shell")).toBe("shell");
+    expect(deriveSessionName(null, null, [], "codex")).toBe("codex");
   });
   it("keeps names tmux-safe and within 40 characters", () => {
     expect(sanitizeSessionName("my repo/feature: x")).toBe("my-repo-feature-x");

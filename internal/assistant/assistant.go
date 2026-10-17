@@ -82,7 +82,7 @@ func (a *Assistant) client(ctx context.Context) (*llm.Client, store.AssistantSet
 
 // Ready says whether a turn on this engine could start now.
 func (a *Assistant) Ready(ctx context.Context, engine string) error {
-	if engine == "claude" {
+	if engine == "claude" || engine == "codex" {
 		set, err := a.store.AssistantSettings(ctx)
 		if err != nil {
 			return err
@@ -90,7 +90,7 @@ func (a *Assistant) Ready(ctx context.Context, engine string) error {
 		if !set.Enabled {
 			return ErrOff
 		}
-		_, err = a.sessionMachine(ctx)
+		_, err = a.sessionMachine(ctx, engine)
 		return err
 	}
 	_, _, err := a.client(ctx)
@@ -98,13 +98,13 @@ func (a *Assistant) Ready(ctx context.Context, engine string) error {
 }
 
 // sessionMachine is where Claude Code turns run: the master machine.
-func (a *Assistant) sessionMachine(ctx context.Context) (*store.Runner, error) {
+func (a *Assistant) sessionMachine(ctx context.Context, engine string) (*store.Runner, error) {
 	rn, err := a.store.MasterRunner(ctx)
 	if err != nil {
 		return nil, ErrNoMachine
 	}
-	if rn.LastSeenAt != nil && !rn.Capabilities.Claude {
-		return nil, ErrNoMachine
+	if rn.LastSeenAt != nil && ((engine == "codex" && !rn.Capabilities.Codex) || (engine != "codex" && !rn.Capabilities.Claude)) {
+		return nil, fmt.Errorf("%w: master machine has no %s binary", ErrNoMachine, engine)
 	}
 	return rn, nil
 }
@@ -193,7 +193,7 @@ func (a *Assistant) StartFrom(ctx context.Context, chatID int64, user *store.Use
 		_ = a.store.ReleaseChat(ctx, chatID, err.Error())
 		return err
 	}
-	if chat.Engine == "claude" {
+	if chat.Engine == "claude" || chat.Engine == "codex" {
 		if err := a.startSession(ctx, chat, turn, msgs, user); err != nil {
 			a.end(chatID, turn.ID, err)
 			return err
@@ -415,7 +415,7 @@ func systemPrompt(user *store.User, publicURL string) string {
 How to work:
 - Look things up with the tools instead of guessing. Project keys, repo names and machine names come from list_projects / list_machines.
 - Real work on code — reading it, answering questions about it, reviewing, fixing bugs, writing tests or features — is delegated to Claude Code with delegate_to_claude. Claude starts in the repo with the project's Forge context but NOT this conversation, so write a complete, self-contained prompt: the goal, relevant details from the chat, constraints, and what to report back.
-- Engine: runs use Forge's default engine (Settings → Agent engine). Only pass engine ("claude" or "deepseek") when %s explicitly asks for one for that work.
+- Engine: runs use Forge's default engine (Settings → Agent engine). Only pass engine ("claude", "codex" or "deepseek") when %s explicitly asks for one for that work.
 - Permission modes: "plan" (read-only) for questions, investigation and reviews; "acceptEdits" only when %s asked for changes. For changes, prefer worktree: true (an isolated branch) unless they want the edit in their checkout. Never try to bypass permissions.
 - After delegating you may wait_for_runs (at most 10 minutes per call) and summarise the outcome with the key findings. For longer work, say what you queued and give the run link (%s/agents/runs/<id>); they can ask you to check later.
 - Machines: omit machine to use the master. Commands marked confirm (store uploads, deploys) cannot be run from here — tell the user to run them from the Agents page.

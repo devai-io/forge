@@ -373,7 +373,7 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 			return nil, invalid("resume_run_id", "no such run")
 		}
 		if prev.SessionID == "" {
-			return nil, invalid("resume_run_id", "that run has no Claude session to continue")
+			return nil, invalid("resume_run_id", "that run has no agent session to continue")
 		}
 		if prev.RunnerID == 0 {
 			return nil, invalid("resume_run_id", "that run's runner no longer exists")
@@ -442,8 +442,16 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 		if runner.LastSeenAt != nil && !OneOf(in.PermissionMode, caps.PermissionModes) {
 			return nil, invalid("permission_mode", "runner %s does not allow %s", runner.Name, in.PermissionMode)
 		}
-		if runner.LastSeenAt != nil && !caps.Claude {
-			return nil, invalid("runner_id", "runner %s has no claude binary", runner.Name)
+		if runner.LastSeenAt != nil {
+			if in.Engine == "codex" && !caps.Codex {
+				return nil, invalid("runner_id", "runner %s has no codex binary", runner.Name)
+			}
+			if in.Engine != "codex" && !caps.Claude {
+				return nil, invalid("runner_id", "runner %s has no claude binary", runner.Name)
+			}
+		}
+		if in.Engine == "codex" && !OneOf(in.PermissionMode, []string{"plan", "acceptEdits", "bypassPermissions"}) {
+			return nil, invalid("permission_mode", "Codex supports plan, acceptEdits or bypassPermissions")
 		}
 		if in.Engine == "" {
 			in.Engine = "claude"
@@ -451,8 +459,12 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 		if !OneOf(in.Engine, Engines) {
 			return nil, invalid("engine", "must be one of %s", strings.Join(Engines, ", "))
 		}
-		if in.Effort != "" && !OneOf(in.Effort, ClaudeEfforts) {
-			return nil, invalid("effort", "must be one of %s", strings.Join(ClaudeEfforts, ", "))
+		efforts := ClaudeEfforts
+		if in.Engine == "codex" {
+			efforts = CodexEfforts
+		}
+		if in.Effort != "" && !OneOf(in.Effort, efforts) {
+			return nil, invalid("effort", "must be one of %s", strings.Join(efforts, ", "))
 		}
 		if in.Interactive && home {
 			return nil, invalid("interactive", "an assistant session answers through its chat")
@@ -569,7 +581,7 @@ func (s *Store) AppendEvents(ctx context.Context, runID, runnerID int64, events 
 		for _, e := range events {
 			seq++
 			kind, data := e.Kind, e.Data
-			if !OneOf(kind, []string{"claude", "stdout", "stderr", "system"}) {
+			if !OneOf(kind, []string{"claude", "codex", "stdout", "stderr", "system"}) {
 				kind = "system"
 			}
 			if len(data) == 0 || !json.Valid(data) {

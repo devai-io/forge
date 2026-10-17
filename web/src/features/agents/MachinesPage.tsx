@@ -268,6 +268,7 @@ function RunnerRow({
           ) : null}
           {r.last_seen_at ? (
             <div className="mt-1.5 flex flex-wrap gap-1">
+              {caps.codex ? <Badge tone="neutral">codex ✓</Badge> : null}
               <Badge tone={caps.claude ? "neutral" : "warning"}>{caps.claude ? "claude ✓" : "no claude"}</Badge>
               {caps.permission_modes.map((m) => (
                 <Badge key={m} tone="outline">

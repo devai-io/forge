@@ -453,10 +453,11 @@ func (s *Server) terminalKill(w http.ResponseWriter, r *http.Request, u *store.U
 }
 
 // terminalCreate starts a detached session in a repo's directory, running
-// Claude Code (which picks up the Forge context through its SessionStart
-// hook) or a plain shell. skip_permissions starts Claude with
-// --dangerously-skip-permissions; the machine refuses it unless its
-// permission_modes list bypassPermissions.
+// Claude Code or Codex (which pick up the Forge context through their
+// SessionStart hook) or a plain shell. skip_permissions starts Claude with
+// --dangerously-skip-permissions (Codex with
+// --dangerously-bypass-approvals-and-sandbox); the machine refuses it unless
+// its permission_modes list bypassPermissions.
 func (s *Server) terminalCreate(w http.ResponseWriter, r *http.Request, u *store.User) {
 	var in struct {
 		Name       string `json:"name"`
@@ -464,7 +465,8 @@ func (s *Server) terminalCreate(w http.ResponseWriter, r *http.Request, u *store
 		ProjectKey string `json:"project_key"`
 		Start      string `json:"start"`
 		Prompt     string `json:"prompt"`
-		// SkipPermissions: claude --dangerously-skip-permissions.
+		// SkipPermissions: claude --dangerously-skip-permissions,
+		// codex --dangerously-bypass-approvals-and-sandbox.
 		SkipPermissions bool `json:"skip_permissions"`
 	}
 	if !decode(w, r, &in) {
@@ -473,12 +475,12 @@ func (s *Server) terminalCreate(w http.ResponseWriter, r *http.Request, u *store
 	if in.Start == "" {
 		in.Start = "claude"
 	}
-	if in.Start != "claude" && in.Start != "shell" {
-		writeErr(w, r, &store.ValidationError{Field: "start", Message: "must be claude or shell"})
+	if in.Start != "claude" && in.Start != "codex" && in.Start != "shell" {
+		writeErr(w, r, &store.ValidationError{Field: "start", Message: "must be claude, codex or shell"})
 		return
 	}
-	if in.SkipPermissions && in.Start != "claude" {
-		writeErr(w, r, &store.ValidationError{Field: "skip_permissions", Message: "only a Claude session skips permissions"})
+	if in.SkipPermissions && in.Start == "shell" {
+		writeErr(w, r, &store.ValidationError{Field: "skip_permissions", Message: "only a Claude or Codex session skips permissions"})
 		return
 	}
 	cwd, name := "", in.Name

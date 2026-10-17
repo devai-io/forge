@@ -72,14 +72,14 @@ func toolDefs() []llm.Tool {
 				"active":  prop("boolean", "Only queued/running ones"),
 				"limit":   prop("integer", "Default 10, max 50"),
 			})},
-		{Name: "delegate_to_claude", Description: "Queue a Claude Code session in a repo on one of the machines. It runs on Forge's default engine unless engine is set. Returns the run id; use wait_for_runs or get_run to follow it.",
+		{Name: "delegate_to_claude", Description: "Queue a coding-agent session (Claude Code or Codex) in a repo on one of the machines. It runs on Forge's default engine unless engine is set. Returns the run id; use wait_for_runs or get_run to follow it.",
 			Parameters: params([]string{"project", "repo", "prompt"}, object{
 				"project":         prop("string", "Project key"),
 				"repo":            prop("string", "Repo name within the project"),
 				"prompt":          prop("string", "Complete, self-contained instructions for Claude Code"),
 				"machine":         prop("string", "Machine name or role (optional; default the master; \"ios\" for work that needs macOS/Xcode)"),
 				"permission_mode": prop("string", "plan (read-only, default) | acceptEdits (may change files)"),
-				"engine":          prop("string", "claude | deepseek (optional; default Forge's setting). Set it ONLY when the user explicitly asked for that engine for this work"),
+				"engine":          prop("string", "claude | codex | deepseek (optional; default Forge's setting). Set it ONLY when the user explicitly asked for that engine for this work"),
 				"model":           prop("string", "Model name (optional; default chosen by Forge — leave empty unless the user named one)"),
 				"worktree":        prop("boolean", "Work in an isolated git worktree/branch (recommended for changes)"),
 				"task_ref":        prop("string", "Link the run to this task (optional)"),
@@ -342,7 +342,7 @@ func (a *Assistant) call(ctx context.Context, user *store.User, name string, raw
 				cmds = append(cmds, object{"name": c.Name, "description": c.Description, "repos": c.Repos, "needs_confirmation": c.Confirm})
 			}
 			out = append(out, object{"name": r.Name, "role": r.Role, "online": r.Online, "os": r.OS,
-				"claude": r.Capabilities.Claude, "permission_modes": r.Capabilities.PermissionModes, "commands": cmds,
+				"claude": r.Capabilities.Claude, "codex": r.Capabilities.Codex, "permission_modes": r.Capabilities.PermissionModes, "commands": cmds,
 				"running": r.Running})
 		}
 		return object{"machines": out}, fmt.Sprintf("Listed %d machines", len(out)), nil
@@ -423,9 +423,9 @@ func (a *Assistant) call(ctx context.Context, user *store.User, name string, raw
 			return nil, "", err
 		}
 		switch in.Engine {
-		case "", "deepseek", "claude":
+		case "", "deepseek", "claude", "codex":
 		default:
-			return nil, "", fmt.Errorf("engine must be deepseek or claude, not %q", in.Engine)
+			return nil, "", fmt.Errorf("engine must be deepseek, claude or codex, not %q", in.Engine)
 		}
 		ri := store.RunInput{RunnerID: rn.ID, RepoID: repo.ID, Kind: "agent", Prompt: in.Prompt,
 			PermissionMode: mode, Model: in.Model, Worktree: in.Worktree, Engine: in.Engine, ChatTurnID: turnOf(ctx)}

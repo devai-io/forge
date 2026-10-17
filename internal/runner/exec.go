@@ -45,6 +45,7 @@ type claimedRun struct {
 // own MCP tools; the server adds its instructions to the system prompt.
 type assistantSetup struct {
 	AppendSystem string   `json:"append_system"`
+	ForgeWrites  bool     `json:"forge_writes"`
 	Folders      []string `json:"folders"`
 }
 
@@ -170,6 +171,9 @@ func (r *Runner) execute(ctx context.Context, run claimedRun) finishReport {
 
 	switch run.Kind {
 	case "agent":
+		if run.Engine == "codex" {
+			return r.runCodex(ctx, run, dir, ship)
+		}
 		return r.runClaude(ctx, run, dir, ship)
 	case "command":
 		return r.runCommand(ctx, run, dir, ship)

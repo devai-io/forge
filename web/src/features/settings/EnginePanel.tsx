@@ -38,10 +38,11 @@ export function EnginePanel() {
       ) : (
         <>
           <p className="text-[13px] text-fg-2">
-            Agent runs start Claude Code on your machines. On Claude it uses the machine's own login (your subscription);
-            on DeepSeek it talks to DeepSeek through OpenRouter instead, paid with the provider key. A run can pick either
-            when you queue it.
+            Agent runs start Claude Code or Codex on your machines using their local login.
+            Codex supports your eligible ChatGPT plan or an API key. DeepSeek uses Claude Code through OpenRouter,
+            paid with the provider key. Each run can choose its engine.
           </p>
+          <p className="text-[13px] text-fg-3">To connect Codex on a paired machine, run <code>codex login</code>, then <code>forge agent setup-codex</code> and restart the Forge agent.</p>
           <div className="flex flex-wrap items-center gap-3">
             <Segmented
               label="Default engine"
@@ -49,6 +50,7 @@ export function EnginePanel() {
               onChange={(v: Engine) => save({ default: v })}
               items={[
                 { value: "claude", label: "Claude" },
+                { value: "codex", label: "Codex" },
                 { value: "deepseek", label: "DeepSeek (OpenRouter)" },
               ]}
             />

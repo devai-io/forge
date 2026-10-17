@@ -27,7 +27,7 @@ export function runnerConfigSnippet(origin: string, token: string): string {
   );
 }
 
-export const ENGINE_LABEL: Record<Engine, string> = { deepseek: "DeepSeek (OpenRouter)", claude: "Claude" };
+export const ENGINE_LABEL: Record<Engine, string> = { deepseek: "DeepSeek (OpenRouter)", claude: "Claude", codex: "Codex" };
 
 /** Effort levels (claude --effort; the Assistant's DeepSeek loop adds "off"). */
 export const EFFORT_LABEL: Record<string, string> = {

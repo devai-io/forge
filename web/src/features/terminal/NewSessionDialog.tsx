@@ -1,10 +1,11 @@
-// Start a detached tmux session on a runner — Claude Code (with the Forge
-// project context) or a plain shell — in a repo's directory, then attach.
+// Start a detached tmux session on a runner — Claude Code or Codex (with the
+// Forge project context) or a plain shell — in a repo's directory, then attach.
 
-import { Sparkles, SquareTerminal } from "lucide-react";
+import { Bot, Sparkles, SquareTerminal } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { isElevationError } from "@/api/client";
+import type { SessionStart } from "@/api/types";
 import { useCreateSession, useProject, useProjects, useTerminalHosts } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -25,7 +26,7 @@ export function NewSessionDialog({ prefill, onClose }: { prefill: NewSessionPref
   const [runnerId, setRunnerId] = useState<string>(prefill.runner_id ? String(prefill.runner_id) : "");
   const [projectKey, setProjectKey] = useState(prefill.project_key ?? "");
   const [repoId, setRepoId] = useState<string>(prefill.repo_id ? String(prefill.repo_id) : "");
-  const [start, setStart] = useState<"claude" | "shell">(prefill.start ?? "claude");
+  const [start, setStart] = useState<SessionStart>(prefill.start ?? "claude");
   const [prompt, setPrompt] = useState("");
   const [name, setName] = useState("");
   // On by default; it only applies where the machine allows bypassPermissions.
@@ -51,6 +52,8 @@ export function NewSessionDialog({ prefill, onClose }: { prefill: NewSessionPref
   const finalName = name.trim() || derived;
   const nameValid = SESSION_NAME_RE.test(finalName);
   const locked = isElevationError(hosts.error);
+  const agent = start !== "shell";
+  const agentName = start === "codex" ? "Codex" : "Claude";
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,8 +65,8 @@ export function NewSessionDialog({ prefill, onClose }: { prefill: NewSessionPref
         start,
         project_key: projectKey || undefined,
         repo_id: repo ? repo.id : undefined,
-        prompt: start === "claude" && prompt.trim() ? prompt.trim() : undefined,
-        skip_permissions: start === "claude" && host.skip_permissions && skipPermissions ? true : undefined,
+        prompt: agent && prompt.trim() ? prompt.trim() : undefined,
+        skip_permissions: agent && host.skip_permissions && skipPermissions ? true : undefined,
       },
       {
         onSuccess: ({ session }) => {
@@ -107,6 +110,14 @@ export function NewSessionDialog({ prefill, onClose }: { prefill: NewSessionPref
                 label: (
                   <>
                     <Sparkles className="size-3.5" aria-hidden /> Claude
+                  </>
+                ),
+              },
+              {
+                value: "codex",
+                label: (
+                  <>
+                    <Bot className="size-3.5" aria-hidden /> Codex
                   </>
                 ),
               },
@@ -166,8 +177,8 @@ export function NewSessionDialog({ prefill, onClose }: { prefill: NewSessionPref
               )}
             </Field>
           </div>
-          {start === "claude" ? (
-            <Field label="First prompt" hint="Optional — typed into Claude once it starts. It already knows the project, open tasks and today's check-up.">
+          {agent ? (
+            <Field label="First prompt" hint={`Optional — typed into ${agentName} once it starts. It already knows the project, open tasks and today's check-up.`}>
               {(id, desc) => (
                 <Textarea
                   id={id}
@@ -181,7 +192,7 @@ export function NewSessionDialog({ prefill, onClose }: { prefill: NewSessionPref
               )}
             </Field>
           ) : null}
-          {start === "claude" ? (
+          {agent ? (
             <div className="space-y-1">
               <Switch
                 checked={!!host?.skip_permissions && skipPermissions}
@@ -189,7 +200,10 @@ export function NewSessionDialog({ prefill, onClose }: { prefill: NewSessionPref
                 disabled={!host?.skip_permissions}
                 label={
                   <>
-                    Skip permissions <code className="font-mono text-[12px] text-fg-3">--dangerously-skip-permissions</code>
+                    Skip permissions{" "}
+                    <code className="font-mono text-[12px] text-fg-3">
+                      {start === "codex" ? "--dangerously-bypass-approvals-and-sandbox" : "--dangerously-skip-permissions"}
+                    </code>
                   </>
                 }
               />

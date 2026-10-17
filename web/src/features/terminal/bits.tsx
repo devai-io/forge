@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { useQueryClient } from "@tanstack/react-query";
-import { Code, Eye, Lock, Plug, Sparkles, SquareTerminal, Trash2, Users } from "lucide-react";
+import { Bot, Code, Eye, Lock, Plug, Sparkles, SquareTerminal, Trash2, Users } from "lucide-react";
 import { useState } from "react";
 import { promptElevation } from "@/api/client";
 import { keys, useKillSession } from "@/api/hooks";
@@ -11,7 +11,7 @@ import { ConfirmDialog } from "@/components/ui/Dialog";
 import { Input } from "@/components/ui/Input";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { useToast } from "@/components/ui/Toast";
-import { truncateMiddle } from "@/lib/terminal";
+import { isAgent, truncateMiddle } from "@/lib/terminal";
 
 /** The prominent marker for a session running Claude Code. */
 export function ClaudeBadge({ className }: { className?: string }) {
@@ -25,6 +25,27 @@ export function ClaudeBadge({ className }: { className?: string }) {
       <Sparkles className="size-3" aria-hidden /> Claude
     </span>
   );
+}
+
+/** The same marker for a session running Codex. */
+export function CodexBadge({ className }: { className?: string }) {
+  return (
+    <span
+      className={clsx(
+        "inline-flex h-5 shrink-0 items-center gap-1 rounded-full bg-accent px-2 text-[11px] font-semibold text-accent-fg",
+        className,
+      )}
+    >
+      <Bot className="size-3" aria-hidden /> Codex
+    </span>
+  );
+}
+
+/** Claude's or Codex's badge for a window or session running one, else nothing. */
+export function AgentBadge({ item, className }: { item?: { claude: boolean; codex?: boolean }; className?: string }) {
+  if (item?.claude) return <ClaudeBadge className={className} />;
+  if (item?.codex) return <CodexBadge className={className} />;
+  return null;
 }
 
 function WindowRow({
@@ -52,7 +73,7 @@ function WindowRow({
           <span className="font-mono text-[12.5px] text-fg">
             {w.index}:{w.name}
           </span>
-          {w.claude ? <ClaudeBadge className="h-4.5 px-1.5 text-[10.5px]" /> : null}
+          <AgentBadge item={w} className="h-4.5 px-1.5 text-[10.5px]" />
           {w.project_key ? (
             <span className="inline-flex items-center gap-1 text-[11px] text-fg-2">
               <ColorDot color={w.project_color} className="size-2" />
@@ -116,13 +137,13 @@ export function SessionCard({
   compact?: boolean;
 }) {
   const windows = s.window_list?.length ? [...s.window_list].sort((a, b) => a.index - b.index) : [];
-  const claude = windows.length ? windows.some((w) => w.claude) : s.claude;
+  const agent = windows.length ? { claude: windows.some((w) => w.claude), codex: windows.some((w) => !!w.codex) } : s;
   return (
     <article
       aria-label={`Session ${s.name}`}
       className={clsx(
         "flex min-w-0 flex-col gap-2 rounded-xl border bg-surface p-3.5",
-        claude ? "border-accent/45" : "border-line",
+        isAgent(agent) ? "border-accent/45" : "border-line",
       )}
     >
       <div className="flex min-w-0 items-start gap-2">
@@ -130,7 +151,7 @@ export function SessionCard({
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             <h3 className="truncate font-mono text-[13.5px] font-semibold">{s.name}</h3>
-            {claude ? <ClaudeBadge /> : null}
+            <AgentBadge item={agent} />
             {!windows.length && s.project_key ? (
               <Badge tone="outline">
                 <ColorDot color={s.project_color} className="size-2" />
@@ -217,7 +238,7 @@ export function KillSessionDialog({
         <div className="space-y-3">
           <p>
             Ends every window and process in it
-            {session.claude ? ", including the running Claude session and its unsaved conversation" : ""}
+            {isAgent(session) ? `, including the running ${session.claude ? "Claude" : "Codex"} session and its unsaved conversation` : ""}
             {session.attached ? `, and disconnects ${session.attached} attached client${session.attached > 1 ? "s" : ""}` : ""}.
           </p>
           <Input

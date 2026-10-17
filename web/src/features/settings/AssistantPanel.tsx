@@ -62,9 +62,9 @@ function AssistantForm({ status }: { status: AssistantStatus }) {
   return (
     <>
       <p className="text-[13px] text-fg-2">
-        A chat that can read and update Forge and delegate work to Claude Code on your machines. On Claude it is a Claude
-        Code session on the master machine, with its login (your subscription); on DeepSeek the server runs it through
-        OpenRouter with the provider key.
+        A chat that can read and update Forge and delegate work to agents on your machines. Claude Code and Codex
+        run on the master machine using its local login; Codex supports eligible ChatGPT plans. DeepSeek runs
+        through OpenRouter with the provider key.
       </p>
       <div className="flex flex-wrap items-center gap-3">
         <Switch checked={status.settings.enabled} onChange={(v) => save({ enabled: v })} label="Use the assistant" />
@@ -74,11 +74,13 @@ function AssistantForm({ status }: { status: AssistantStatus }) {
           onChange={(v: ChatEngine) => save({ engine: v })}
           items={[
             { value: "claude", label: "Claude" },
+                { value: "codex", label: "Codex" },
             { value: "deepseek", label: "DeepSeek (OpenRouter)" },
           ]}
         />
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        {status.engines.codex?.available ? <Badge tone="good">Codex on {status.engines.codex.machine}</Badge> : null}
         {claude.available ? (
           <Badge tone="good">Claude Code on {claude.machine}</Badge>
         ) : (

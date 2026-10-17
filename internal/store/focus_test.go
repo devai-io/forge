@@ -182,3 +182,26 @@ func TestFocusDirtyWhenClaudeSessionEnds(t *testing.T) {
 		t.Fatalf("after Claude exited: dirty=%v %q", d, why)
 	}
 }
+
+// A Codex session counts the same way, and says it was Codex.
+func TestFocusDirtyWhenCodexSessionEnds(t *testing.T) {
+	cur = t
+	st := open(t)
+	ctx := context.Background()
+	shop := must(st.ProjectIDByKey(ctx, "SHOP"))
+	rn := must(st.CreateRunner(ctx, "desk", []byte("tok")))
+	beat := func(sessions []store.TmuxSession) {
+		t.Helper()
+		must(st.Heartbeat(ctx, rn.ID, store.HeartbeatInput{Hostname: "desk", Running: []int64{}, Tmux: sessions}))
+	}
+	beat([]store.TmuxSession{{Name: "SHOP-api", Path: "/home/demo/dev/shop/shop_api", Codex: true,
+		WindowList: []store.TmuxWindow{{Index: 0, Path: "/home/demo/dev/shop/shop_api", Codex: true}}}})
+	beat([]store.TmuxSession{{Name: "SHOP-api", Path: "/home/demo/dev/shop/shop_api",
+		WindowList: []store.TmuxWindow{{Index: 0, Path: "/home/demo/dev/shop/shop_api", Command: "zsh"}}}})
+	for _, d := range must(st.DirtyFocuses(ctx, 0, 10)) {
+		if d.ProjectID == shop && strings.Contains(d.Reason, "Codex session SHOP-api ended") {
+			return
+		}
+	}
+	t.Fatal("the focus was not marked when Codex exited")
+}

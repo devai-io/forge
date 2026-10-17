@@ -5,7 +5,7 @@
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import type { Run, TaskStatus } from "@/api/types";
+import type { Run, SessionStart, TaskStatus } from "@/api/types";
 import { NewRunDialog } from "@/features/agents/NewRunDialog";
 import { NewTaskDialog } from "@/features/tasks/NewTaskDialog";
 import { NewSessionDialog } from "@/features/terminal/NewSessionDialog";
@@ -15,7 +15,7 @@ export type NewSessionPrefill = {
   runner_id?: number;
   project_key?: string;
   repo_id?: number;
-  start?: "claude" | "shell";
+  start?: SessionStart;
 };
 
 export type NewRunPrefill = {

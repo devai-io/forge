@@ -31,6 +31,8 @@ type Config struct {
 
 	// ClaudePath is the claude binary; "claude" resolves through PATH.
 	ClaudePath string `json:"claude_path"`
+	CodexPath  string `json:"codex_path"`
+	configPath string
 	// PermissionModes this runner accepts. bypassPermissions is never implied:
 	// it has to be listed here by hand on the machine itself.
 	PermissionModes []string `json:"permission_modes"`
@@ -141,7 +143,11 @@ func LoadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
-	var c Config
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	c := Config{configPath: absolutePath}
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -168,6 +174,9 @@ func (c *Config) normalize() error {
 	}
 	if c.ClaudePath == "" {
 		c.ClaudePath = "claude"
+	}
+	if c.CodexPath == "" {
+		c.CodexPath = "codex"
 	}
 	if c.TmuxPath == "" {
 		c.TmuxPath = "tmux"

@@ -36,7 +36,7 @@ export function TurnSpend({ turn }: { turn: ChatTurn }) {
       </button>
       {turn.run_id ? (
         <Link to={`/agents/runs/${turn.run_id}`} className="ml-4 hover:text-fg-2 hover:underline">
-          {turn.status === "running" ? "Follow the Claude Code session" : "Claude Code session log"}
+          {turn.status === "running" ? `Follow the ${ENGINE_NAME[turn.engine]} session` : `${ENGINE_NAME[turn.engine]} session log`}
         </Link>
       ) : null}
       {open ? (

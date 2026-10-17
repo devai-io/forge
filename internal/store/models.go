@@ -266,6 +266,7 @@ type Activity struct {
 
 type RunnerCapabilities struct {
 	Claude          bool            `json:"claude"`
+	Codex           bool            `json:"codex"`
 	PermissionModes []string        `json:"permission_modes"`
 	Commands        []string        `json:"commands"`
 	CommandDetails  []CommandDetail `json:"command_details"`
@@ -437,7 +438,8 @@ var (
 	RunStatuses     = []string{"queued", "running", "succeeded", "failed", "cancelled"}
 	PermissionModes = []string{"plan", "acceptEdits", "auto", "dontAsk", "bypassPermissions"}
 	RunnerRoles     = []string{"master", "ios", "worker"}
-	Engines         = []string{"deepseek", "claude"}
+	Engines         = []string{"deepseek", "claude", "codex"}
+	CodexEfforts    = []string{"low", "medium", "high", "xhigh"}
 	ClaudeEfforts   = []string{"low", "medium", "high", "xhigh", "max"}
 	// ClaudeModels are the models the web app offers for a Claude run (any
 	// other id Claude Code accepts can still be sent).

@@ -59,8 +59,13 @@ var readOnlyTools = map[string]bool{"forge_context": true, "forge_projects": tru
 	"forge_task": true, "forge_checkup": true, "forge_recall": true}
 
 func listedTools() []map[string]any {
-	out := make([]map[string]any, len(mcpTools))
-	for i, t := range mcpTools {
+	out := make([]map[string]any, 0, len(mcpTools))
+	for _, t := range mcpTools {
+		if os.Getenv("FORGE_MCP_READ_ONLY") == "1" && !readOnlyTools[t.Name] {
+			continue
+		}
+		out = append(out, map[string]any{})
+		i := len(out) - 1
 		out[i] = map[string]any{"name": t.Name, "description": t.Description, "inputSchema": t.InputSchema,
 			"annotations": map[string]any{"readOnlyHint": readOnlyTools[t.Name], "destructiveHint": false,
 				"openWorldHint": false}}
@@ -169,6 +174,9 @@ func handleMCP(c *client, m rpcMsg) (any, map[string]any) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
+		if os.Getenv("FORGE_MCP_READ_ONLY") == "1" && !readOnlyTools[p.Name] {
+			return map[string]any{"content": []map[string]any{{"type": "text", "text": "This Forge session is read-only."}}, "isError": true}, nil
+		}
 		text, err := callTool(ctx, c, p.Name, p.Arguments)
 		if err != nil {
 			return map[string]any{"content": []map[string]any{{"type": "text", "text": "Error: " + err.Error()}}, "isError": true}, nil
@@ -261,7 +269,7 @@ func callTool(ctx context.Context, c *client, name string, a map[string]any) (st
 	case "forge_context":
 		cwd := argStr(a, "cwd")
 		if cwd == "" {
-			cwd, _ = os.Getwd()
+			cwd = mcpCwd()
 		}
 		var res struct {
 			Markdown string `json:"markdown"`
@@ -471,4 +479,13 @@ func PrintContext(cfg *Config, hook bool, in io.Reader, out io.Writer) {
 	}
 	_ = json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]any{
 		"hookEventName": "SessionStart", "additionalContext": res.Markdown}})
+}
+
+// mcpCwd keeps project tools scoped to the original repo when Codex uses a worktree.
+func mcpCwd() string {
+	if cwd := os.Getenv("FORGE_MCP_CWD"); cwd != "" {
+		return cwd
+	}
+	cwd, _ := os.Getwd()
+	return cwd
 }

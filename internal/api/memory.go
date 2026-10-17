@@ -120,6 +120,7 @@ func (s *Server) runnerRemember(w http.ResponseWriter, r *http.Request, rn *stor
 	var in struct {
 		store.MemoryInput
 		Cwd    string `json:"cwd"`
+		Agent  string `json:"agent"`
 		Global bool   `json:"global"` // about the user, not the project
 	}
 	if !decode(w, r, &in) {
@@ -133,6 +134,9 @@ func (s *Server) runnerRemember(w http.ResponseWriter, r *http.Request, rn *stor
 		return
 	}
 	in.Source, in.Origin = "claude", "Claude on "+rn.Name
+	if in.Agent == "codex" {
+		in.Source, in.Origin = "assistant", "Codex on "+rn.Name
+	}
 	saved, err := s.store.CreateMemory(r.Context(), in.MemoryInput)
 	if err != nil {
 		writeErr(w, r, err)

@@ -162,12 +162,14 @@ VS Code in the browser (master only), the `code` CLI.
    minutes, once) for the machine's token, writes `~/.config/forge/agent.json`,
    installs the background service and connects Claude Code.
 
-   If `forge` is already installed, the same in three commands:
+   If `forge` is already installed, the same in a few commands (setup-codex
+   only where Codex is installed):
 
    ```bash
    forge agent pair https://forge.example.com K7QD-M3XP
    forge agent install        # systemd user unit (Linux) / launchd agent (macOS)
    forge agent setup-claude   # MCP server + SessionStart hook for Claude Code
+   forge agent setup-codex    # the same for Codex (after codex login)
    ```
 
 Check: the dialog turns to "connected" within ~10 seconds; on the machine,
@@ -433,3 +435,42 @@ the new version; each machine's version is on the Machines page.
    `forge agent install` after editing.
 7. Never paste tokens, pairing codes or `vault.key` into chats, issues or
    commits.
+
+
+### Codex with your ChatGPT plan
+
+Install Codex CLI on each machine where you want it to run. Under the same OS
+user as the Forge agent, run:
+
+```sh
+codex login
+forge agent setup-codex
+```
+
+Restart the Forge agent after installing Codex so it advertises the new
+capability. Select **Codex** in New run, the Assistant or project bot's chat
+settings, or set it as the default in Settings → Agent engine / Assistant.
+The CLI equivalents are `forge engine codex` and `forge assistant engine codex`.
+A nonstandard binary location can be set as `codex_path` in `agent.json`.
+
+Codex uses its local login: an eligible ChatGPT plan or separately billed API
+credentials. No OpenRouter key is needed. Subscription limits still apply.
+Forge does not display an invented dollar cost for Codex token usage.
+
+Start with `plan` or `acceptEdits`. `bypassPermissions` requires explicit local
+configuration, as with Claude. Interactive runs support replies and questions;
+command/file approvals additionally require `"approvals": true`. Worktrees are
+kept under `<repo>/.forge/worktrees/` for review.
+
+Setup also connects standalone Codex sessions — one you start in a terminal,
+or from Terminals → New session → Codex — the way `setup-claude` connects
+Claude Code: the Forge MCP tools (tasks, memory, check-up), plus the
+SessionStart (project context) and UserPromptSubmit (task matching) hooks in
+`~/.codex/hooks.json` (`$CODEX_HOME/hooks.json` if set). Codex runs a new or
+changed hook only once you trust it: open `codex`, type `/hooks` and trust
+the two Forge hooks (again after an upgrade moves the binary).
+Forge-launched runs and chats receive the context without the hooks.
+
+If the agent's service was installed from a shell whose `PATH` pointed at a
+temporary `npx` copy of Codex, rerun `forge agent install` from a normal login
+shell, or set `codex_path` to a stable binary.

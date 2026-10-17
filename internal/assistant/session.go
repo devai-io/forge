@@ -23,7 +23,7 @@ import (
 const missedChars = 20000 // transcript handed to Claude Code for turns it did not see
 
 func (a *Assistant) startSession(ctx context.Context, chat *store.Chat, turn *store.ChatTurn, msgs []store.ChatMessage, user *store.User) error {
-	rn, err := a.sessionMachine(ctx)
+	rn, err := a.sessionMachine(ctx, chat.Engine)
 	if err != nil {
 		return err
 	}
@@ -37,7 +37,7 @@ func (a *Assistant) startSession(ctx context.Context, chat *store.Chat, turn *st
 	// or what other engines answered since its last one (a Claude turn's
 	// answer is the message right after its user message).
 	seen := 0
-	prev, err := a.store.LastSessionRun(ctx, chat.ID)
+	prev, err := a.store.LastEngineSessionRun(ctx, chat.ID, chat.Engine)
 	if err == nil && prev.RunnerID != 0 {
 		if pt, err := a.store.ChatTurnByID(ctx, *prev.ChatTurnID); err == nil {
 			seen = pt.Seq + 1
@@ -66,7 +66,11 @@ func (a *Assistant) startSession(ctx context.Context, chat *store.Chat, turn *st
 		mode = "acceptEdits"
 	}
 	effort := chat.Effort
-	if !store.OneOf(effort, store.ClaudeEfforts) {
+	efforts := store.ClaudeEfforts
+	if chat.Engine == "codex" {
+		efforts = store.CodexEfforts
+	}
+	if !store.OneOf(effort, efforts) {
 		effort = ""
 	}
 	var folders []string
@@ -82,6 +86,9 @@ func (a *Assistant) startSession(ctx context.Context, chat *store.Chat, turn *st
 		}
 	}
 	system := sessionPrompt(user, rn.Name, mode, a.store.PublicURL, folders, turn.Proactive())
+	if chat.Engine == "codex" {
+		system = strings.ReplaceAll(system, "Claude Code", "Codex")
+	}
 	if chat.ProjectKey != "" {
 		brief, err := a.botBrief(ctx, user, chat.ProjectKey)
 		if err != nil {
@@ -94,7 +101,7 @@ func (a *Assistant) startSession(ctx context.Context, chat *store.Chat, turn *st
 		}
 	}
 	in := store.RunInput{RunnerID: rn.ID, Kind: "agent", Prompt: prompt, PermissionMode: mode, Model: chat.Model,
-		Effort: effort, Engine: "claude", ChatTurnID: &turn.ID, AppendSystem: system, Cwd: strings.Join(nonEmpty(folders), "\n")}
+		Effort: effort, Engine: chat.Engine, ChatTurnID: &turn.ID, AppendSystem: system, Cwd: strings.Join(nonEmpty(folders), "\n")}
 	if prev != nil {
 		in.ResumeRunID = &prev.ID
 	}
@@ -201,6 +208,26 @@ func (a *Assistant) Reconcile(ctx context.Context, chatID int64) {
 // Claude Code prices them at Anthropic's API rates; on a subscription that
 // is what the work would have cost, not what was charged.
 func sessionUsage(run *store.Run) []usage.Entry {
+	if run.Engine == "codex" {
+		var u struct {
+			Model             string `json:"model"`
+			InputTokens       int64  `json:"inputTokens"`
+			CachedInputTokens int64  `json:"cachedInputTokens"`
+			OutputTokens      int64  `json:"outputTokens"`
+		}
+		if json.Unmarshal(run.Usage, &u) != nil {
+			return nil
+		}
+		model := u.Model
+		if model == "" {
+			model = run.Model
+		}
+		input := u.InputTokens - u.CachedInputTokens
+		if input < 0 {
+			input = 0
+		}
+		return []usage.Entry{{API: "codex", Model: model, Calls: 1, InputTokens: input, CachedTokens: u.CachedInputTokens, OutputTokens: u.OutputTokens, Note: "Codex on the machine’s login; billing follows its Codex authentication"}}
+	}
 	var models map[string]struct {
 		InputTokens              int64    `json:"inputTokens"`
 		OutputTokens             int64    `json:"outputTokens"`

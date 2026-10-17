@@ -44,6 +44,7 @@ func (s *Server) assistantStatus(ctx context.Context) (map[string]any, error) {
 	}
 	return map[string]any{"settings": set, "key_configured": k != "", "models": models,
 		"engines": map[string]any{
+			"codex":    s.codexStatus(ctx),
 			"deepseek": map[string]any{"available": k != "", "models": models, "efforts": llm.Efforts},
 			"claude": map[string]any{"available": claude["available"], "machine": claude["machine"], "online": claude["online"],
 				"reason": claude["reason"], "models": claudeModels, "efforts": store.ClaudeEfforts,
@@ -61,7 +62,7 @@ func chatSettings(cur store.ChatSettings, engine, model, effort *string, edits, 
 	set := cur
 	if engine != nil && *engine != set.Engine {
 		if !store.OneOf(*engine, store.Engines) {
-			return set, &store.ValidationError{Field: "engine", Message: "must be claude or deepseek"}
+			return set, &store.ValidationError{Field: "engine", Message: "must be claude, codex or deepseek"}
 		}
 		set.Engine, set.Model, set.Effort = *engine, "", "" // another engine's model and effort mean nothing here
 	}
@@ -83,6 +84,9 @@ func chatSettings(cur store.ChatSettings, engine, model, effort *string, edits, 
 	efforts := llm.Efforts
 	if set.Engine == "claude" {
 		efforts = store.ClaudeEfforts
+	}
+	if set.Engine == "codex" {
+		efforts = store.CodexEfforts
 	}
 	if set.Effort != "" && !store.OneOf(set.Effort, efforts) {
 		return set, &store.ValidationError{Field: "effort", Message: "must be one of " + strings.Join(efforts, ", ")}
@@ -124,7 +128,7 @@ func (s *Server) updateAssistant(w http.ResponseWriter, r *http.Request, u *stor
 	}
 	if in.Engine != nil {
 		if !store.OneOf(*in.Engine, store.Engines) {
-			writeErr(w, r, &store.ValidationError{Field: "engine", Message: "must be claude or deepseek"})
+			writeErr(w, r, &store.ValidationError{Field: "engine", Message: "must be claude, codex or deepseek"})
 			return
 		}
 		set.Engine = *in.Engine
@@ -500,4 +504,17 @@ func (s *Server) sendBotMessage(w http.ResponseWriter, r *http.Request, u *store
 		}
 	}
 	s.startTurn(w, r, u, chat.ID, in.Content, status)
+}
+
+func (s *Server) codexStatus(ctx context.Context) map[string]any {
+	st := map[string]any{"available": false, "machine": "", "online": nil, "reason": "no master machine", "models": []string{}, "efforts": store.CodexEfforts, "skip_permissions": false}
+	if rn, err := s.store.MasterRunner(ctx); err == nil {
+		st["machine"], st["online"] = rn.Name, rn.Online
+		st["reason"] = rn.Name + " has no Codex; install Codex and run forge agent setup-codex"
+		if rn.Capabilities.Codex {
+			st["available"], st["reason"] = true, ""
+		}
+		st["skip_permissions"] = store.OneOf("bypassPermissions", rn.Capabilities.PermissionModes)
+	}
+	return st
 }

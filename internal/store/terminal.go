@@ -17,6 +17,7 @@ type TmuxWindow struct {
 	Command      string  `json:"command"`
 	Path         string  `json:"path"`
 	Claude       bool    `json:"claude"`
+	Codex        bool    `json:"codex"`
 	ProjectKey   *string `json:"project_key"`
 	ProjectColor *string `json:"project_color"`
 	RepoID       *int64  `json:"repo_id"`
@@ -32,6 +33,7 @@ type TmuxSession struct {
 	Path         string       `json:"path"`
 	Command      string       `json:"command"`
 	Claude       bool         `json:"claude"`
+	Codex        bool         `json:"codex"`
 	ProjectKey   *string      `json:"project_key"`
 	ProjectColor *string      `json:"project_color"`
 	RepoID       *int64       `json:"repo_id"`
@@ -78,22 +80,32 @@ func (s *Store) saveTmux(ctx context.Context, runnerID int64, sessions []TmuxSes
 	return nil
 }
 
-// claudeTab is one place Claude Code was running: a session's window, or the
-// session itself for runners that do not list windows.
-type claudeTab struct{ session, path string }
+// claudeTab is one place Claude Code (or Codex) was running: a session's
+// window, or the session itself for runners that do not list windows.
+type claudeTab struct{ session, path, agent string }
+
+func agentName(claude, codex bool) string {
+	switch {
+	case claude:
+		return "Claude"
+	case codex:
+		return "Codex"
+	}
+	return ""
+}
 
 func claudeTabs(sessions []TmuxSession) map[string]claudeTab {
 	out := map[string]claudeTab{}
 	for _, se := range sessions {
 		if len(se.WindowList) == 0 {
-			if se.Claude {
-				out[se.Name] = claudeTab{se.Name, se.Path}
+			if a := agentName(se.Claude, se.Codex); a != "" {
+				out[se.Name] = claudeTab{se.Name, se.Path, a}
 			}
 			continue
 		}
 		for _, w := range se.WindowList {
-			if w.Claude {
-				out[fmt.Sprintf("%s:%d", se.Name, w.Index)] = claudeTab{se.Name, w.Path}
+			if a := agentName(w.Claude, w.Codex); a != "" {
+				out[fmt.Sprintf("%s:%d", se.Name, w.Index)] = claudeTab{se.Name, w.Path, a}
 			}
 		}
 	}
@@ -101,7 +113,7 @@ func claudeTabs(sessions []TmuxSession) map[string]claudeTab {
 }
 
 // claudeSessionsEnded marks the focus of each project where a Claude Code
-// session stopped running since the machine's last report (the window or
+// (or Codex) session stopped running since the machine's last report (the window or
 // session closed, or Claude exited in it): its work may have moved tasks.
 func (s *Store) claudeSessionsEnded(ctx context.Context, prev, cur []TmuxSession) {
 	before, now := claudeTabs(prev), claudeTabs(cur)
@@ -122,7 +134,7 @@ func (s *Store) claudeSessionsEnded(ctx context.Context, prev, cur []TmuxSession
 	for _, t := range ended {
 		if key, _ := idx.match(t.path, t.session); key != "" && !marked[key] {
 			marked[key] = true
-			s.markFocusDirtyKey(ctx, key, "Claude session "+t.session+" ended")
+			s.markFocusDirtyKey(ctx, key, t.agent+" session "+t.session+" ended")
 		}
 	}
 }
@@ -243,8 +255,8 @@ func (s *Store) TerminalHosts(ctx context.Context) ([]TerminalHost, error) {
 			}
 		}
 		sort.SliceStable(h.Sessions, func(i, j int) bool {
-			if h.Sessions[i].Claude != h.Sessions[j].Claude {
-				return h.Sessions[i].Claude
+			if ai, aj := h.Sessions[i].Claude || h.Sessions[i].Codex, h.Sessions[j].Claude || h.Sessions[j].Codex; ai != aj {
+				return ai
 			}
 			return h.Sessions[i].Activity > h.Sessions[j].Activity
 		})

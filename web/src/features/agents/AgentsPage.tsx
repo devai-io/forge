@@ -23,7 +23,7 @@ export function AgentsPage() {
     <div className="mx-auto max-w-5xl space-y-4">
       <PageHeader
         title="Agents"
-        subtitle="Claude Code sessions and commands on your machines — queue them, answer them, follow them from anywhere."
+        subtitle="Claude Code, Codex sessions and commands on your machines — queue them, answer them, follow them from anywhere."
         actions={
           <>
             <Button variant="ghost" size="sm" onClick={() => navigate("/machines")}>

@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"encoding/json"
 	"errors"
 	"net/url"
 	"strings"
@@ -14,11 +15,12 @@ import (
 // whose Anthropic-compatible endpoint lets the same claude binary run with a
 // different base URL, key and model names.
 type engineSetup struct {
-	Name       string `json:"name"`
-	BaseURL    string `json:"base_url"`
-	APIKey     string `json:"api_key"`
-	Model      string `json:"model"`
-	HeavyModel string `json:"heavy_model"`
+	Name          string          `json:"name"`
+	UsageBaseline json.RawMessage `json:"usage_baseline"`
+	BaseURL       string          `json:"base_url"`
+	APIKey        string          `json:"api_key"`
+	Model         string          `json:"model"`
+	HeavyModel    string          `json:"heavy_model"`
 }
 
 // env is what the claude process gets on top of the usual environment

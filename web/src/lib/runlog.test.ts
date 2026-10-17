@@ -52,3 +52,18 @@ describe("tool helpers", () => {
     expect(previewText("x".repeat(700), 600)).toEqual({ text: "x".repeat(600), truncated: true });
   });
 });
+
+it("renders Codex deltas once and attaches command results", () => {
+  const items = mapRunEvents([
+    ev("codex", { method: "item/agentMessage/delta", params: { itemId: "a", delta: "Hello" } }),
+    ev("codex", { method: "item/agentMessage/delta", params: { itemId: "a", delta: " world" } }),
+    ev("codex", { method: "item/completed", params: { item: { id: "a", type: "agentMessage", text: "Hello world!" } } }),
+    ev("codex", { method: "item/started", params: { item: { id: "cmd", type: "commandExecution", command: "go test ./..." } } }),
+    ev("codex", { method: "item/completed", params: { item: { id: "cmd", type: "commandExecution", aggregatedOutput: "ok", status: "completed" } } }),
+    ev("codex", { type: "result", result: "Hello world!", is_error: false }),
+  ]);
+  expect(items).toHaveLength(3);
+  expect(items[0]).toMatchObject({ kind: "text", text: "Hello world!" });
+  expect(items[1]).toMatchObject({ kind: "tool", summary: "go test ./...", result: { text: "ok", isError: false } });
+  expect(items[2]).toMatchObject({ kind: "result", costUsd: null });
+});

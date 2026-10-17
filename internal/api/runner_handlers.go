@@ -63,7 +63,11 @@ func (s *Server) runnerClaim(w http.ResponseWriter, r *http.Request, rn *store.R
 						folders = append(folders, f)
 					}
 				}
-				out["assistant"] = map[string]any{"append_system": run.AppendSystem, "folders": folders}
+				forgeWrites := false
+				if turn, err := s.store.ChatTurnByID(r.Context(), *run.ChatTurnID); err == nil {
+					forgeWrites = turn.Proactive()
+				}
+				out["assistant"] = map[string]any{"append_system": run.AppendSystem, "folders": folders, "forge_writes": forgeWrites}
 			}
 			writeJSON(w, http.StatusOK, out)
 			return

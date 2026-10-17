@@ -289,6 +289,7 @@ export type RunnerRole = "master" | "ios" | "worker";
 
 export type RunnerCapabilities = {
   claude: boolean;
+  codex?: boolean;
   permission_modes: string[];
   commands: string[];
   max_concurrent: number;
@@ -320,7 +321,7 @@ export type Pairing = { code: string; expires_at: string };
 export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type RunKind = "agent" | "command";
 /** Where an agent run's Claude Code sends its requests. */
-export type Engine = "deepseek" | "claude";
+export type Engine = "deepseek" | "claude" | "codex";
 export type Run = {
   id: number;
   runner_id: number;
@@ -387,7 +388,7 @@ export type PromptAnswer = {
 export type RunEvent = {
   seq: number;
   at: string;
-  kind: "claude" | "stdout" | "stderr" | "system";
+  kind: "claude" | "codex" | "stdout" | "stderr" | "system";
   data: any;
 };
 
@@ -682,6 +683,7 @@ export type TmuxWindow = {
   command: string;
   path: string;
   claude: boolean;
+  codex?: boolean; // a pane in the window runs Codex (agents from v0.1.30)
   project_key: string | null;
   project_color: string | null;
   repo_id: number | null;
@@ -699,6 +701,7 @@ export type TmuxSession = {
   path: string; // active pane's working directory
   command: string; // active pane's foreground command
   claude: boolean; // some pane in the session runs claude
+  codex?: boolean; // some pane in the session runs Codex (agents from v0.1.30)
   project_key: string | null;
   project_color: string | null;
   repo_id: number | null;
@@ -711,7 +714,7 @@ export type TerminalHost = {
   hostname: string;
   online: boolean;
   terminal: boolean; // the runner allows terminals
-  skip_permissions?: boolean; // the runner allows bypassPermissions: Claude may start with --dangerously-skip-permissions
+  skip_permissions?: boolean; // the runner allows bypassPermissions: Claude/Codex may start skipping permissions
   sessions: TmuxSession[];
   updated_at: string | null;
   role: RunnerRole;
@@ -719,13 +722,16 @@ export type TerminalHost = {
 
 export type TerminalHosts = { hosts: TerminalHost[]; default_runner_id: number | null };
 
+// What a new terminal session runs: Claude Code, Codex (both with the Forge context) or a plain shell.
+export type SessionStart = "claude" | "codex" | "shell";
+
 export type NewSessionInput = {
   name?: string;
   repo_id?: number;
   project_key?: string;
-  start: "claude" | "shell";
+  start: SessionStart;
   prompt?: string;
-  skip_permissions?: boolean; // claude --dangerously-skip-permissions
+  skip_permissions?: boolean; // claude --dangerously-skip-permissions, codex --dangerously-bypass-approvals-and-sandbox
 };
 
 // ── VS Code (web) on the master ────────────────────────────────────────────
@@ -868,7 +874,8 @@ export type EngineSettings = {
 export type EngineStatus = {
   settings: EngineSettings;
   provider_key: boolean; // DeepSeek runs need it; without it they fall back to Claude
-  models: Record<Engine, string[]>; // what the run form offers per engine
+  models: Partial<Record<Engine, string[]>>; // what the run form offers per engine
+  codex_efforts?: string[];
   efforts: string[]; // claude --effort values
 };
 
@@ -910,6 +917,7 @@ export type AssistantStatus = {
   models: string[]; // what the provider lists for this key ([] if unknown/unreachable)
   engines: {
     deepseek: { available: boolean; models: string[]; efforts: string[] };
+    codex?: { available: boolean; machine: string; online: boolean | null; reason: string; models: string[]; efforts: string[]; skip_permissions?: boolean };
     // Claude Code sessions on the master machine (its own login, no API key).
     // skip_permissions: the machine allows bypassPermissions (--dangerously-skip-permissions).
     claude: {
@@ -925,7 +933,7 @@ export type AssistantStatus = {
 };
 
 /** What answers a chat: the DeepSeek API loop on the server, or a Claude Code session on the master machine. */
-export type ChatEngine = "deepseek" | "claude";
+export type ChatEngine = "deepseek" | "claude" | "codex";
 export type ChatSettings = {
   engine: ChatEngine;
   model: string; // "" = the default (the Assistant's model / Claude Code's)

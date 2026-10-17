@@ -120,6 +120,7 @@ export function toolResultText(content: unknown): string {
 export function mapRunEvents(events: RunEvent[]): DisplayItem[] {
   const items: DisplayItem[] = [];
   const tools = new Map<string, Extract<DisplayItem, { kind: "tool" }>>();
+  const codexTexts = new Map<string, Extract<DisplayItem, { kind: "text" }>>();
 
   const pushLog = (stream: LogStream, text: string, seq: number) => {
     const last = items[items.length - 1];
@@ -128,7 +129,36 @@ export function mapRunEvents(events: RunEvent[]): DisplayItem[] {
   };
 
   for (const ev of events) {
-    if (ev.kind !== "claude") {
+    if (ev.kind === "codex" && ev.data?.method) {
+      const { method, params: p = {} } = ev.data;
+      if (method === "item/agentMessage/delta") {
+        const id = str(p.itemId);
+        let item = codexTexts.get(id);
+        if (!item) { item = { kind: "text", key: `codex-${ev.seq}`, text: "" }; codexTexts.set(id, item); items.push(item); }
+        item.text += str(p.delta);
+      } else if (method === "item/started" || method === "item/completed") {
+        const i = p.item ?? {};
+        const id = str(i.id);
+        if (i.type === "agentMessage" && method === "item/completed") {
+          const existing = codexTexts.get(id);
+          if (existing) existing.text = str(i.text);
+          else { const item: Extract<DisplayItem, { kind: "text" }> = { kind: "text", key: `codex-${ev.seq}`, text: str(i.text) }; codexTexts.set(id, item); items.push(item); }
+        } else if (["commandExecution", "fileChange", "mcpToolCall", "webSearch"].includes(i.type)) {
+          let tool = tools.get(id);
+          if (!tool) {
+            const name = i.type === "commandExecution" ? "Bash" : i.type === "mcpToolCall" ? `${i.server} · ${i.tool}` : i.type;
+            const input = i.type === "commandExecution" ? { command: i.command } : i.arguments ?? i.changes ?? i;
+            tool = { kind: "tool", key: `codex-tool-${ev.seq}`, id, name, input, summary: toolSummary(name, input), result: null };
+            tools.set(id, tool); items.push(tool);
+          }
+          if (method === "item/completed") tool.result = { text: toolResultText(i.aggregatedOutput ?? i.result ?? i.changes ?? i.status), isError: i.status === "failed" || i.status === "declined" || !!i.error };
+        }
+      } else if (method === "error") {
+        items.push({ kind: "note", key: `codex-error-${ev.seq}`, text: str(p.error?.message) });
+      }
+      continue;
+    }
+    if (ev.kind !== "claude" && ev.kind !== "codex") {
       const text = ev.data && typeof ev.data === "object" ? str(ev.data.text) : str(ev.data);
       pushLog(ev.kind, text, ev.seq);
       continue;

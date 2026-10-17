@@ -5,6 +5,7 @@
   "allowed_roots": ["~/dev"],
   "permission_modes": ["plan", "acceptEdits"],
   "claude_path": "claude",
+  "codex_path": "codex",
 
   "terminal": false,
   "code": { "enabled": false, "listen": "10.0.0.5:7422" },

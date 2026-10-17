@@ -13,8 +13,8 @@ import { Button } from "@/components/ui/Button";
 import { Panel } from "@/components/ui/Panel";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { useShell } from "@/features/shell/context";
-import { allWindows, attachPath, windowParam, windowTarget, type HostWindow } from "@/lib/terminal";
-import { ClaudeBadge, UnlockTerminals } from "./bits";
+import { allWindows, attachPath, isAgent, windowParam, windowTarget, type HostWindow } from "@/lib/terminal";
+import { AgentBadge, UnlockTerminals } from "./bits";
 import { PeekSheet } from "./Peek";
 
 function WindowLine({ item, onPeek, showProject = false }: { item: HostWindow; onPeek: () => void; showProject?: boolean }) {
@@ -32,7 +32,7 @@ function WindowLine({ item, onPeek, showProject = false }: { item: HostWindow; o
       >
         <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[13px]">
           <span className="font-mono">{windowTarget(session.name, w)}</span>
-          {w.claude ? <ClaudeBadge className="h-4.5 px-1.5 text-[10.5px]" /> : null}
+          <AgentBadge item={w} className="h-4.5 px-1.5 text-[10.5px]" />
           {showProject && w.project_key ? (
             <span className="inline-flex items-center gap-1 text-[11.5px] text-fg-2">
               <ColorDot color={w.project_color} className="size-2" />
@@ -125,20 +125,20 @@ export function ProjectSessions({ projectKey }: { projectKey: string }) {
   );
 }
 
-/** Dashboard: every window running Claude, and how busy each host is. */
+/** Dashboard: every window running Claude or Codex, and how busy each host is. */
 export function ClaudeSessionsPanel() {
   const hosts = useTerminalHosts({ refetchInterval: 15_000 });
   const peek = usePeek();
   const locked = isElevationError(hosts.error);
   const terminalHosts = (hosts.data?.hosts ?? []).filter((h) => h.terminal);
   if (!locked && !terminalHosts.length) return null;
-  const claude = allWindows(terminalHosts, (w) => w.claude);
+  const claude = allWindows(terminalHosts, isAgent);
 
   return (
     <Panel
       title={
         <>
-          Claude sessions {claude.length ? <span className="font-normal text-fg-3">· {claude.length}</span> : null}
+          Agent sessions {claude.length ? <span className="font-normal text-fg-3">· {claude.length}</span> : null}
         </>
       }
       icon={<Sparkles />}
@@ -158,13 +158,13 @@ export function ClaudeSessionsPanel() {
         <>
           <div className="mb-1 flex flex-wrap gap-x-3 gap-y-1 px-2 pt-1 text-[12px] text-fg-3">
             {terminalHosts.map((h) => {
-              const n = h.sessions.reduce((acc, s) => acc + (s.window_list?.length ? s.window_list.filter((w) => w.claude).length : Number(s.claude)), 0);
+              const n = h.sessions.reduce((acc, s) => acc + (s.window_list?.length ? s.window_list.filter(isAgent).length : Number(isAgent(s))), 0);
               return (
                 <span key={h.runner_id} className="inline-flex items-center gap-1.5">
                   <span className={h.online ? "size-1.5 rounded-full bg-good" : "size-1.5 rounded-full bg-fg-3"} aria-hidden />
                   {h.runner_name}
                   <span className="tabular text-fg-2">
-                    {n} Claude · {h.sessions.length} session{h.sessions.length === 1 ? "" : "s"}
+                    {n} agent · {h.sessions.length} session{h.sessions.length === 1 ? "" : "s"}
                   </span>
                 </span>
               );

@@ -83,7 +83,7 @@ func (c *client) send(ctx context.Context, method, path string, body, out any) e
 }
 
 func memoryTool(ctx context.Context, c *client, name string, a map[string]any) (string, error) {
-	cwd, _ := os.Getwd()
+	cwd := mcpCwd()
 	switch name {
 	case "forge_recall":
 		q := url.Values{"cwd": {cwd}}
@@ -116,6 +116,9 @@ func memoryTool(ctx context.Context, c *client, name string, a map[string]any) (
 
 	case "forge_remember":
 		body := map[string]any{"content": argStr(a, "content"), "cwd": cwd}
+		if os.Getenv("FORGE_MCP_AGENT") == "codex" {
+			body["agent"] = "codex"
+		}
 		for k, dst := range map[string]string{"kind": "kind", "project": "project_key", "repo": "repo"} {
 			if v := argStr(a, k); v != "" {
 				body[dst] = v

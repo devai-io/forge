@@ -264,3 +264,62 @@ func TestAssistantClaudeCodeTurns(t *testing.T) {
 		t.Fatalf("switched = %+v", patched.Chat.ChatSettings)
 	}
 }
+
+func TestCodexChatAndEngineIsolation(t *testing.T) {
+	h := setup(t)
+	h.login()
+	ctx := context.Background()
+	var machine struct {
+		Runner store.Runner
+		Token  string
+	}
+	expect(t, "machine", h.newRunner("desk", &machine.Runner, &machine.Token), 201)
+	if _, err := h.store.SetRunnerRole(ctx, machine.Runner.ID, "master"); err != nil {
+		t.Fatal(err)
+	}
+	rn := &harness{t: t, srv: h.srv, client: &http.Client{}}
+	bearer := []string{"Authorization", "Bearer " + machine.Token}
+	expect(t, "heartbeat", rn.do("POST", "/api/runner/heartbeat", map[string]any{"capabilities": map[string]any{"codex": true, "claude": true, "permission_modes": []string{"plan", "acceptEdits"}}}, nil, bearer...), 200)
+	var saved store.MemorySaved
+	expect(t, "Codex memory", rn.do("POST", "/api/runner/memories", map[string]any{"agent": "codex", "global": true, "content": "Prefer concise build reports."}, &saved, bearer...), 201)
+	if saved.Memory.Source != "assistant" || saved.Memory.Origin != "Codex on desk" {
+		t.Fatalf("Codex memory = %+v", saved)
+	}
+	// Subscription-backed Codex needs no provider key.
+	expect(t, "enable", h.do("PATCH", "/api/assistant", map[string]any{"enabled": true, "engine": "codex"}, nil), 200)
+	var started chatView
+	expect(t, "bad effort", h.do("POST", "/api/chats", map[string]any{"content": "Hello", "engine": "codex", "effort": "max"}, nil), 422)
+	expect(t, "start", h.do("POST", "/api/chats", map[string]any{"content": "Read SHOP status", "engine": "codex", "effort": "high"}, &started), 201)
+	var claim struct {
+		Run    store.Run
+		Engine map[string]json.RawMessage
+	}
+	expect(t, "claim", rn.do("POST", "/api/runner/claim", nil, &claim, bearer...), 200)
+	if claim.Run.Engine != "codex" || claim.Run.PermissionMode != "plan" || claim.Run.ResumeSession != "" {
+		t.Fatalf("claim = %+v", claim)
+	}
+	events := map[string]any{"events": []any{map[string]any{"kind": "codex", "data": map[string]any{"method": "item/completed", "params": map[string]any{"item": map[string]any{"type": "agentMessage", "text": "Ready."}}}}}}
+	expect(t, "events", rn.do("POST", fmt.Sprintf("/api/runner/runs/%d/events", claim.Run.ID), events, nil, bearer...), 204)
+	if got := h.store.LastRunText(ctx, claim.Run.ID); got != "Ready." {
+		t.Fatalf("last Codex text = %q", got)
+	}
+	expect(t, "finish", rn.do("POST", fmt.Sprintf("/api/runner/runs/%d/finish", claim.Run.ID), map[string]any{"status": "succeeded", "session_id": "codex-thread", "result": "Ready.", "usage": map[string]any{"model": "test-model", "inputTokens": 100, "cachedInputTokens": 20, "outputTokens": 30, "threadTotal": map[string]int{"inputTokens": 100, "cachedInputTokens": 20, "outputTokens": 30}}}, nil, bearer...), 204)
+	v := h.chat(started.Chat.ID)
+	if v.Chat.Busy || v.Turns[0].Status != "done" || len(v.Turns[0].Usage) != 1 || v.Turns[0].Usage[0].InputTokens != 80 || v.Turns[0].Usage[0].CostUSD != nil {
+		t.Fatalf("chat = %+v", v)
+	}
+	expect(t, "resume", h.do("POST", fmt.Sprintf("/api/chats/%d/messages", started.Chat.ID), map[string]any{"content": "More detail"}, nil), 200)
+	claim.Run = store.Run{}
+	expect(t, "claim", rn.do("POST", "/api/runner/claim", nil, &claim, bearer...), 200)
+	if claim.Run.ResumeSession != "codex-thread" || len(claim.Engine["usage_baseline"]) == 0 {
+		t.Fatalf("resume = %+v", claim)
+	}
+	expect(t, "finish", rn.do("POST", fmt.Sprintf("/api/runner/runs/%d/finish", claim.Run.ID), map[string]any{"status": "succeeded", "session_id": "codex-thread", "result": "More detail."}, nil, bearer...), 204)
+	// Switching engines must start a new session and hand over the transcript.
+	expect(t, "switch", h.do("POST", fmt.Sprintf("/api/chats/%d/messages", started.Chat.ID), map[string]any{"content": "Now use Claude", "engine": "claude"}, nil), 200)
+	claim.Run = store.Run{}
+	expect(t, "claim", rn.do("POST", "/api/runner/claim", nil, &claim, bearer...), 200)
+	if claim.Run.Engine != "claude" || claim.Run.ResumeSession != "" || !strings.Contains(claim.Run.Prompt, "Ready.") {
+		t.Fatalf("cross-engine claim = %+v", claim.Run)
+	}
+}

@@ -55,7 +55,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   const runEngine: Engine = resume ? resume.engine || "claude" : engine || defaultEngine;
   const models = [...(engineStatus.data?.models?.[runEngine] ?? [])];
   if (model && !customModel && !models.includes(model)) models.unshift(model);
-  const efforts = engineStatus.data?.efforts ?? [];
+  const efforts = (runEngine === "codex" ? engineStatus.data?.codex_efforts : engineStatus.data?.efforts) ?? [];
   const [confirmText, setConfirmText] = useState("");
   const [taskId, setTaskId] = useState<string>(
     resume?.task_id ? String(resume.task_id) : prefill.task_id ? String(prefill.task_id) : "",
@@ -71,7 +71,8 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   const effectiveRepoId = repoId || String(repos[0]?.id ?? "");
   const tasks = useTasks({ project: effectiveProjectKey, open: true }, { enabled: !!effectiveProjectKey && !resume });
 
-  const modes = runner?.capabilities.permission_modes.length ? runner.capabilities.permission_modes : ["plan"];
+  const offeredModes = runner?.capabilities.permission_modes.length ? runner.capabilities.permission_modes : ["plan"];
+  const modes = runEngine === "codex" ? offeredModes.filter((m) => ["plan", "acceptEdits", "bypassPermissions"].includes(m)) : offeredModes;
   const canInteract = !!runner?.capabilities.interactive;
   const repoName = repos.find((r) => String(r.id) === effectiveRepoId)?.name;
   // Commands any runner offers for this repo (unscoped, or scoped to it) —
@@ -154,7 +155,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
       title={resume ? `Continue run #${resume.id}` : "New agent run"}
       description={
         resume
-          ? `Resumes the Claude session on ${resume.runner_name} in ${resume.repo_name}.`
+          ? `Resumes the agent session on ${resume.runner_name} in ${resume.repo_name}.`
           : "Runs on one of your machines. The runner only accepts what its local config allows."
       }
       footer={
@@ -264,8 +265,8 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                   resume
                     ? "A continued run keeps its engine."
                     : (engine || defaultEngine) === "claude"
-                      ? "Anthropic — costs more."
-                      : "DeepSeek — the cheap default."
+                      ? "Uses the machine’s Claude login."
+                      : runEngine === "codex" ? "Uses the machine’s Codex login (ChatGPT plan or API key)." : "DeepSeek through OpenRouter."
                 }
               >
                 {(id, desc) => (
@@ -277,6 +278,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                     onChange={(e) => {
                       setEngine(e.target.value as Engine | "");
                       setModel("");
+                      setEffort("");
                       setCustomModel(false);
                     }}
                   >
@@ -286,6 +288,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                       <>
                         <option value="">Default ({ENGINE_LABEL[defaultEngine]})</option>
                         <option value="claude">Claude</option>
+                        <option value="codex">Codex</option>
                         <option value="deepseek">DeepSeek (OpenRouter)</option>
                       </>
                     )}
@@ -338,7 +341,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                   </div>
                 )}
               </Field>
-              <Field label="Effort" hint="How hard it thinks (claude --effort).">
+              <Field label="Effort" hint="How much reasoning to use.">
                 {(id, desc) => (
                   <Select id={id} aria-describedby={desc} value={effort} onChange={(e) => setEffort(e.target.value)}>
                     <option value="">Default</option>

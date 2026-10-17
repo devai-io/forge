@@ -673,6 +673,18 @@ func TestTerminalRelay(t *testing.T) {
 		t.Fatalf("shell = %+v, create = %v", shell, last)
 	}
 
+	// A Codex session goes to the machine as start "codex"; a shell never skips permissions.
+	sessions := fmt.Sprintf("/api/terminal/%d/sessions", created.Runner.ID)
+	expect(t, "codex session", h.do("POST", sessions, map[string]any{"name": "codex-1", "start": "codex", "prompt": "hi", "skip_permissions": true}, nil), 201)
+	createdMu.Lock()
+	last = createdMsgs[len(createdMsgs)-1]
+	createdMu.Unlock()
+	if last["start"] != "codex" || last["session"] != "codex-1" || last["prompt"] != "hi" || last["skip_permissions"] != true {
+		t.Fatalf("codex create = %v", last)
+	}
+	expect(t, "shell skipping permissions", h.do("POST", sessions, map[string]any{"start": "shell", "skip_permissions": true}, nil), 422)
+	expect(t, "unknown start", h.do("POST", sessions, map[string]any{"start": "cursor"}, nil), 422)
+
 	u, _ := url.Parse(h.srv.URL)
 	cookies := h.client.Jar.Cookies(u)
 	bh := http.Header{"Origin": {h.srv.URL}}

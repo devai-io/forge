@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -56,6 +57,15 @@ func (s *Server) prepareRun(ctx context.Context, in *store.RunInput) {
 // key and the models. A run stored with one of DeepSeek's own model names
 // (before the switch to OpenRouter) gets the OpenRouter id.
 func (s *Server) runnerEngine(ctx context.Context, run *store.Run) map[string]any {
+	if run.Engine == "codex" {
+		baseline := json.RawMessage(`{}`)
+		if run.ResumeRunID != nil {
+			if prev, err := s.store.RunByID(ctx, *run.ResumeRunID); err == nil {
+				baseline = prev.Usage
+			}
+		}
+		return map[string]any{"name": "codex", "usage_baseline": baseline}
+	}
 	if run.Engine != "deepseek" {
 		return nil
 	}
@@ -86,8 +96,9 @@ func (s *Server) engineStatus(ctx context.Context) (map[string]any, error) {
 		}
 	}
 	return map[string]any{"settings": set, "provider_key": k != "",
-		"models":  map[string]any{"deepseek": deepseek, "claude": store.ClaudeModels},
-		"efforts": store.ClaudeEfforts}, nil
+		"models":        map[string]any{"deepseek": deepseek, "claude": store.ClaudeModels, "codex": []string{}},
+		"codex_efforts": store.CodexEfforts,
+		"efforts":       store.ClaudeEfforts}, nil
 }
 
 func (s *Server) getEngine(w http.ResponseWriter, r *http.Request, u *store.User) {
@@ -124,7 +135,7 @@ func (s *Server) updateEngine(w http.ResponseWriter, r *http.Request, u *store.U
 	}
 	if in.Default != nil {
 		if !store.OneOf(*in.Default, store.Engines) {
-			writeErr(w, r, &store.ValidationError{Field: "default", Message: "must be claude or deepseek"})
+			writeErr(w, r, &store.ValidationError{Field: "default", Message: "must be claude, codex or deepseek"})
 			return
 		}
 		set.Default = *in.Default

@@ -24,7 +24,7 @@ import { useElevatedUntil } from "@/lib/auth";
 import { ctrlChar, FONT_MAX, FONT_MIN, KEYBAR, readFontSize, storeFontSize, terminalWsUrl } from "@/lib/terminal";
 import { cssVars, terminalTheme } from "@/lib/terminalTheme";
 import { useTheme } from "@/lib/theme";
-import { ClaudeBadge } from "./bits";
+import { AgentBadge } from "./bits";
 import { PeekPanel } from "./Peek";
 
 type Conn =
@@ -330,7 +330,7 @@ export function TerminalView() {
                 <ColorDot color={info.project_color} className="size-2" /> {info.project_key}
               </Badge>
             ) : null}
-            {info?.claude ? <ClaudeBadge /> : null}
+            <AgentBadge item={info} />
           </span>
         </div>
         <div className="flex items-center gap-0.5">

@@ -1,14 +1,17 @@
 // Terminal helpers: session ordering and naming, the WebSocket URL, and the
 // byte sequences the phone key bar sends. Pure, so they are tested directly.
 
-import type { TerminalHost, TmuxSession, TmuxWindow } from "@/api/types";
+import type { SessionStart, TerminalHost, TmuxSession, TmuxWindow } from "@/api/types";
 
-type Sortable = Pick<TmuxSession, "claude" | "activity" | "name">;
+type Sortable = Pick<TmuxSession, "claude" | "codex" | "activity" | "name">;
 
-/** Claude sessions first (that is what gets attached to), then most recently active. */
+/** A window or session running Claude Code or Codex. */
+export const isAgent = (x: { claude: boolean; codex?: boolean }): boolean => x.claude || !!x.codex;
+
+/** Claude/Codex sessions first (that is what gets attached to), then most recently active. */
 export function compareSessions(a: Sortable, b: Sortable): number {
   return (
-    Number(b.claude) - Number(a.claude) ||
+    Number(isAgent(b)) - Number(isAgent(a)) ||
     (Date.parse(b.activity) || 0) - (Date.parse(a.activity) || 0) ||
     a.name.localeCompare(b.name)
   );
@@ -38,10 +41,10 @@ export function deriveSessionName(
   projectKey: string | null | undefined,
   repoName: string | null | undefined,
   existing: string[] = [],
-  start: "claude" | "shell" = "claude",
+  start: SessionStart = "claude",
 ): string {
   const base =
-    sanitizeSessionName([projectKey, repoName].filter(Boolean).join("-")) || (start === "claude" ? "claude" : "shell");
+    sanitizeSessionName([projectKey, repoName].filter(Boolean).join("-")) || start;
   const taken = new Set(existing);
   if (!taken.has(base)) return base;
   for (let i = 2; i < 100; i++) {
@@ -164,6 +167,7 @@ export function sessionWindows(session: TmuxSession): TmuxWindow[] {
       command: session.command,
       path: session.path,
       claude: session.claude,
+      codex: session.codex,
       project_key: session.project_key,
       project_color: session.project_color,
       repo_id: session.repo_id,
@@ -190,7 +194,7 @@ export function allWindows(
       for (const window of sessionWindows(session)) if (filter(window, session, host)) out.push({ host, session, window });
   return out.sort(
     (a, b) =>
-      Number(b.window.claude) - Number(a.window.claude) ||
+      Number(isAgent(b.window)) - Number(isAgent(a.window)) ||
       (Date.parse(b.session.activity) || 0) - (Date.parse(a.session.activity) || 0) ||
       a.session.name.localeCompare(b.session.name) ||
       a.window.index - b.window.index,

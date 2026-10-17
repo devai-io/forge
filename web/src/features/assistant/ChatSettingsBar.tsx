@@ -7,7 +7,7 @@
 
 import { useAssistant } from "@/api/hooks";
 import type { ChatEngine, ChatSettings } from "@/api/types";
-import { Select, Switch } from "@/components/ui/Input";
+import { Input, Select, Switch } from "@/components/ui/Input";
 import { EFFORT_LABEL, ENGINE_NAME } from "@/lib/assistant";
 
 export function ChatSettingsBar({
@@ -23,7 +23,9 @@ export function ChatSettingsBar({
   const engines = status.data?.engines;
   const deepseek = engines?.deepseek;
   const claude = engines?.claude;
-  const current = value.engine === "claude" ? claude : deepseek;
+  const codex = engines?.codex;
+  const current = engines?.[value.engine];
+  const local = value.engine === "codex" ? codex : claude;
 
   const models = [...(current?.models ?? [])];
   if (value.model && !models.includes(value.model)) models.unshift(value.model);
@@ -46,19 +48,22 @@ export function ChatSettingsBar({
           {claude?.machine ? ` · ${claude.machine}` : ""}
           {claude && !claude.available ? ` (${claude.reason})` : claude?.online === false ? " (offline)" : ""}
         </option>
+        <option value="codex" disabled={!codex?.available}>
+          Codex{codex?.machine ? ` · ${codex.machine}` : ""}{codex && !codex.available ? ` (${codex.reason})` : ""}
+        </option>
         <option value="deepseek" disabled={deepseek ? !deepseek.available : false}>
           {ENGINE_NAME.deepseek}
           {deepseek && !deepseek.available ? " (no key)" : ""}
         </option>
       </Select>
-      <Select compact aria-label="Model" className="w-auto" value={value.model} disabled={disabled} onChange={(e) => onChange({ model: e.target.value })}>
+      {value.engine === "codex" ? <Input aria-label="Model" className="w-44" placeholder="Default Codex model" value={value.model} disabled={disabled} onChange={(e) => onChange({ model: e.target.value })} /> : <Select compact aria-label="Model" className="w-auto" value={value.model} disabled={disabled} onChange={(e) => onChange({ model: e.target.value })}>
         <option value="">Default model{defaultModel}</option>
         {models.map((m) => (
           <option key={m} value={m}>
             {m}
           </option>
         ))}
-      </Select>
+      </Select>}
       <Select compact aria-label="Effort" className="w-auto" value={value.effort} disabled={disabled} onChange={(e) => onChange({ effort: e.target.value })}>
         <option value="">Default effort</option>
         {efforts.map((e) => (
@@ -67,14 +72,14 @@ export function ChatSettingsBar({
           </option>
         ))}
       </Select>
-      {value.engine === "claude" ? (
+      {value.engine !== "deepseek" ? (
         <Switch checked={value.edits} onChange={(v) => onChange({ edits: v })} label="Can make changes" disabled={disabled} />
       ) : null}
-      {value.engine === "claude" && (claude?.skip_permissions || value.skip_permissions) ? (
+      {value.engine !== "deepseek" && (local?.skip_permissions || value.skip_permissions) ? (
         <Switch
           checked={!!value.skip_permissions}
           onChange={(v) => onChange({ skip_permissions: v })}
-          label={<span title="claude --dangerously-skip-permissions: every tool runs without asking">Skip permissions</span>}
+          label={<span title="Every tool runs without asking; requires this machine’s explicit permission">Skip permissions</span>}
           disabled={disabled}
         />
       ) : null}

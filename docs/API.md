@@ -160,6 +160,7 @@ type Activity = {
 };
 
 type RunnerCapabilities = {
+  codex: boolean;               // `codex` binary found (missing on older runners = false; login is checked when a run starts)
   claude: boolean;              // `claude` binary found on the runner
   permission_modes: string[];   // modes this runner will accept, e.g. ["plan","acceptEdits"]
   commands: string[];           // named shell commands defined in the runner's local config
@@ -194,7 +195,7 @@ type Run = {
 };
 type RunEvent = {
   seq: number; at: string;
-  kind: "claude" | "stdout" | "stderr" | "system";
+  kind: "claude" | "codex" | "stdout" | "stderr" | "system";
   data: any;  // claude: one parsed `claude -p --output-format stream-json` line (object with "type")
               // stdout/stderr/system: { text: string }
 };
@@ -618,6 +619,7 @@ type TmuxSession = {
   path: string;               // active pane's working directory
   command: string;            // active pane's foreground command ("claude", "zsh", …)
   claude: boolean;            // some pane in the session runs claude
+  codex: boolean;             // some pane runs Codex (the native binary, or the npm launcher with it under it; agents from v0.1.30, else false)
   project_key: string | null; project_color: string | null;   // matched from path (or session name)
   repo_id: number | null; repo_name: string | null;
 };
@@ -625,7 +627,7 @@ type TerminalHost = {
   runner_id: number; runner_name: string; hostname: string;
   online: boolean;
   terminal: boolean;          // the runner allows terminals
-  skip_permissions: boolean;  // its permission_modes list bypassPermissions: start: claude may skip permissions
+  skip_permissions: boolean;  // its permission_modes list bypassPermissions: start: claude/codex may skip permissions
   sessions: TmuxSession[];
   updated_at: string | null;  // when the session list was last reported
 };
@@ -634,7 +636,7 @@ type TerminalHost = {
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | /api/terminal/hosts | – | `{hosts: TerminalHost[], default_runner_id: number \| null}` (the master runner) |
-| POST | /api/terminal/{runner_id}/sessions | `{name?, repo_id?, project_key?, start: "claude" \| "shell", prompt?, skip_permissions?}` | `201 {session: string}` — detached session in the repo's directory; `start: claude` launches Claude Code with the Forge project context; `prompt` is typed into it once it starts; `skip_permissions` adds `--dangerously-skip-permissions` (claude only; the machine refuses it unless its `permission_modes` list `bypassPermissions`) |
+| POST | /api/terminal/{runner_id}/sessions | `{name?, repo_id?, project_key?, start: "claude" \| "codex" \| "shell", prompt?, skip_permissions?}` | `201 {session: string}` — detached session in the repo's directory; `start: claude` launches Claude Code, `start: codex` Codex, both with the Forge project context (their SessionStart hook; Codex after `forge agent setup-codex`); `prompt` is typed into it once it starts; `skip_permissions` adds `--dangerously-skip-permissions` (claude) or `--dangerously-bypass-approvals-and-sandbox` (codex); the machine refuses it unless its `permission_modes` list `bypassPermissions`. An agent older than v0.1.30 opens a plain shell for `codex` |
 | DELETE | /api/terminal/{runner_id}/sessions/{name} | – | `204` (kills the session) |
 | GET | /api/terminal/{runner_id}/sessions/{name}/capture | query `lines` (default 60, max 400) | `{text: string}` — the visible screen + scrollback, no escape codes |
 | POST | /api/terminal/{runner_id}/sessions/{name}/keys | `{text, enter: boolean}` | `204` — types `text` literally (then Enter) — answer Claude from a phone without a terminal |
@@ -912,7 +914,7 @@ default) or the provider's Anthropic-compatible endpoint with the provider key
 and DeepSeek's models (`deepseek`).
 
 ```ts
-type Engine = "deepseek" | "claude";
+type Engine = "deepseek" | "claude" | "codex";
 type EngineSettings = {
   default: Engine; model: string; heavy_model: string;
   max_concurrent: number;        // runs per machine at once, 1–16 (default 4); PATCH validates the range
@@ -920,13 +922,14 @@ type EngineSettings = {
 // defaults: "claude", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"
 type EngineStatus = { settings: EngineSettings; provider_key: boolean;
   models: Record<Engine, string[]>;  // the run form's choices; deepseek: settings, then the provider's deepseek/* models, then the known ones
+  codex_efforts: string[];           // low|medium|high|xhigh
   efforts: string[] };               // claude --effort: low|medium|high|xhigh|max
 type Run = { /* … */ engine: Engine | "";     // "" for command runs
               effort: string;                // claude --effort, "" = default
               chat_turn_id: number | null;   // the Assistant turn that queued it
               usage: Record<string, unknown> }; // Claude Code's modelUsage
 type RunInput = { /* … */ engine?: Engine;   // omitted = settings.default
-                  effort?: string };          // one of EngineStatus.efforts, either engine; omitted = default
+                  effort?: string };          // one of EngineStatus.codex_efforts for Codex, EngineStatus.efforts otherwise; omitted = default
 ```
 
 - `GET /api/engine` → `EngineStatus`. `PATCH /api/engine` `Partial<EngineSettings>` → `EngineStatus`.
@@ -1036,7 +1039,7 @@ polls. Off until enabled.
 ```ts
 type AssistantSettings = {
   enabled: boolean;
-  engine: "claude" | "deepseek"; // what a new chat starts on, default "claude"
+  engine: "claude" | "deepseek" | "codex"; // what a new chat starts on, default "claude"
   base_url: string;   // the provider's (read-only here; PATCH /api/provider changes it)
   model: string;      // the DeepSeek engine's model, default "deepseek/deepseek-v4-flash"
 };
@@ -1046,6 +1049,8 @@ type AssistantStatus = {
   models: string[];              // models the provider lists for this key ([] if unknown/unreachable)
   engines: {
     deepseek: { available: boolean; models: string[]; efforts: string[] };  // efforts: off|low|high|max
+    codex: { available: boolean; machine: string; online: boolean | null; reason: string;
+             models: string[]; efforts: string[]; skip_permissions: boolean };
     claude: { available: boolean; machine: string; online: boolean | null; reason: string;
               models: string[]; efforts: string[];                          // efforts: low|medium|high|xhigh|max
               skip_permissions: boolean };                                  // the master allows bypassPermissions
@@ -1053,7 +1058,7 @@ type AssistantStatus = {
 };
 // What answers a chat, per chat (changeable any time; applies from the next turn).
 type ChatSettings = {
-  engine: "deepseek" | "claude"; // the DeepSeek loop on the server (through the provider) | a Claude Code session on the master
+  engine: "deepseek" | "claude" | "codex"; // the DeepSeek loop on the server (through the provider) | a Claude Code session on the master
   model: string;                 // "" = default (AssistantSettings.model | Claude Code's own)
   effort: string;                // "" = default; deepseek: off|low|high|max (reasoning off — also the default — or
                                  // OpenRouter's reasoning.effort low|high|xhigh)
@@ -1385,3 +1390,62 @@ type ProjectFocus = {
   `{usage: UsageEntry[], total_usd: number, unpriced: boolean}` adds it up
   across projects.
 
+
+
+## Codex engine
+
+`codex` is a local coding-agent engine for agent runs, Assistant chats and project
+bots. It uses `codex app-server --listen stdio://` on the selected runner (the
+master for chats), with that OS user's Codex authentication. `codex login` can use
+an eligible ChatGPT plan; API-key authentication follows OpenAI API billing.
+Forge neither reads nor stores Codex login tokens and never requires its provider
+key for this engine. Binary availability is not proof of authentication or plan
+entitlement; login, usage limits and model errors are reported by the run.
+
+- Agent configuration: `codex_path` (default `codex`).
+- `forge agent setup-codex` registers `forge agent mcp` with Codex, preserving a
+  custom `-config` path. Run `codex login` separately under the runner's OS user.
+- `GET /api/engine` includes `models.codex: []` and `codex_efforts:
+  ["low", "medium", "high", "xhigh"]`. An empty model uses Codex's configured
+  default; any valid account-supported model ID can be entered explicitly. Jev
+  does not select Claude models for Codex runs.
+- `GET /api/assistant` includes `engines.codex` with the same availability, machine,
+  online, reason, models, efforts and skip_permissions fields as `engines.claude`.
+- Existing chat/run engine fields accept `codex`. Chats resume only a previous
+  session of the same engine; missed turns from other engines are handed over
+  as text. Project bots can select Codex using the chat settings.
+- Claim responses for Codex include `engine: {name: "codex", usage_baseline: {…}}`
+  containing the previous run's usage, not authentication material. Assistant
+  setup includes `forge_writes` (true only on proactive turns).
+- Permission modes: `plan` maps to read-only with approvals disabled;
+  `acceptEdits` maps to workspace-write; `bypassPermissions` maps to full access
+  only when explicitly enabled by the machine. Claude-specific `auto` and
+  `dontAsk` modes are rejected. Interactive edit runs relay command/file approvals
+  only with the machine's `approvals: true`; ordinary chat turns never wait for
+  approval. Unknown permission/elicitation requests are denied. Questions and
+  follow-up messages use the existing run inbox and idle timeout.
+- The runner supplies Forge's MCP configuration and initial project context. In
+  plan mode the MCP process both hides and rejects mutating Forge tools.
+  Proactive bot turns retain write access to Forge tasks and memory while files
+  remain read-only. Standalone Codex sessions use the registered MCP server and
+  should call `forge_context`; Claude hooks are not installed into Codex.
+- Worktrees are created at `<repo>/.forge/worktrees/run-<id>` on branch
+  `forge-run-<id>` and retained for review. Resumption uses the thread's saved
+  directory, which must still be inside the runner's allowed roots.
+- `RunEvent.kind: "codex"` carries native app-server conversation notifications
+  (`{method, params}`), plus a final `{type:"result", result, is_error}` display
+  event for each completed/failed turn. Account/auth responses are not logged.
+  Existing Claude event payloads are unchanged.
+- Codex `usage` records per-run `inputTokens`, `cachedInputTokens`, `outputTokens`,
+  `model`, and cumulative `threadTotal` for resumption accounting. Chat usage uses
+  API label `codex`, excludes cached tokens from uncached input, and leaves
+  `cost_usd` null: Forge does not infer charges or subscription coverage from
+  token counts.
+
+This integration targets a personally operated local/self-hosted Forge runner.
+Memories saved through Codex MCP carry `source: "assistant"` and
+`origin: "Codex on <machine>"`; `POST /api/runner/memories` accepts optional
+`agent: "codex"` for this attribution. Older clients keep their Claude attribution.
+
+Commercial/hosted distribution should use OpenAI's applicable Sign in with
+ChatGPT integration and eligibility rules; this does not implement that OAuth flow.

@@ -15,7 +15,7 @@ import { PageHeader } from "@/components/ui/Panel";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { useShell } from "@/features/shell/context";
-import { attachPath, pickHost, readStoredHost, sortSessions, storeHost, windowParam } from "@/lib/terminal";
+import { attachPath, isAgent, pickHost, readStoredHost, sortSessions, storeHost, windowParam } from "@/lib/terminal";
 import { RoleBadge } from "@/features/agents/RoleBadge";
 import { useEditorLauncher } from "@/features/editor/launcher";
 import { KillSessionDialog, SessionCard, UnlockTerminals } from "./bits";
@@ -91,7 +91,7 @@ function HostTabs({ hosts, selected, onSelect }: { hosts: TerminalHost[]; select
     <div role="tablist" aria-label="Hosts" className="mb-4 flex gap-1 overflow-x-auto border-b border-line [scrollbar-width:none]">
       {hosts.map((h) => {
         const active = h.runner_id === selected;
-        const claude = h.sessions.filter((s) => s.claude).length;
+        const claude = h.sessions.filter(isAgent).length;
         return (
           <button
             key={h.runner_id}
@@ -111,7 +111,7 @@ function HostTabs({ hosts, selected, onSelect }: { hosts: TerminalHost[]; select
             {h.role && h.role !== "worker" ? <RoleBadge role={h.role} className="h-4.5 px-1.5 text-[10px]" /> : null}
             {!h.online ? <span className="text-[11px] font-normal">{h.role === "master" ? "offline" : "asleep"}</span> : null}
             {h.online && h.terminal ? (
-              <span className="tabular rounded bg-surface-2 px-1 text-[11px] text-fg-3" title={`${h.sessions.length} sessions, ${claude} running Claude`}>
+              <span className="tabular rounded bg-surface-2 px-1 text-[11px] text-fg-3" title={`${h.sessions.length} sessions, ${claude} running Claude or Codex`}>
                 {h.sessions.length}
               </span>
             ) : null}

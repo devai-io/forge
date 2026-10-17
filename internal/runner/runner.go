@@ -98,6 +98,7 @@ func (r *Runner) Run(ctx context.Context) error {
 
 func (r *Runner) capabilities() map[string]any {
 	_, err := exec.LookPath(r.cfg.ClaudePath)
+	_, codexErr := exec.LookPath(r.cfg.CodexPath)
 	details := []map[string]any{}
 	for _, name := range r.cfg.CommandNames() {
 		c := r.cfg.Commands[name]
@@ -106,6 +107,7 @@ func (r *Runner) capabilities() map[string]any {
 	}
 	return map[string]any{
 		"claude":           err == nil,
+		"codex":            codexErr == nil,
 		"permission_modes": r.cfg.PermissionModes,
 		"commands":         r.cfg.CommandNames(),
 		"command_details":  details,

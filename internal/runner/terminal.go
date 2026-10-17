@@ -35,6 +35,7 @@ type tmuxWindow struct {
 	Command string `json:"command"`
 	Path    string `json:"path"`
 	Claude  bool   `json:"claude"`
+	Codex   bool   `json:"codex"`
 }
 
 type tmuxSession struct {
@@ -46,6 +47,7 @@ type tmuxSession struct {
 	Path       string       `json:"path"`
 	Command    string       `json:"command"`
 	Claude     bool         `json:"claude"`
+	Codex      bool         `json:"codex"`
 	WindowList []tmuxWindow `json:"window_list"`
 }
 
@@ -90,6 +92,41 @@ func (r *Runner) tmux(ctx context.Context, args ...string) (string, error) {
 
 func isClaude(cmd string) bool { return cmd == "claude" || strings.HasPrefix(cmd, "claude") }
 
+// isCodex: the native binary shows as "codex"; the npm launcher shows as
+// "node", so then the pane's processes are looked at (Linux /proc only).
+func isCodex(cmd, panePID string) bool {
+	if cmd == "codex" || strings.HasPrefix(cmd, "codex-") {
+		return true
+	}
+	if cmd != "node" {
+		return false
+	}
+	pid, err := strconv.Atoi(panePID)
+	return err == nil && procTreeRuns(pid, "codex", 4)
+}
+
+// procTreeRuns reports whether pid or a descendant (up to depth levels down)
+// is the named executable.
+func procTreeRuns(pid int, name string, depth int) bool {
+	if comm, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid)); err == nil && strings.TrimSpace(string(comm)) == name {
+		return true
+	}
+	if depth == 0 {
+		return false
+	}
+	// Each thread lists the children it started (node and Go spawn from any).
+	tasks, _ := filepath.Glob(fmt.Sprintf("/proc/%d/task/*/children", pid))
+	for _, t := range tasks {
+		children, _ := os.ReadFile(t)
+		for _, f := range strings.Fields(string(children)) {
+			if child, err := strconv.Atoi(f); err == nil && procTreeRuns(child, name, depth-1) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func unixTime(s string) string {
 	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
 	if err != nil || n == 0 {
@@ -119,13 +156,13 @@ func (r *Runner) listTmux(ctx context.Context) []tmuxSession {
 			Activity: unixTime(f[4]), WindowList: []tmuxWindow{}})
 	}
 	panes, err := r.tmux(ctx, "list-panes", "-a", "-F",
-		"#{session_name}\t#{window_index}\t#{window_name}\t#{window_active}\t#{pane_active}\t#{pane_current_command}\t#{pane_current_path}")
+		"#{session_name}\t#{window_index}\t#{window_name}\t#{window_active}\t#{pane_active}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_pid}")
 	if err != nil {
 		return sessions
 	}
 	for _, line := range strings.Split(strings.TrimSpace(panes), "\n") {
 		f := strings.Split(line, "\t")
-		if len(f) != 7 {
+		if len(f) != 8 {
 			continue
 		}
 		i, ok := byName[f[0]]
@@ -134,10 +171,9 @@ func (r *Runner) listTmux(ctx context.Context) []tmuxSession {
 		}
 		s := &sessions[i]
 		idx, _ := strconv.Atoi(f[1])
-		claude := isClaude(f[5])
-		if claude {
-			s.Claude = true
-		}
+		claude, codex := isClaude(f[5]), isCodex(f[5], f[7])
+		s.Claude = s.Claude || claude
+		s.Codex = s.Codex || codex
 		// One entry per window, described by its active pane (a window with a
 		// claude pane anywhere counts as a Claude window).
 		var w *tmuxWindow
@@ -150,9 +186,8 @@ func (r *Runner) listTmux(ctx context.Context) []tmuxSession {
 			s.WindowList = append(s.WindowList, tmuxWindow{Index: idx, Name: f[2], Active: f[3] == "1"})
 			w = &s.WindowList[len(s.WindowList)-1]
 		}
-		if claude {
-			w.Claude = true
-		}
+		w.Claude = w.Claude || claude
+		w.Codex = w.Codex || codex
 		if f[4] == "1" {
 			w.Command, w.Path = f[5], f[6]
 			if w.Active {
@@ -345,7 +380,8 @@ func (r *Runner) createSession(ctx context.Context, m controlMsg) error {
 	if m.Start == "ssh" && !validSSHTarget(m.SSH) {
 		return errors.New("invalid ssh target")
 	}
-	if m.SkipPermissions && (m.Start != "claude" || !contains(r.cfg.PermissionModes, "bypassPermissions")) {
+	agent := m.Start == "claude" || m.Start == "codex"
+	if m.SkipPermissions && (!agent || !contains(r.cfg.PermissionModes, "bypassPermissions")) {
 		return errors.New("skipping permissions is not enabled on this runner (bypassPermissions in its permission_modes)")
 	}
 	if _, err := r.tmux(ctx, "new-session", "-d", "-s", m.Session, "-c", dir, "-x", "200", "-y", "50"); err != nil {
@@ -355,14 +391,20 @@ func (r *Runner) createSession(ctx context.Context, m controlMsg) error {
 		time.Sleep(300 * time.Millisecond) // let the shell print its prompt
 		return r.sendKeys(ctx, controlMsg{Session: m.Session, Text: "ssh " + shellQuote(m.SSH), Enter: true})
 	}
-	if m.Start != "claude" {
+	if !agent {
 		return nil
 	}
 	// Typed into the session's own shell, so the user's rc files (PATH, env)
-	// apply — exactly as if they had opened the window themselves. Claude's
-	// SessionStart hook then injects the Forge context for this directory.
+	// apply — exactly as if they had opened the window themselves. The
+	// SessionStart hook (Claude's, or Codex's after setup-codex) then injects
+	// the Forge context for this directory.
 	line := r.cfg.ClaudePath
-	if m.SkipPermissions {
+	if m.Start == "codex" {
+		line = r.cfg.CodexPath
+		if m.SkipPermissions {
+			line += " --dangerously-bypass-approvals-and-sandbox"
+		}
+	} else if m.SkipPermissions {
 		line += " --dangerously-skip-permissions"
 	}
 	if strings.TrimSpace(m.Prompt) != "" {

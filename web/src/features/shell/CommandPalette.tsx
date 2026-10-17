@@ -11,7 +11,7 @@ import { useCodeStatus, useProjects, useTasks, useTerminalHosts } from "@/api/ho
 import { ColorDot } from "@/components/ui/Badge";
 import { StatusIcon } from "@/features/tasks/icons";
 import { editorPath } from "@/lib/code";
-import { allWindows, attachPath, windowParam, windowTarget } from "@/lib/terminal";
+import { allWindows, attachPath, isAgent, windowParam, windowTarget } from "@/lib/terminal";
 import { NAV } from "./nav";
 import { useShell } from "./context";
 
@@ -128,12 +128,12 @@ function Palette({ onClose }: { onClose: () => void }) {
     if (match("Settings")) out.push({ id: "nav-settings", label: "Settings", icon: <Settings />, run: go("/settings"), group: "Pages" });
     if (match("Security log") || (needle && "sessions sign-ins audit security".includes(needle)))
       out.push({ id: "nav-security", label: "Security log", icon: <ShieldAlert />, run: go("/settings#security"), group: "Pages" });
-    // One entry per Claude window, plus each session that has none running.
+    // One entry per Claude/Codex window, plus each session that has none running.
     const hosts = (terminal.data?.hosts ?? []).filter((h) => h.terminal && h.online);
     const projectName = (key: string | null) => projects.data?.find((p) => p.key === key)?.name ?? key;
-    for (const { host, session, window: w } of allWindows(hosts, (w) => w.claude)) {
+    for (const { host, session, window: w } of allWindows(hosts, isAgent)) {
       const label = `Attach: ${host.runner_name} · ${windowTarget(session.name, w)} · ${w.repo_name ?? projectName(w.project_key) ?? w.name}`;
-      if (match(label) || match("attach claude"))
+      if (match(label) || match(w.codex && !w.claude ? "attach codex" : "attach claude"))
         out.push({
           id: `attach-${host.runner_id}-${session.name}-${w.index}`,
           label,
@@ -145,7 +145,7 @@ function Palette({ onClose }: { onClose: () => void }) {
     }
     for (const host of hosts)
       for (const session of host.sessions) {
-        const hasClaude = session.window_list?.length ? session.window_list.some((w) => w.claude) : session.claude;
+        const hasClaude = session.window_list?.length ? session.window_list.some(isAgent) : isAgent(session);
         if (hasClaude) continue;
         const label = `Attach: ${host.runner_name} · ${projectName(session.project_key) ?? session.name}`;
         if (match(label) || match(session.name))

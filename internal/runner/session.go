@@ -47,6 +47,8 @@ type session struct {
 	w       io.WriteCloser
 	closed  bool
 	pending map[string]pendingPrompt
+	message func(string) error
+	answer  func(string, pendingPrompt, promptAnswer)
 	idle    *time.Timer
 	waiting bool // a turn ended; nothing new since
 
@@ -324,7 +326,11 @@ func (s *session) handle(it inboxItem) {
 		}
 		if json.Unmarshal(it.Data, &m) == nil && m.Text != "" {
 			s.working()
-			if err := s.write(userMessage(m.Text)); err != nil {
+			send := s.message
+			if send == nil {
+				send = func(text string) error { return s.write(userMessage(text)) }
+			}
+			if err := send(m.Text); err != nil {
 				s.ship.send(textEvent("system", "could not pass the message on: "+err.Error()))
 			}
 		}
@@ -344,7 +350,11 @@ func (s *session) handle(it inboxItem) {
 		delete(s.pending, a.RequestID)
 		s.mu.Unlock()
 		if ok { // only what this session asked, and only once
-			s.respond(a.RequestID, s.response(p, a.Answer))
+			if s.answer != nil {
+				s.answer(a.RequestID, p, a.Answer)
+			} else {
+				s.respond(a.RequestID, s.response(p, a.Answer))
+			}
 		}
 	}
 }

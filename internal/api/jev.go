@@ -100,7 +100,7 @@ func (s *Server) testJev(w http.ResponseWriter, r *http.Request, u *store.User) 
 // answer keeps the machine's default. On DeepSeek the default is already the
 // cheap model, so only a confident "heavy" moves the run up to HeavyModel.
 func (s *Server) jevRoute(ctx context.Context, in *store.RunInput, eng store.EngineSettings) {
-	if in.Kind != "agent" || in.Model != "" || in.ResumeRunID != nil || strings.TrimSpace(in.Prompt) == "" {
+	if in.Engine == "codex" || in.Kind != "agent" || in.Model != "" || in.ResumeRunID != nil || strings.TrimSpace(in.Prompt) == "" {
 		return
 	}
 	set, on := s.jevOn(ctx)
