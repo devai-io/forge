@@ -291,6 +291,7 @@ func (s *Server) Handler() http.Handler {
 	h("GET /api/runner/context", s.runnerAuth(s.runnerContext))
 	h("POST /api/runner/match", s.runnerAuth(s.runnerMatch))
 	h("GET /api/runner/projects", s.runnerAuth(s.runnerProjects))
+	h("POST /api/runner/projects", s.runnerAuth(s.runnerCreateProject))
 	h("GET /api/runner/tasks", s.runnerAuth(s.runnerTasks))
 	h("POST /api/runner/tasks", s.runnerAuth(s.runnerCreateTask))
 	h("PATCH /api/runner/tasks/{task}", s.runnerAuth(s.runnerUpdateTask))

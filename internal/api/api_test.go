@@ -314,7 +314,18 @@ func TestRunnerProtocol(t *testing.T) {
 			"running":      []int64{},
 		}, &hb, bearer...), 200)
 	}
+	var np struct {
+		Key  string
+		Repo store.Repo
+	}
+	expect(t, "runner creates project", runner.do("POST", "/api/runner/projects", map[string]any{
+		"key": "NEWP", "name": "New project", "repo": map[string]any{"name": "newp", "path": "/tmp/newp"}}, &np, bearer...), 201)
+	if np.Key != "NEWP" || np.Repo.Name != "newp" {
+		t.Fatalf("created project = %+v", np)
+	}
 	beat()
+	expect(t, "duplicate project", runner.do("POST", "/api/runner/projects", map[string]any{
+		"key": "NEWP", "name": "Again"}, nil, bearer...), 409)
 	if hb.RunnerID != created.Runner.ID || len(hb.Repos) == 0 || hb.MaxConcurrent != store.DefaultMaxConcurrent {
 		t.Fatalf("heartbeat = %+v", hb)
 	}

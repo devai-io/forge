@@ -645,6 +645,32 @@ func (s *Server) runnerProjects(w http.ResponseWriter, r *http.Request, rn *stor
 	writeJSON(w, http.StatusOK, map[string]any{"projects": out})
 }
 
+// runnerCreateProject creates a project and, when given, its first repo.
+func (s *Server) runnerCreateProject(w http.ResponseWriter, r *http.Request, rn *store.Runner) {
+	var in struct {
+		store.ProjectInput
+		Repo *store.RepoInput `json:"repo"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	key, err := s.store.CreateProject(r.Context(), in.ProjectInput)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	out := map[string]any{"key": key}
+	if in.Repo != nil {
+		repo, err := s.store.CreateRepo(r.Context(), key, *in.Repo)
+		if err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		out["repo"] = repo
+	}
+	writeJSON(w, http.StatusCreated, out)
+}
+
 func (s *Server) runnerTasks(w http.ResponseWriter, r *http.Request, rn *store.Runner) {
 	q := r.URL.Query()
 	tasks, err := s.store.ListTasks(r.Context(), store.TaskFilter{ProjectKey: q.Get("project"), Query: q.Get("q"),

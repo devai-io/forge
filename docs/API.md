@@ -660,6 +660,7 @@ just returns it.
 | GET (WebSocket) | /api/runner/tty/{channel} | the runner's end of one terminal: binary = bytes, text = the same JSON control frames |
 | GET | /api/runner/context | query `cwd`; `{project_key, repo_name, markdown}` — compact Forge context for a Claude session started in that directory (404 when the path belongs to no project) |
 | GET | /api/runner/projects | `{projects: [{key, name, status, summary}]}` |
+| POST | /api/runner/projects | `{key, name, category?, status?, priority?, color?, summary?, description?, infra_notes?, target_date?, links?, repo?: {name, path?, remote_url?, default_branch?, kind?, deploy?, notes?}}` → `201 {key, repo?: Repo}` |
 | GET | /api/runner/tasks | query `project`, `open=1`, `q` → `{tasks: Task[]}` |
 | POST | /api/runner/tasks | `{project_key, title, description?, priority?, type?, labels?, due_date?, status?}` → `201 Task` |
 | PATCH | /api/runner/tasks/{id} | `{status?, title?, description?, priority?, focus?, labels?, due_date?}` → `Task` |

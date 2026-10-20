@@ -80,6 +80,14 @@ var mcpTools = []tool{
 	{"forge_context", "The Forge context for a directory: project, repo state, infra & change-control notes, open tasks, open check-up actions. Defaults to the session's working directory.",
 		obj(map[string]any{"cwd": str("absolute directory; defaults to the current one")})},
 	{"forge_projects", "List every Forge project with key, status, priority and open task count.", obj(map[string]any{})},
+	{"forge_create_project", "Create a Forge project, optionally with its first repo (a local checkout path and/or a remote URL). Returns the project key.",
+		obj(map[string]any{"key": str("2-10 uppercase letters or digits, starting with a letter"), "name": str("project name"),
+			"summary": str("one line"), "description": str("markdown"),
+			"category":  map[string]any{"type": "string", "enum": []string{"work", "personal"}},
+			"status":    map[string]any{"type": "string", "enum": []string{"live", "building", "radar", "paused", "archived"}},
+			"priority":  map[string]any{"type": "integer", "description": "1 (highest) to 5, default 3"},
+			"repo_name": str("first repo's name"), "repo_path": str("absolute path of the checkout on this machine"),
+			"repo_remote_url": str("git remote URL"), "repo_branch": str("default branch, default main")}, "key", "name")},
 	{"forge_tasks", "List tasks, optionally for one project (key like ALPHA) or matching a search; open tasks only unless include_done.",
 		obj(map[string]any{"project": str("project key"), "query": str("search in title, ref, description"),
 			"include_done": map[string]any{"type": "boolean"}})},
@@ -335,6 +343,33 @@ func callTool(ctx context.Context, c *client, name string, a map[string]any) (st
 			lines = append(lines, t.line())
 		}
 		return strings.Join(lines, "\n"), nil
+
+	case "forge_create_project":
+		body := map[string]any{"key": argStr(a, "key"), "name": argStr(a, "name")}
+		for _, k := range []string{"summary", "description", "category", "status"} {
+			if v := argStr(a, k); v != "" {
+				body[k] = v
+			}
+		}
+		if v, ok := a["priority"].(float64); ok {
+			body["priority"] = int(v)
+		}
+		if name := argStr(a, "repo_name"); name != "" {
+			repo := map[string]any{"name": name}
+			for k, f := range map[string]string{"path": "repo_path", "remote_url": "repo_remote_url", "default_branch": "repo_branch"} {
+				if v := argStr(a, f); v != "" {
+					repo[k] = v
+				}
+			}
+			body["repo"] = repo
+		}
+		var res struct {
+			Key string `json:"key"`
+		}
+		if _, err := c.post(ctx, "/api/runner/projects", body, &res); err != nil {
+			return "", err
+		}
+		return "Created project " + res.Key, nil
 
 	case "forge_create_task":
 		body := map[string]any{"project_key": argStr(a, "project"), "title": argStr(a, "title")}
