@@ -94,21 +94,7 @@ func (r *Runner) Run(ctx context.Context, trigger, date string) (*store.Checkup,
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 
-	snap := r.mon.Snapshot(ctx, true)
-	var items []store.CheckItem
-	add := func(list []store.CheckItem) { items = append(items, list...) }
-	add(r.endpoints(ctx))
-	add(r.tls(ctx))
-	add(hostChecks(snap))
-	add(nomadChecks(snap))
-	add(alertChecks(snap))
-	add(r.backups(ctx))
-	add(r.runners(ctx))
-	add(r.repos(ctx))
-	add(r.tasks(ctx, date))
-	add(r.vault(ctx, date))
-	add(r.security(ctx))
-
+	items := r.evaluate(ctx, date, nil)
 	rank := map[string]int{"fail": 0, "warn": 1, "ok": 2}
 	sort.SliceStable(items, func(i, j int) bool { return rank[items[i].Severity] < rank[items[j].Severity] })
 	status := "ok"
@@ -122,6 +108,71 @@ func (r *Runner) Run(ctx context.Context, trigger, date string) (*store.Checkup,
 		}
 	}
 	return r.store.FinishCheckup(context.WithoutCancel(ctx), id, status, items)
+}
+
+// categories, in the order the action list shows them. "repos" also yields
+// the "ci" items.
+var categories = []string{"endpoints", "tls", "hosts", "nomad", "alerts", "backups", "runners", "repos", "tasks", "vault", "security"}
+
+// evaluate runs the checks for `only` (every category when nil) against the
+// fleet as it is right now, with a fresh monitoring snapshot when a check
+// needs one.
+func (r *Runner) evaluate(ctx context.Context, date string, only map[string]bool) []store.CheckItem {
+	want := func(c string) bool { return only == nil || only[c] }
+	var snap *monitoring.Snapshot
+	if want("hosts") || want("nomad") || want("alerts") {
+		snap = r.mon.Snapshot(ctx, true)
+	}
+	var items []store.CheckItem
+	add := func(list []store.CheckItem) { items = append(items, list...) }
+	for _, c := range categories {
+		if !want(c) && !(c == "repos" && want("ci")) {
+			continue
+		}
+		switch c {
+		case "endpoints":
+			add(r.endpoints(ctx))
+		case "tls":
+			add(r.tls(ctx))
+		case "hosts":
+			add(hostChecks(snap))
+		case "nomad":
+			add(nomadChecks(snap))
+		case "alerts":
+			add(alertChecks(snap))
+		case "backups":
+			add(r.backups(ctx))
+		case "runners":
+			add(r.runners(ctx))
+		case "repos":
+			add(r.repos(ctx))
+		case "tasks":
+			add(r.tasks(ctx, date))
+		case "vault":
+			add(r.vault(ctx, date))
+		case "security":
+			add(r.security(ctx))
+		}
+	}
+	return items
+}
+
+// Recheck re-runs the checks behind `items` and returns what they report now,
+// by key. A key missing from the result is no longer a finding.
+func (r *Runner) Recheck(ctx context.Context, date string, items []store.CheckItem) map[string]store.CheckItem {
+	only := map[string]bool{}
+	for _, it := range items {
+		only[it.Category] = true
+	}
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	out := map[string]store.CheckItem{}
+	for _, it := range r.evaluate(ctx, date, only) {
+		if it.Severity != "ok" {
+			out[it.Key] = it
+		}
+	}
+	return out
 }
 
 func sp(s string) *string { return &s }
@@ -561,7 +612,7 @@ func (r *Runner) body(c *store.Checkup) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Daily check-up for %s — %d failing, %d warnings, %d clear.\n\n", c.Date, c.Counts.Fail, c.Counts.Warn, c.Counts.OK)
 	for _, it := range c.Items {
-		if it.Severity == "ok" {
+		if !it.Open() {
 			continue
 		}
 		mark := "!"

@@ -540,6 +540,42 @@ func TestCheckupAndItemTask(t *testing.T) {
 	if d.Checkup == nil || d.Checkup.ID != c.ID {
 		t.Fatalf("dashboard checkup = %+v", d.Checkup)
 	}
+
+	// Re-checking the overdue item finds it still overdue; after the task is
+	// done, a re-check resolves it and the whole-list re-check is a no-op.
+	expect(t, "recheck item", h.do("POST", fmt.Sprintf("/api/checkups/%d/items/%s/recheck", c.ID, target.Key), nil, &c), 200)
+	for _, it := range c.Items {
+		if it.Key == target.Key && (it.CheckedAt == nil || it.ResolvedAt != nil) {
+			t.Fatalf("still overdue, so not resolved: %+v", it)
+		}
+	}
+	expect(t, "finish task", h.do("PATCH", fmt.Sprintf("/api/tasks/%d", made.Task.ID), map[string]string{"status": "done"}, nil), 200)
+	// The overdue task itself (not the one made from the item) must be done too.
+	var tasks struct{ Tasks []store.Task }
+	expect(t, "tasks", h.do("GET", "/api/tasks?project=GAME", nil, &tasks), 200)
+	for _, tk := range tasks.Tasks {
+		if tk.Title == "Late thing" {
+			expect(t, "finish late", h.do("PATCH", fmt.Sprintf("/api/tasks/%d", tk.ID), map[string]string{"status": "done"}, nil), 200)
+		}
+	}
+	expect(t, "recheck all", h.do("POST", fmt.Sprintf("/api/checkups/%d/recheck", c.ID), nil, &c), 200)
+	for _, it := range c.Items {
+		if it.Key == target.Key && it.ResolvedAt == nil {
+			t.Fatalf("task done, so resolved: %+v", it)
+		}
+	}
+
+	// Snooze: a date in the past is refused, "until it changes" works and
+	// takes the item out of the action list; clearing puts it back.
+	expect(t, "snooze past", h.do("PATCH", fmt.Sprintf("/api/checkups/%d/items/%s", c.ID, target.Key), map[string]any{"snooze": map[string]any{"until": "2020-01-01"}}, nil), 422)
+	expect(t, "snooze", h.do("PATCH", fmt.Sprintf("/api/checkups/%d/items/%s", c.ID, target.Key), map[string]any{"snooze": map[string]any{"until": nil}}, &c), 200)
+	if c.ActionsSnoozed != 1 {
+		t.Fatalf("snoozed = %+v", c.CheckupSummary)
+	}
+	expect(t, "unsnooze", h.do("PATCH", fmt.Sprintf("/api/checkups/%d/items/%s", c.ID, target.Key), map[string]any{"snooze": nil}, &c), 200)
+	if c.ActionsSnoozed != 0 {
+		t.Fatalf("unsnoozed = %+v", c.CheckupSummary)
+	}
 }
 
 func TestScopedAndConfirmedCommands(t *testing.T) {

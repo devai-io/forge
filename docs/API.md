@@ -563,26 +563,50 @@ type Monitoring = {
 Runs automatically once per day at `user.checkup_time` (user timezone), and on
 demand. Every check yields items; the non-ok ones are the day's action list.
 
+Each run is threaded through the previous one: an item's `first_seen` is the
+date it first appeared in consecutive check-ups (so "new today" and "since 22
+days" are visible), a task made from yesterday's item stays linked today
+(`task_id`/`task_ref`, with the task's current `task_status`), snoozes apply
+by `key`, and items that were open yesterday and are gone today are the
+`resolved` list ("fixed since the last check-up").
+
 ```ts
 type CheckSeverity = "ok" | "warn" | "fail";
 type CheckItem = {
-  key: string;               // stable within a day, e.g. "endpoint:12", "disk:web-1"
-  category: "endpoints" | "tls" | "hosts" | "nomad" | "alerts" | "runners" | "repos" | "ci" | "tasks" | "vault" | "backups";
+  key: string;               // stable across days, e.g. "endpoint:12", "disk:web-1", "task:ALPHA-3"
+  category: "endpoints" | "tls" | "hosts" | "nomad" | "alerts" | "runners" | "repos" | "ci" | "tasks" | "vault" | "backups" | "security";
   severity: CheckSeverity;
   title: string; detail: string;
   action: string;            // what to do about it ("" for ok items)
   link: string | null;       // in-app route ("/p/ALPHA", "/infra") or external URL
   project_key: string | null;
   done: boolean;             // ticked off in the action list
-  task_id: number | null; task_ref: string | null;  // when turned into a task
+  task_id: number | null; task_ref: string | null;  // when turned into a task (carried over day to day while the task exists)
+  task_status: string;       // the linked task's status ("" when none); a done task under a still-open item is shown as such
+  first_seen: string;        // date ("YYYY-MM-DD") of the first consecutive check-up with this key; "" on rows older than this field
+  checked_at: string | null; // last re-check of this item after the run
+  resolved_at: string | null;// a re-check found it gone; counts as done
+  snoozed: boolean;          // out of the action list, counts, e-mail and bots
+  snoozed_until: string | null; // date; null while snoozed = "until the item changes" (its title)
+};
+type ResolvedItem = {        // open in the previous check-up, gone in this one
+  key: string; category: string; severity: CheckSeverity; title: string;
+  project_key: string | null; task_ref: string | null;
+  first_seen: string; since_at: string;  // since_at = start of the check-up that last had it
 };
 type CheckupSummary = {
   id: number; date: string; trigger: "schedule" | "manual";
   started_at: string; finished_at: string | null;
-  status: CheckSeverity; counts: { ok: number; warn: number; fail: number };
-  actions_total: number; actions_done: number; emailed: boolean;
+  status: CheckSeverity;     // worst severity among the items that are not snoozed
+  counts: { ok: number; warn: number; fail: number };  // snoozed items are in none of these
+  actions_total: number;     // non-ok, not snoozed
+  actions_done: number;      // done or resolved
+  actions_new: number;       // first_seen == date
+  actions_snoozed: number;
+  fixed_total: number;       // resolved.length
+  emailed: boolean;
 };
-type Checkup = CheckupSummary & { items: CheckItem[] };  // non-ok first (fail, warn), then ok
+type Checkup = CheckupSummary & { items: CheckItem[]; resolved: ResolvedItem[] };  // items: non-ok first (fail, warn), then ok
 ```
 
 | Method | Path | Body | Response |
@@ -591,8 +615,14 @@ type Checkup = CheckupSummary & { items: CheckItem[] };  // non-ok first (fail, 
 | GET | /api/checkups/latest | – | `Checkup` or `404` |
 | GET | /api/checkups/{id} | – | `Checkup` |
 | POST | /api/checkups | – | `201 Checkup` (runs now, ~10–30 s) |
-| PATCH | /api/checkups/{id}/items/{key} | `{done}` | `Checkup` |
-| POST | /api/checkups/{id}/items/{key}/task | `{project_key?}` | `{task: Task, checkup: Checkup}` (label `checkup`) |
+| PATCH | /api/checkups/{id}/items/{key} | `{done?: boolean, snooze?: {until: string \| null} \| null}` | `Checkup`. `snooze` absent: unchanged; `null`: cleared; `{until: "YYYY-MM-DD"}` (after today, else `422`): hidden to that date; `{until: null}`: hidden until the item's title changes. The snooze is remembered by `key` and applied by later check-ups |
+| POST | /api/checkups/{id}/items/{key}/task | `{project_key?}` | `{task: Task, checkup: Checkup}` (label `checkup`); `409` while the linked task is not done |
+| POST | /api/checkups/{id}/items/{key}/recheck | – | `Checkup`: the one check behind the item is run again now; the item gets `checked_at` and either the fresh severity/title/detail or `resolved_at` |
+| POST | /api/checkups/{id}/recheck | – | `Checkup`: the same for every open (non-ok, not snoozed) item; ~1–10 s |
+
+Everything that reads "open actions" (project focus, the bots' events, the
+Telegram and e-mail summaries, the session context and `forge_checkup`) skips
+done, resolved and snoozed items.
 
 ## Runs: confirmed commands
 

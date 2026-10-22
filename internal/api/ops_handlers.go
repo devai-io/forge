@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"mime"
@@ -211,21 +212,115 @@ func (s *Server) runCheckup(w http.ResponseWriter, r *http.Request, u *store.Use
 	writeJSON(w, http.StatusCreated, c)
 }
 
+// updateCheckupItem ticks an item (`done`) and/or snoozes it: `snooze`
+// absent leaves it, null clears it, {"until": "YYYY-MM-DD"} hides it to that
+// date, {"until": null} hides it until the item's title changes.
 func (s *Server) updateCheckupItem(w http.ResponseWriter, r *http.Request, u *store.User) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
 	var in struct {
-		Done bool `json:"done"`
+		Done   *bool           `json:"done"`
+		Snooze json.RawMessage `json:"snooze"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	c, err := s.store.UpdateCheckupItem(r.Context(), id, r.PathValue("key"), func(it *store.CheckItem) error {
-		it.Done = in.Done
-		return nil
-	})
+	key := r.PathValue("key")
+	var c *store.Checkup
+	var err error
+	if len(in.Snooze) > 0 && string(in.Snooze) != "null" {
+		var sn struct {
+			Until *string `json:"until"`
+		}
+		if json.Unmarshal(in.Snooze, &sn) != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "snooze must be an object with until")
+			return
+		}
+		if sn.Until != nil {
+			if _, perr := time.Parse("2006-01-02", *sn.Until); perr != nil || *sn.Until <= store.TodayFor(u.Timezone) {
+				writeErr(w, r, &store.ValidationError{Field: "snooze", Message: "until must be a date after today"})
+				return
+			}
+		}
+		if c, err = s.store.SnoozeCheckItem(r.Context(), id, key, sn.Until); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	} else if len(in.Snooze) > 0 {
+		if c, err = s.store.UnsnoozeCheckItem(r.Context(), id, key); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
+	if in.Done != nil {
+		if c, err = s.store.UpdateCheckupItem(r.Context(), id, key, func(it *store.CheckItem) error {
+			it.Done = *in.Done
+			return nil
+		}); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
+	if c == nil {
+		if c, err = s.store.CheckupByID(r.Context(), id); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, c)
+}
+
+// recheckCheckupItem re-runs the one check behind an item and writes what it
+// says now: still there (fresh detail) or gone (resolved).
+func (s *Server) recheckCheckupItem(w http.ResponseWriter, r *http.Request, u *store.User) {
+	s.recheck(w, r, u, r.PathValue("key"))
+}
+
+// recheckCheckup re-runs the checks behind every open item of a check-up.
+func (s *Server) recheckCheckup(w http.ResponseWriter, r *http.Request, u *store.User) {
+	s.recheck(w, r, u, "")
+}
+
+func (s *Server) recheck(w http.ResponseWriter, r *http.Request, u *store.User, key string) {
+	if s.checkups == nil {
+		writeError(w, http.StatusServiceUnavailable, "internal", "check-ups are not configured")
+		return
+	}
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	c, err := s.store.CheckupByID(r.Context(), id)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	var targets []store.CheckItem
+	for _, it := range c.Items {
+		if it.Severity == "ok" || it.Snoozed || (key != "" && it.Key != key) {
+			continue
+		}
+		targets = append(targets, it)
+	}
+	if len(targets) == 0 {
+		if key != "" {
+			writeErr(w, r, store.ErrNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, c)
+		return
+	}
+	// Detached from the request: a closed tab must not leave half the items
+	// re-checked.
+	ctx := context.WithoutCancel(r.Context())
+	fresh := s.checkups.Recheck(ctx, store.TodayFor(u.Timezone), targets)
+	keys := make([]string, 0, len(targets))
+	for _, it := range targets {
+		keys = append(keys, it.Key)
+	}
+	c, err = s.store.ApplyRecheck(ctx, id, keys, fresh, time.Now().UTC())
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -263,7 +358,7 @@ func (s *Server) checkupItemTask(w http.ResponseWriter, r *http.Request, u *stor
 		writeErr(w, r, store.ErrNotFound)
 		return
 	}
-	if it.TaskID != nil {
+	if it.TaskID != nil && it.TaskStatus != "done" {
 		writeError(w, http.StatusConflict, "conflict", "already a task: "+deref(it.TaskRef))
 		return
 	}
@@ -295,7 +390,7 @@ func (s *Server) checkupItemTask(w http.ResponseWriter, r *http.Request, u *stor
 		return
 	}
 	c, err = s.store.UpdateCheckupItem(r.Context(), id, key, func(ci *store.CheckItem) error {
-		ci.TaskID, ci.TaskRef = &task.ID, &task.Ref
+		ci.TaskID, ci.TaskRef, ci.TaskStatus = &task.ID, &task.Ref, task.Status
 		return nil
 	})
 	if err != nil {

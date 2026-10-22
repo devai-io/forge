@@ -431,7 +431,8 @@ func callTool(ctx context.Context, c *client, name string, a map[string]any) (st
 			Status string `json:"status"`
 			Items  []struct {
 				Severity, Title, Action string
-				Done                    bool
+				Done, Snoozed           bool
+				ResolvedAt              *string `json:"resolved_at"`
 				ProjectKey              *string `json:"project_key"`
 				Category                string
 			} `json:"items"`
@@ -444,7 +445,7 @@ func callTool(ctx context.Context, c *client, name string, a map[string]any) (st
 		fmt.Fprintf(&b, "Check-up %s — %s\n", cu.Date, cu.Status)
 		n := 0
 		for _, it := range cu.Items {
-			if it.Severity == "ok" || it.Done || (project != "" && (it.ProjectKey == nil || *it.ProjectKey != project)) {
+			if it.Severity == "ok" || it.Done || it.Snoozed || it.ResolvedAt != nil || (project != "" && (it.ProjectKey == nil || *it.ProjectKey != project)) {
 				continue
 			}
 			n++

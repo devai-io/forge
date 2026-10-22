@@ -1,27 +1,45 @@
 // The daily check-up as an action list: what failed or warned today, grouped
-// by area, each with what to do about it — tick it off or turn it into a task.
+// by area, each with what to do about it — and, since items recur day after
+// day, since when it has been there, whether it is still there (Re-check),
+// the task it already became, and a way to put it aside (snooze). Items that
+// were open last time and are gone now are listed as fixed.
 // `?id=<n>` shows an older check-up from the history strip.
 
 import clsx from "clsx";
-import { ChevronRight, CircleCheck, CircleX, ClipboardCheck, ExternalLink, ListPlus, Mail, Play, TriangleAlert } from "lucide-react";
+import {
+  BellOff,
+  ChevronRight,
+  CircleCheck,
+  CircleX,
+  ClipboardCheck,
+  ExternalLink,
+  ListPlus,
+  Mail,
+  Play,
+  RefreshCw,
+  TriangleAlert,
+} from "lucide-react";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   useCheckItemDone,
+  useCheckItemSnooze,
   useCheckItemTask,
   useCheckup,
   useCheckups,
   useLatestCheckup,
   useProjects,
+  useRecheck,
   useRunCheckup,
   useSystemFacts,
 } from "@/api/hooks";
-import type { CheckItem, Checkup, CheckupSummary, CheckSeverity } from "@/api/types";
+import type { CheckItem, Checkup, CheckupSummary, CheckSeverity, ResolvedItem } from "@/api/types";
 import { Badge, ColorDot } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Field, Select } from "@/components/ui/Input";
+import { Menu } from "@/components/ui/Menu";
 import { PageHeader, Panel } from "@/components/ui/Panel";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
@@ -30,8 +48,8 @@ import { useToast } from "@/components/ui/Toast";
 import { HelpLink } from "@/features/docs/HelpLink";
 import { useShell } from "@/features/shell/context";
 import { useUser } from "@/lib/auth";
-import { groupCheckItems, isInternalLink, severityLabel } from "@/lib/checkup";
-import { formatCalendarDate, formatDateTime, formatDuration, weekdayOf } from "@/lib/format";
+import { ageDays, groupCheckItems, isInternalLink, isNew, isSettled, severityLabel } from "@/lib/checkup";
+import { addDays, formatCalendarDate, formatDateTime, formatDuration, todayInTz, weekdayOf } from "@/lib/format";
 
 export function SeverityIcon({ severity, className }: { severity: CheckSeverity; className?: string }) {
   const cls = clsx("shrink-0", className ?? "size-4");
@@ -65,6 +83,18 @@ function ScheduleLine() {
   );
 }
 
+/** What a re-check changed, for the toast: how many of `keys` are now resolved vs still open. */
+function recheckOutcome(c: Checkup, keys: string[]) {
+  let resolved = 0;
+  let open = 0;
+  for (const it of c.items) {
+    if (!keys.includes(it.key)) continue;
+    if (it.resolved_at) resolved++;
+    else open++;
+  }
+  return { resolved, open };
+}
+
 export function CheckupPage() {
   const [params, setParams] = useSearchParams();
   const raw = Number(params.get("id"));
@@ -76,15 +106,33 @@ export function CheckupPage() {
   const toast = useToast();
   const query = selectedId === null ? latest : selected;
   const checkup = query.data ?? null;
+  const isLatest = selectedId === null || checkup?.id === history.data?.[0]?.id;
+  const recheck = useRecheck(checkup?.id ?? 0);
+  const openKeys = checkup ? checkup.items.filter((i) => i.severity !== "ok" && !i.snoozed && !isSettled(i)).map((i) => i.key) : [];
 
   const runNow = () =>
     run.mutate(undefined, {
       onSuccess: (c) => {
         setParams({});
-        toast.success(`Check-up finished — ${c.actions_total} action${c.actions_total === 1 ? "" : "s"}`);
+        toast.success(`Check-up finished — ${c.actions_total} action${c.actions_total === 1 ? "" : "s"}, ${c.actions_new} new`);
       },
       onError: (e) => toast.error(e),
     });
+  const recheckAll = () =>
+    recheck.mutate(
+      {},
+      {
+        onSuccess: (c) => {
+          const { resolved, open } = recheckOutcome(c, openKeys);
+          toast.success(
+            resolved === 0
+              ? `Re-checked ${open} item${open === 1 ? "" : "s"} — all still there`
+              : `Re-checked ${resolved + open}: ${resolved} resolved, ${open} still open`,
+          );
+        },
+        onError: (e) => toast.error(e),
+      },
+    );
 
   return (
     <div className="mx-auto max-w-[1100px] space-y-4">
@@ -94,8 +142,20 @@ export function CheckupPage() {
         actions={
           <>
             <HelpLink anchor="checkup" />
+            {checkup && isLatest && openKeys.length > 0 ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={recheckAll}
+                disabled={recheck.isPending || run.isPending}
+                title="Run the check behind every open item again, right now"
+              >
+                {recheck.isPending ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" aria-hidden />}
+                {recheck.isPending ? "Re-checking…" : `Re-check ${openKeys.length} open`}
+              </Button>
+            ) : null}
             <Button variant="primary" size="sm" onClick={runNow} disabled={run.isPending}>
-            {run.isPending ? <Spinner className="size-3.5 text-accent-fg" /> : <Play className="size-3.5" aria-hidden />}
+              {run.isPending ? <Spinner className="size-3.5 text-accent-fg" /> : <Play className="size-3.5" aria-hidden />}
               {run.isPending ? "Checking…" : "Run now"}
             </Button>
           </>
@@ -129,7 +189,7 @@ export function CheckupPage() {
           It also runs by itself every day at the time set in Settings.
         </EmptyState>
       ) : (
-        <CheckupView checkup={checkup} isLatest={selectedId === null || checkup.id === history.data?.[0]?.id} />
+        <CheckupView checkup={checkup} isLatest={isLatest} rechecking={recheck.isPending} />
       )}
     </div>
   );
@@ -183,11 +243,12 @@ function HistoryStrip({
   );
 }
 
-function CheckupView({ checkup: c, isLatest }: { checkup: Checkup; isLatest: boolean }) {
+function CheckupView({ checkup: c, isLatest, rechecking }: { checkup: Checkup; isLatest: boolean; rechecking: boolean }) {
   const user = useUser();
-  const { groups, ok } = groupCheckItems(c.items);
+  const { groups, ok, snoozed } = groupCheckItems(c.items, c.date);
   const duration = c.finished_at ? new Date(c.finished_at).getTime() - new Date(c.started_at).getTime() : null;
   const pct = c.actions_total ? c.actions_done / c.actions_total : 1;
+  const recurring = c.actions_total - c.actions_new;
   return (
     <div className="space-y-4">
       <section aria-label="Summary" className="space-y-3 rounded-xl border border-line bg-surface p-4">
@@ -218,6 +279,21 @@ function CheckupView({ checkup: c, isLatest }: { checkup: Checkup; isLatest: boo
           <span className="inline-flex items-center gap-1.5">
             <SeverityIcon severity="ok" className="size-3.5" /> <strong className="font-semibold">{c.counts.ok}</strong> ok
           </span>
+          {c.actions_total ? (
+            <span className="text-fg-2" title="New: first seen in this check-up. Recurring: already in the previous one.">
+              <strong className="font-semibold text-fg">{c.actions_new}</strong> new · <strong className="font-semibold text-fg">{recurring}</strong> recurring
+            </span>
+          ) : null}
+          {c.actions_snoozed ? (
+            <a href="#checkup-snoozed" className="text-fg-3 hover:text-fg-2">
+              {c.actions_snoozed} snoozed
+            </a>
+          ) : null}
+          {c.fixed_total ? (
+            <a href="#checkup-fixed" className="inline-flex items-center gap-1 text-fg-2 hover:text-fg">
+              <CircleCheck className="size-3.5 text-good" aria-hidden /> {c.fixed_total} fixed since last check-up
+            </a>
+          ) : null}
         </div>
         {c.actions_total ? (
           <div className="space-y-1">
@@ -239,6 +315,11 @@ function CheckupView({ checkup: c, isLatest }: { checkup: Checkup; isLatest: boo
             </div>
           </div>
         ) : null}
+        {isLatest && c.actions_total ? (
+          <p className="text-[12px] text-fg-3">
+            Findings are as of <RelativeTime iso={c.finished_at ?? c.started_at} />. Re-check an item to see whether it is still there now.
+          </p>
+        ) : null}
       </section>
 
       {groups.length ? (
@@ -247,7 +328,7 @@ function CheckupView({ checkup: c, isLatest }: { checkup: Checkup; isLatest: boo
             <ul className="divide-y divide-line">
               {g.items.map((item) => (
                 <li key={item.key}>
-                  <CheckRow checkupId={c.id} item={item} />
+                  <CheckRow checkup={c} item={item} canAct={isLatest} rechecking={rechecking} />
                 </li>
               ))}
             </ul>
@@ -255,9 +336,28 @@ function CheckupView({ checkup: c, isLatest }: { checkup: Checkup; isLatest: boo
         ))
       ) : (
         <p className="flex items-center gap-2 rounded-xl border border-good/40 bg-good/8 px-4 py-3 text-[13.5px]">
-          <CircleCheck className="size-4 text-good" aria-hidden /> Nothing to do today — every check passed.
+          <CircleCheck className="size-4 text-good" aria-hidden />
+          {c.actions_snoozed ? "Nothing to do today — the only findings are snoozed." : "Nothing to do today — every check passed."}
         </p>
       )}
+
+      {c.resolved.length ? <FixedPanel checkup={c} /> : null}
+
+      {snoozed.length ? (
+        <details id="checkup-snoozed" className="group rounded-xl border border-line bg-surface">
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-[13px] font-medium text-fg-2">
+            <ChevronRight className="size-4 text-fg-3 transition-transform group-open:rotate-90" aria-hidden />
+            <BellOff className="size-3.5 text-fg-3" aria-hidden /> Snoozed ({snoozed.length})
+          </summary>
+          <ul className="divide-y divide-line border-t border-line">
+            {snoozed.map((item) => (
+              <li key={item.key}>
+                <SnoozedRow checkup={c} item={item} canAct={isLatest} />
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
 
       {ok.length ? (
         <details className="group rounded-xl border border-line bg-surface">
@@ -283,6 +383,18 @@ function CheckupView({ checkup: c, isLatest }: { checkup: Checkup; isLatest: boo
   );
 }
 
+/** "new today" or "since N days", from first_seen. Nothing on rows that predate the field. */
+function AgeBadge({ item, date }: { item: { first_seen: string }; date: string }) {
+  if (!item.first_seen) return null;
+  if (isNew(item, date)) return <Badge tone="accent">new today</Badge>;
+  const days = ageDays(item, date);
+  return (
+    <Badge tone="outline" title={`First seen ${formatCalendarDate(item.first_seen)}`}>
+      since {days === 1 ? "yesterday" : `${days} days`}
+    </Badge>
+  );
+}
+
 function ItemLink({ link }: { link: string }) {
   const cls = "inline-flex items-center gap-1 text-[12px] text-accent hover:underline";
   return isInternalLink(link) ? (
@@ -296,25 +408,88 @@ function ItemLink({ link }: { link: string }) {
   );
 }
 
-function CheckRow({ checkupId, item }: { checkupId: number; item: CheckItem }) {
-  const done = useCheckItemDone(checkupId);
-  const toast = useToast();
+/** The item's task, when it has one: ref + status, or "task done" when the item outlived it. */
+function TaskLink({ item }: { item: CheckItem }) {
   const { openTask } = useShell();
-  const [making, setMaking] = useState(false);
+  if (!item.task_id || !item.task_ref) return null;
+  const done = item.task_status === "done";
   return (
-    <div className={clsx("flex items-start gap-3 px-3.5 py-3", item.done && "opacity-60")}>
+    <button
+      type="button"
+      onClick={() => openTask(item.task_id!)}
+      className={clsx("inline-flex items-center gap-1 font-mono text-[12px] hover:underline", done ? "text-fg-3" : "text-accent")}
+      title={done ? "The task was closed, but the finding is still here" : `Task ${item.task_status.replace("_", " ")}`}
+    >
+      <ListPlus className="size-3.5" aria-hidden /> {item.task_ref}
+      {item.task_status ? <span className="font-sans text-[11px] text-fg-3">· {done ? "done" : item.task_status.replace("_", " ")}</span> : null}
+    </button>
+  );
+}
+
+function CheckRow({ checkup, item, canAct, rechecking }: { checkup: Checkup; item: CheckItem; canAct: boolean; rechecking: boolean }) {
+  const user = useUser();
+  const done = useCheckItemDone(checkup.id);
+  const snooze = useCheckItemSnooze(checkup.id);
+  const recheck = useRecheck(checkup.id);
+  const toast = useToast();
+  const [making, setMaking] = useState(false);
+  const settled = isSettled(item);
+  const resolved = item.resolved_at !== null;
+  const taskDone = item.task_id !== null && item.task_status === "done";
+  const today = todayInTz(user.timezone);
+
+  const recheckOne = () =>
+    recheck.mutate(
+      { key: item.key },
+      {
+        onSuccess: (c) => {
+          const fresh = c.items.find((i) => i.key === item.key);
+          if (!fresh) return;
+          if (fresh.resolved_at) toast.success(`Resolved — "${item.title}" is gone`);
+          else toast.info(`Still there: ${fresh.title}`);
+        },
+        onError: (e) => toast.error(e),
+      },
+    );
+  const snoozeFor = (until: string | null) =>
+    snooze.mutate(
+      { key: item.key, until },
+      {
+        onSuccess: () => toast.success(until ? `Snoozed until ${formatCalendarDate(until)}` : "Snoozed until it changes"),
+        onError: (e) => toast.error(e),
+      },
+    );
+  const busy = recheck.isPending || rechecking;
+
+  return (
+    <div className={clsx("flex items-start gap-3 px-3.5 py-3", settled && "opacity-60")}>
       <input
         type="checkbox"
-        checked={item.done}
+        checked={settled}
+        disabled={resolved}
         onChange={(e) => done.mutate({ key: item.key, done: e.target.checked }, { onError: (err) => toast.error(err) })}
-        aria-label={item.done ? `Mark "${item.title}" not done` : `Mark "${item.title}" done`}
+        aria-label={resolved ? `"${item.title}" resolved` : item.done ? `Mark "${item.title}" not done` : `Mark "${item.title}" done`}
+        title={resolved ? "Verified gone by a re-check" : undefined}
         className="mt-1 size-4 shrink-0 accent-[var(--accent)]"
       />
       <SeverityIcon severity={item.severity} className="mt-0.5 size-4" />
       <div className="min-w-0 flex-1 space-y-0.5">
-        <p className={clsx("text-[13.5px] font-medium", item.done && "line-through")}>{item.title}</p>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <p className={clsx("text-[13.5px] font-medium", settled && "line-through")}>{item.title}</p>
+          <AgeBadge item={item} date={checkup.date} />
+          {resolved ? (
+            <Badge tone="good" dot title={formatDateTime(item.resolved_at, user.timezone)}>
+              resolved · verified <RelativeTime iso={item.resolved_at} />
+            </Badge>
+          ) : item.checked_at ? (
+            <span className="text-[11.5px] text-fg-3" title={formatDateTime(item.checked_at, user.timezone)}>
+              still there · re-checked <RelativeTime iso={item.checked_at} />
+            </span>
+          ) : null}
+          {taskDone ? <Badge tone="warning">task done, still here</Badge> : null}
+        </div>
         {item.detail ? <p className="text-[12.5px] break-words text-fg-2">{item.detail}</p> : null}
-        {item.action ? (
+        {item.action && !resolved ? (
           <p className="text-[12.5px] text-fg">
             <span className="text-fg-3">→ </span>
             {item.action}
@@ -327,19 +502,116 @@ function CheckRow({ checkupId, item }: { checkupId: number; item: CheckItem }) {
             </Link>
           ) : null}
           {item.link ? <ItemLink link={item.link} /> : null}
-          {item.task_id && item.task_ref ? (
-            <button type="button" onClick={() => openTask(item.task_id!)} className="inline-flex items-center gap-1 font-mono text-[12px] text-accent hover:underline">
-              <ListPlus className="size-3.5" aria-hidden /> {item.task_ref}
-            </button>
-          ) : (
+          <TaskLink item={item} />
+          {item.task_id === null || taskDone ? (
             <button type="button" onClick={() => setMaking(true)} className="inline-flex items-center gap-1 text-[12px] text-fg-3 hover:text-fg">
-              <ListPlus className="size-3.5" aria-hidden /> Make task
+              <ListPlus className="size-3.5" aria-hidden /> {taskDone ? "Make another task" : "Make task"}
             </button>
-          )}
+          ) : null}
+          {canAct && !resolved ? (
+            <>
+              <button
+                type="button"
+                onClick={recheckOne}
+                disabled={busy}
+                className="inline-flex items-center gap-1 text-[12px] text-fg-3 hover:text-fg disabled:opacity-60"
+                title="Run this check again now"
+              >
+                {recheck.isPending ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" aria-hidden />} Re-check
+              </button>
+              <Menu
+                label={`Snooze "${item.title}"`}
+                trigger={
+                  <span className="inline-flex items-center gap-1 text-[12px] text-fg-3 hover:text-fg">
+                    <BellOff className="size-3.5" aria-hidden /> Snooze
+                  </span>
+                }
+                items={[
+                  { label: "Hide for 7 days", onSelect: () => snoozeFor(addDays(today, 7)) },
+                  { label: "Hide for 30 days", onSelect: () => snoozeFor(addDays(today, 30)) },
+                  "separator",
+                  { label: "Hide until it changes", onSelect: () => snoozeFor(null) },
+                ]}
+              />
+            </>
+          ) : null}
         </div>
       </div>
-      {making ? <MakeTaskDialog checkupId={checkupId} item={item} onClose={() => setMaking(false)} /> : null}
+      {making ? <MakeTaskDialog checkupId={checkup.id} item={item} onClose={() => setMaking(false)} /> : null}
     </div>
+  );
+}
+
+function SnoozedRow({ checkup, item, canAct }: { checkup: Checkup; item: CheckItem; canAct: boolean }) {
+  const snooze = useCheckItemSnooze(checkup.id);
+  const toast = useToast();
+  return (
+    <div className="flex items-start gap-3 px-4 py-2.5 text-[13px]">
+      <SeverityIcon severity={item.severity} className="mt-0.5 size-3.5" />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="text-fg">{item.title}</span>
+          <AgeBadge item={item} date={checkup.date} />
+          <span className="text-[11.5px] text-fg-3">{item.snoozed_until ? `until ${formatCalendarDate(item.snoozed_until)}` : "until it changes"}</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-3 pt-0.5">
+          {item.project_key ? <span className="font-mono text-[11.5px] text-fg-3">{item.project_key}</span> : null}
+          <TaskLink item={item} />
+          {canAct ? (
+            <button
+              type="button"
+              onClick={() => snooze.mutate({ key: item.key, until: "off" }, { onError: (e) => toast.error(e) })}
+              disabled={snooze.isPending}
+              className="text-[12px] text-fg-3 hover:text-fg"
+            >
+              Unsnooze
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Items open in the previous check-up and gone in this one. */
+function FixedPanel({ checkup: c }: { checkup: Checkup }) {
+  const user = useUser();
+  const { openTask } = useShell();
+  const since = (r: ResolvedItem) => {
+    const days = r.first_seen ? Math.max(0, ageDays(r, c.date)) : 0;
+    return days > 1 ? `was open ${days} days` : days === 1 ? "was open since yesterday" : "appeared in the previous check-up";
+  };
+  return (
+    <Panel
+      id="checkup-fixed"
+      title={
+        <>
+          Fixed since last check-up <span className="font-normal text-fg-3">· {c.resolved.length}</span>
+        </>
+      }
+      bodyClassName="p-0"
+    >
+      <ul className="divide-y divide-line">
+        {c.resolved.map((r) => (
+          <li key={r.key} className="flex items-start gap-2.5 px-4 py-2.5 text-[13px]">
+            <CircleCheck className="mt-0.5 size-3.5 shrink-0 text-good" aria-label="Fixed" role="img" />
+            <span className="min-w-0 flex-1">
+              <span className="text-fg line-through decoration-fg-3">{r.title}</span>
+              <span className="text-fg-3" title={`Last seen in the check-up of ${formatDateTime(r.since_at, user.timezone)}`}>
+                {" "}
+                — {since(r)}
+              </span>
+            </span>
+            {r.task_ref ? (
+              <button type="button" onClick={() => void openTask} className="shrink-0 font-mono text-[11.5px] text-fg-3" title="The task made from it">
+                {r.task_ref}
+              </button>
+            ) : null}
+            {r.project_key ? <span className="shrink-0 font-mono text-[11px] text-fg-3">{r.project_key}</span> : null}
+          </li>
+        ))}
+      </ul>
+    </Panel>
   );
 }
 
@@ -391,7 +663,7 @@ function MakeTaskDialog({ checkupId, item, onClose }: { checkupId: number; item:
         </>
       }
     >
-      <Field label="Project" hint="The task gets the label checkup and the item's detail as its description.">
+      <Field label="Project" hint="The task gets the label checkup and the item's detail as its description. Tomorrow's check-up keeps the link while the task is open.">
         {(id, desc) => (
           <Select id={id} aria-describedby={desc} value={effective} onChange={(e) => setProjectKey(e.target.value)}>
             {projects.data?.map((p) => (
@@ -447,6 +719,12 @@ export function CheckupPanel({ summary }: { summary: CheckupSummary | null }) {
         <span className="inline-flex items-center gap-1">
           <SeverityIcon severity="ok" className="size-3.5" /> {summary.counts.ok}
         </span>
+        {summary.actions_new ? <Badge tone="accent">{summary.actions_new} new</Badge> : null}
+        {summary.fixed_total ? (
+          <span className="inline-flex items-center gap-1 text-fg-3">
+            <CircleCheck className="size-3.5 text-good" aria-hidden /> {summary.fixed_total} fixed
+          </span>
+        ) : null}
       </span>
       {summary.actions_total ? (
         <span className="flex min-w-40 flex-1 items-center gap-2 text-[12px] text-fg-3">

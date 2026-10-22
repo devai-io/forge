@@ -299,7 +299,7 @@ func (s *Store) FocusInputs(ctx context.Context, projectID int64, today string) 
 
 	if c, err := s.LatestCheckup(ctx); err == nil {
 		for _, it := range c.Items {
-			if it.ProjectKey != nil && *it.ProjectKey == p.Key && it.Severity != "ok" && !it.Done {
+			if it.ProjectKey != nil && *it.ProjectKey == p.Key && it.Open() {
 				in.Checkup = append(in.Checkup, FocusCheck{Severity: it.Severity, Title: it.Title, Action: it.Action, TaskRef: it.TaskRef})
 			}
 		}

@@ -550,7 +550,8 @@ export type CheckCategory =
   | "ci"
   | "tasks"
   | "vault"
-  | "backups";
+  | "backups"
+  | "security";
 export type CheckItem = {
   key: string;
   category: CheckCategory;
@@ -563,6 +564,22 @@ export type CheckItem = {
   done: boolean;
   task_id: number | null;
   task_ref: string | null;
+  task_status: string;
+  first_seen: string; // "YYYY-MM-DD"; "" on check-ups older than this field
+  checked_at: string | null;
+  resolved_at: string | null;
+  snoozed: boolean;
+  snoozed_until: string | null; // null while snoozed = until the item changes
+};
+export type ResolvedItem = {
+  key: string;
+  category: CheckCategory;
+  severity: CheckSeverity;
+  title: string;
+  project_key: string | null;
+  task_ref: string | null;
+  first_seen: string;
+  since_at: string;
 };
 export type CheckupSummary = {
   id: number;
@@ -574,9 +591,12 @@ export type CheckupSummary = {
   counts: { ok: number; warn: number; fail: number };
   actions_total: number;
   actions_done: number;
+  actions_new: number;
+  actions_snoozed: number;
+  fixed_total: number;
   emailed: boolean;
 };
-export type Checkup = CheckupSummary & { items: CheckItem[] };
+export type Checkup = CheckupSummary & { items: CheckItem[]; resolved: ResolvedItem[] };
 
 // ── Request bodies ──────────────────────────────────────────────────────────
 

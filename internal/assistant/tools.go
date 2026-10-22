@@ -372,7 +372,7 @@ func (a *Assistant) call(ctx context.Context, user *store.User, name string, raw
 		if c, err := a.store.LatestCheckup(ctx); err == nil {
 			actions := []string{}
 			for _, it := range c.Items {
-				if it.Severity != "ok" && !it.Done {
+				if it.Open() {
 					actions = append(actions, it.Severity+": "+it.Title)
 				}
 			}

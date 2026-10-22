@@ -458,7 +458,7 @@ func (s *Store) ContextForPath(ctx context.Context, cwd string, trim TaskTrimmer
 	if c, err := s.LatestCheckup(ctx); err == nil {
 		var lines []string
 		for _, it := range c.Items {
-			if it.Severity == "ok" || it.Done || it.ProjectKey == nil || *it.ProjectKey != key {
+			if !it.Open() || it.ProjectKey == nil || *it.ProjectKey != key {
 				continue
 			}
 			lines = append(lines, fmt.Sprintf("- %s %s → %s", map[string]string{"fail": "✗", "warn": "!"}[it.Severity], it.Title, it.Action))

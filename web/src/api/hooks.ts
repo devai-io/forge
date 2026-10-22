@@ -24,6 +24,7 @@ import type {
   Chat,
   ChatSettings,
   ChatThread,
+  CheckItem,
   Checkup,
   CheckupSummary,
   MeResponse,
@@ -993,28 +994,55 @@ export function useRunCheckup() {
   });
 }
 
+/** Optimistic patch of one item in both caches that may hold this check-up. */
+function patchCheckItem(qc: QueryClient, checkupId: number, key: string, fn: (item: CheckItem) => CheckItem) {
+  const patch = (c: Checkup | null | undefined) =>
+    c && c.id === checkupId ? { ...c, items: c.items.map((i) => (i.key === key ? fn(i) : i)) } : c;
+  qc.setQueryData<Checkup | null>(keys.checkup(checkupId), patch);
+  qc.setQueryData<Checkup | null>(keys.checkupLatest, patch);
+}
+
+function refetchCheckup(qc: QueryClient, checkupId: number) {
+  void qc.invalidateQueries({ queryKey: keys.checkup(checkupId) });
+  void qc.invalidateQueries({ queryKey: keys.checkupLatest });
+}
+
 export function useCheckItemDone(checkupId: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ key, done }: { key: string; done: boolean }) =>
       api.patch<Checkup>(`/checkups/${checkupId}/items/${encodeURIComponent(key)}`, { done }),
     onMutate: ({ key, done }) => {
-      const patch = (c: Checkup | null | undefined) =>
-        c && c.id === checkupId
-          ? {
-              ...c,
-              items: c.items.map((i) => (i.key === key ? { ...i, done } : i)),
-              actions_done: c.actions_done + (done ? 1 : -1),
-            }
-          : c;
-      qc.setQueryData<Checkup | null>(keys.checkup(checkupId), patch);
-      qc.setQueryData<Checkup | null>(keys.checkupLatest, patch);
+      patchCheckItem(qc, checkupId, key, (i) => ({ ...i, done }));
+      const bump = (c: Checkup | null | undefined) => (c && c.id === checkupId ? { ...c, actions_done: c.actions_done + (done ? 1 : -1) } : c);
+      qc.setQueryData<Checkup | null>(keys.checkup(checkupId), bump);
+      qc.setQueryData<Checkup | null>(keys.checkupLatest, bump);
     },
     onSuccess: (checkup) => storeCheckup(qc, checkup),
-    onError: () => {
-      void qc.invalidateQueries({ queryKey: keys.checkup(checkupId) });
-      void qc.invalidateQueries({ queryKey: keys.checkupLatest });
-    },
+    onError: () => refetchCheckup(qc, checkupId),
+  });
+}
+
+/** `until` a date: hidden to that date; null: until the item changes; "off": back in the list. */
+export function useCheckItemSnooze(checkupId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ key, until }: { key: string; until: string | null | "off" }) =>
+      api.patch<Checkup>(`/checkups/${checkupId}/items/${encodeURIComponent(key)}`, { snooze: until === "off" ? null : { until } }),
+    onMutate: ({ key, until }) =>
+      patchCheckItem(qc, checkupId, key, (i) => ({ ...i, snoozed: until !== "off", snoozed_until: until === "off" ? null : until })),
+    onSuccess: (checkup) => storeCheckup(qc, checkup),
+    onError: () => refetchCheckup(qc, checkupId),
+  });
+}
+
+/** Re-runs the check behind one item (`key`) or behind every open item (no key). */
+export function useRecheck(checkupId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ key }: { key?: string }) =>
+      api.post<Checkup>(key ? `/checkups/${checkupId}/items/${encodeURIComponent(key)}/recheck` : `/checkups/${checkupId}/recheck`),
+    onSuccess: (checkup) => storeCheckup(qc, checkup),
   });
 }
 

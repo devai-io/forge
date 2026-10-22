@@ -389,7 +389,7 @@ func checkupMarkdown(c *store.Checkup, publicURL string) string {
 	}
 	n := 0
 	for _, it := range c.Items {
-		if it.Severity == "ok" || it.Done {
+		if !it.Open() {
 			continue
 		}
 		if n++; n > 15 {

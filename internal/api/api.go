@@ -217,6 +217,8 @@ func (s *Server) Handler() http.Handler {
 	h("GET /api/checkups/{id}", s.authed(s.getCheckup))
 	h("PATCH /api/checkups/{id}/items/{key}", s.authed(s.updateCheckupItem))
 	h("POST /api/checkups/{id}/items/{key}/task", s.authed(s.checkupItemTask))
+	h("POST /api/checkups/{id}/items/{key}/recheck", s.authed(s.recheckCheckupItem))
+	h("POST /api/checkups/{id}/recheck", s.authed(s.recheckCheckup))
 
 	h("GET /api/projects", s.authed(s.listProjects))
 	h("POST /api/projects", s.authed(s.createProject))

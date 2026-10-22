@@ -174,6 +174,67 @@ func TestQueriesRunOnSQLite(t *testing.T) {
 		t.Fatalf("checkups = %+v", list)
 	}
 
+	// Day two threads day one through: k1 is gone (fixed), k2 keeps its
+	// first_seen and task, k3 is new; a snooze hides k2 from the counts.
+	gameTask := must(st.CreateTask(ctx, store.TaskInput{ProjectKey: "GAME", Title: "fix k2"}))
+	id1b := must(st.StartCheckup(ctx, today, "manual"))
+	c1 := must(st.FinishCheckup(ctx, id1b, "warn", []store.CheckItem{
+		{Key: "k1", Category: "tasks", Severity: "warn", Title: "t"},
+		{Key: "k2", Category: "repos", Severity: "fail", Title: "k2 broken", TaskID: &gameTask.ID, TaskRef: &gameTask.Ref},
+	}))
+	if c1.Status != "fail" || c1.ActionsNew != 2 || c1.Items[1].TaskStatus == "" {
+		t.Fatalf("day one = %+v", c1.CheckupSummary)
+	}
+	tomorrow := "2099-01-02"
+	id2 := must(st.StartCheckup(ctx, tomorrow, "schedule"))
+	c2 := must(st.FinishCheckup(ctx, id2, "warn", []store.CheckItem{
+		{Key: "k2", Category: "repos", Severity: "fail", Title: "k2 broken"},
+		{Key: "k3", Category: "tasks", Severity: "warn", Title: "new"},
+		{Key: "ok:tasks", Category: "tasks", Severity: "ok", Title: "fine"},
+	}))
+	byKey := map[string]store.CheckItem{}
+	for _, it := range c2.Items {
+		byKey[it.Key] = it
+	}
+	if k2 := byKey["k2"]; k2.FirstSeen != today || k2.TaskID == nil || *k2.TaskID != gameTask.ID || k2.TaskStatus != gameTask.Status {
+		t.Fatalf("k2 carry-over = %+v", k2)
+	}
+	if k3 := byKey["k3"]; k3.FirstSeen != tomorrow {
+		t.Fatalf("k3 first_seen = %q", k3.FirstSeen)
+	}
+	if c2.ActionsNew != 1 || c2.FixedTotal != 1 || c2.Resolved[0].Key != "k1" || c2.Resolved[0].FirstSeen != today {
+		t.Fatalf("day two = %+v resolved=%+v", c2.CheckupSummary, c2.Resolved)
+	}
+	c2 = must(st.SnoozeCheckItem(ctx, id2, "k2", nil))
+	if c2.ActionsSnoozed != 1 || c2.ActionsTotal != 1 || c2.Status != "warn" || c2.Counts.Fail != 0 {
+		t.Fatalf("snoozed = %+v", c2.CheckupSummary)
+	}
+	// A re-check that no longer reports k3 resolves it; one that reports k2
+	// with a new title leaves it open (snoozed items are not re-checked).
+	now := time.Now().UTC().Truncate(time.Second)
+	c2 = must(st.ApplyRecheck(ctx, id2, []string{"k3"}, map[string]store.CheckItem{}, now))
+	for _, it := range c2.Items {
+		if it.Key == "k3" && (it.ResolvedAt == nil || it.CheckedAt == nil) {
+			t.Fatalf("k3 not resolved: %+v", it)
+		}
+	}
+	if c2.ActionsDone != 1 {
+		t.Fatalf("resolved counts as done: %+v", c2.CheckupSummary)
+	}
+	// Day three: the snooze "until it changes" survives an unchanged title and
+	// ends when the title changes.
+	id3 := must(st.StartCheckup(ctx, "2099-01-03", "schedule"))
+	c3 := must(st.FinishCheckup(ctx, id3, "ok", []store.CheckItem{{Key: "k2", Category: "repos", Severity: "fail", Title: "k2 broken"}}))
+	if !c3.Items[0].Snoozed || c3.Status != "ok" {
+		t.Fatalf("snooze should carry: %+v", c3.Items[0])
+	}
+	id4 := must(st.StartCheckup(ctx, "2099-01-04", "schedule"))
+	c4 := must(st.FinishCheckup(ctx, id4, "ok", []store.CheckItem{{Key: "k2", Category: "repos", Severity: "fail", Title: "k2 broken differently"}}))
+	if c4.Items[0].Snoozed || c4.Status != "fail" || c4.Items[0].FirstSeen != today {
+		t.Fatalf("snooze should end on change: %+v", c4.Items[0])
+	}
+	must(st.UnsnoozeCheckItem(ctx, id4, "k2"))
+
 	// Users, sessions, resets.
 	u := must(st.CreateUser(ctx, "ada", "ada@example.com", "Ada", "x", "UTC", false))
 	if _, err := st.CreateUser(ctx, "ADA", "other@example.com", "", "x", "UTC", false); !errors.Is(err, store.ErrConflict) {

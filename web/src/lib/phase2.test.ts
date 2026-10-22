@@ -94,7 +94,7 @@ describe("monitoring helpers", () => {
 });
 
 describe("check-up grouping", () => {
-  const item = (key: string, category: CheckItem["category"], severity: CheckItem["severity"], done = false): CheckItem => ({
+  const item = (key: string, category: CheckItem["category"], severity: CheckItem["severity"], done = false, extra: Partial<CheckItem> = {}): CheckItem => ({
     key,
     category,
     severity,
@@ -106,19 +106,33 @@ describe("check-up grouping", () => {
     done,
     task_id: null,
     task_ref: null,
+    task_status: "",
+    first_seen: "2026-10-01",
+    checked_at: null,
+    resolved_at: null,
+    snoozed: false,
+    snoozed_until: null,
+    ...extra,
   });
-  it("groups non-ok items by category in a fixed order, fails first, done last", () => {
-    const { groups, ok } = groupCheckItems([
-      item("disk:a", "hosts", "warn"),
-      item("ep:1", "endpoints", "warn"),
-      item("ep:2", "endpoints", "fail"),
-      item("ep:3", "endpoints", "fail", true),
-      item("ci:x", "ci", "ok"),
-    ]);
+  it("groups non-ok items by category in a fixed order; open before settled, new before chronic, fails first; snoozed apart", () => {
+    const { groups, ok, snoozed } = groupCheckItems(
+      [
+        item("disk:a", "hosts", "warn"),
+        item("ep:1", "endpoints", "warn"),
+        item("ep:2", "endpoints", "fail"),
+        item("ep:3", "endpoints", "fail", true),
+        item("ep:4", "endpoints", "warn", false, { first_seen: "2026-10-22" }),
+        item("ep:5", "endpoints", "fail", false, { resolved_at: "2026-10-22T10:00:00Z" }),
+        item("ep:6", "endpoints", "fail", false, { snoozed: true }),
+        item("ci:x", "ci", "ok"),
+      ],
+      "2026-10-22",
+    );
     expect(groups.map((g) => g.category)).toEqual(["endpoints", "hosts"]);
-    expect(groups[0].items.map((i) => i.key)).toEqual(["ep:2", "ep:1", "ep:3"]);
+    expect(groups[0].items.map((i) => i.key)).toEqual(["ep:4", "ep:2", "ep:1", "ep:3", "ep:5"]);
     expect(groups[0].label).toBe("Endpoints");
     expect(ok.map((i) => i.key)).toEqual(["ci:x"]);
+    expect(snoozed.map((i) => i.key)).toEqual(["ep:6"]);
   });
   it("tells in-app routes from external links", () => {
     expect(isInternalLink("/p/SHOP")).toBe(true);
