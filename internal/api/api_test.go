@@ -374,10 +374,19 @@ func TestRunnerProtocol(t *testing.T) {
 	expect(t, "finish", runner.do("POST", fmt.Sprintf("/api/runner/runs/%d/finish", run.ID), map[string]any{
 		"status": "succeeded", "exit_code": 0, "session_id": "s1", "result": "All good", "cost_usd": cost}, nil, bearer...), 204)
 	expect(t, "run", h.do("GET", fmt.Sprintf("/api/runs/%d", run.ID), nil, &run), 200)
-	if run.Status != "succeeded" || run.SessionID != "s1" || run.CostUSD == nil || *run.CostUSD != cost {
-		t.Fatalf("finished run = %+v", run)
+	// A run the user started stays open after it answered: waiting.
+	if run.Status != "waiting" || run.SessionID != "s1" || run.CostUSD == nil || *run.CostUSD != cost {
+		t.Fatalf("answered run = %+v", run)
+	}
+	if !strings.Contains(run.ResumeHint, "claude --resume s1") {
+		t.Fatalf("resume hint = %q", run.ResumeHint)
 	}
 	expect(t, "finish twice", runner.do("POST", fmt.Sprintf("/api/runner/runs/%d/finish", run.ID), map[string]any{"status": "failed"}, nil, bearer...), 404)
+	expect(t, "finish by the user", h.do("POST", fmt.Sprintf("/api/runs/%d/finish", run.ID), nil, &run), 200)
+	if run.Status != "succeeded" || !run.FinishRequested {
+		t.Fatalf("finished run = %+v", run)
+	}
+	expect(t, "finish a finished run", h.do("POST", fmt.Sprintf("/api/runs/%d/finish", run.ID), nil, nil), 422)
 
 	var cont store.Run
 	expect(t, "continue", h.do("POST", "/api/runs", map[string]any{"resume_run_id": run.ID, "prompt": "and now?"}, &cont), 201)
@@ -961,5 +970,36 @@ func TestCheckupFlagsSecurityPosture(t *testing.T) {
 	}
 	if !seen["security:initial-password"] || !seen["security:totp"] {
 		t.Fatalf("security items = %v", seen)
+	}
+}
+
+// A check-up item's one-click fix applies and re-checks it: an overdue task
+// moved a week out is no longer overdue, so the item comes back resolved.
+func TestCheckupFix(t *testing.T) {
+	h := setup(t)
+	h.login()
+	expect(t, "task", h.do("POST", "/api/tasks", map[string]any{"project_key": "GAME", "title": "Late fix", "due_date": "2020-01-01"}, nil), 201)
+	var c store.Checkup
+	expect(t, "run", h.do("POST", "/api/checkups", nil, &c), 201)
+	var target *store.CheckItem
+	for i := range c.Items {
+		if strings.HasPrefix(c.Items[i].Key, "task:") && strings.Contains(c.Items[i].Title, "Late fix") {
+			target = &c.Items[i]
+		}
+	}
+	if target == nil || len(target.Fixes) != 3 || target.Fixes[1].ID != "week" {
+		t.Fatalf("overdue item and its fixes: %+v", target)
+	}
+	path := fmt.Sprintf("/api/checkups/%d/items/%s/fix", c.ID, target.Key)
+	expect(t, "unknown fix", h.do("POST", path, map[string]string{"fix": "probe"}, nil), 422)
+	var res struct {
+		Checkup store.Checkup
+		Note    string
+	}
+	expect(t, "fix", h.do("POST", path, map[string]string{"fix": "week"}, &res), 200)
+	for _, it := range res.Checkup.Items {
+		if it.Key == target.Key && (it.ResolvedAt == nil || it.CheckedAt == nil) {
+			t.Fatalf("moved a week out, so resolved: %+v", it)
+		}
 	}
 }

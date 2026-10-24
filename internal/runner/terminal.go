@@ -253,6 +253,9 @@ type controlMsg struct {
 	Prompt  string `json:"prompt"`
 	// SkipPermissions starts Claude with --dangerously-skip-permissions.
 	SkipPermissions bool `json:"skip_permissions"`
+	// Resume starts Claude with --resume <session> (Codex: `codex resume`),
+	// in Cwd: an agent run's session, taken over in a terminal.
+	Resume string `json:"resume"`
 	// SSH is the destination a Start "ssh" session connects to.
 	SSH     string          `json:"ssh"`
 	Name    string          `json:"name"`
@@ -359,6 +362,10 @@ var sshTargetRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.@:\[\]-]*$`)
 
 func validSSHTarget(t string) bool { return len(t) <= 200 && sshTargetRe.MatchString(t) }
 
+// resumeID is a Claude Code session id or a Codex thread id: it goes into a
+// shell line, so nothing else passes.
+var resumeID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{7,63}$`)
+
 // shellQuote single-quotes s for sh/zsh/bash.
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
@@ -398,16 +405,27 @@ func (r *Runner) createSession(ctx context.Context, m controlMsg) error {
 	// apply — exactly as if they had opened the window themselves. The
 	// SessionStart hook (Claude's, or Codex's after setup-codex) then injects
 	// the Forge context for this directory.
+	if m.Resume != "" && !resumeID.MatchString(m.Resume) {
+		return errors.New("invalid session id")
+	}
 	line := r.cfg.ClaudePath
 	if m.Start == "codex" {
 		line = r.cfg.CodexPath
+		if m.Resume != "" {
+			line += " resume " + m.Resume
+		}
 		if m.SkipPermissions {
 			line += " --dangerously-bypass-approvals-and-sandbox"
 		}
-	} else if m.SkipPermissions {
-		line += " --dangerously-skip-permissions"
+	} else {
+		if m.Resume != "" {
+			line += " --resume " + m.Resume
+		}
+		if m.SkipPermissions {
+			line += " --dangerously-skip-permissions"
+		}
 	}
-	if strings.TrimSpace(m.Prompt) != "" {
+	if strings.TrimSpace(m.Prompt) != "" && m.Resume == "" {
 		line += " " + shellQuote(m.Prompt)
 	}
 	time.Sleep(300 * time.Millisecond) // let the shell print its prompt

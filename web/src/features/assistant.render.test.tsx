@@ -90,6 +90,11 @@ const run = (over: Partial<Run> = {}): Run => ({
   created_at: AT,
   started_at: AT,
   finished_at: null,
+  inbox_after: 0,
+  resumes: 0,
+  finish_requested: false,
+  handoff: "",
+  resume_hint: "",
   ...over,
 });
 

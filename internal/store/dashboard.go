@@ -149,7 +149,7 @@ func (s *Store) Dashboard(ctx context.Context, tz string) (*Dashboard, error) {
 	if d.Runners, err = s.ListRunners(ctx); err != nil {
 		return nil, err
 	}
-	if d.ActiveRuns, err = s.ListRuns(ctx, RunFilter{Statuses: []string{"queued", "running"}, Limit: 20}); err != nil {
+	if d.ActiveRuns, err = s.ListRuns(ctx, RunFilter{Statuses: RunOpenStatuses, Limit: 20}); err != nil {
 		return nil, err
 	}
 	if d.RecentRuns, err = s.ListRuns(ctx, RunFilter{Finished: true, Limit: 6}); err != nil {

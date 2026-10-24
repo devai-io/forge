@@ -7,9 +7,10 @@ import { RelativeTime } from "@/components/ui/RelativeTime";
 import { runTitle } from "@/lib/agents";
 import { formatCost, formatDuration } from "@/lib/format";
 
-const STATUS: Record<RunStatus, { label: string; tone: "neutral" | "accent" | "good" | "critical" | "outline" }> = {
+const STATUS: Record<RunStatus, { label: string; tone: "neutral" | "accent" | "good" | "warning" | "critical" | "outline" }> = {
   queued: { label: "Queued", tone: "neutral" },
   running: { label: "Running", tone: "accent" },
+  waiting: { label: "Waiting for you", tone: "warning" },
   succeeded: { label: "Succeeded", tone: "good" },
   failed: { label: "Failed", tone: "critical" },
   cancelled: { label: "Cancelled", tone: "outline" },

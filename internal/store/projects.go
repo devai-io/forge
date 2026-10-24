@@ -38,7 +38,7 @@ WITH ts AS (
 	FROM endpoints GROUP BY project_id
 ), ru AS (
 	SELECT project_id, count(*) AS active
-	FROM runs WHERE status IN ('queued', 'running') GROUP BY project_id
+	FROM runs WHERE status IN ('queued', 'running', 'waiting') GROUP BY project_id
 ), ac AS (
 	SELECT project_id, max(created_at) AS last FROM activity
 	WHERE kind NOT LIKE 'endpoint.%' GROUP BY project_id

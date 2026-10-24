@@ -1,12 +1,16 @@
 // One run, live. Polls the transcript every 1.5 s while the run is queued or
-// running, follows the bottom unless the reader has scrolled up, and puts the
-// final answer at the top once there is one.
+// running (every 5 s while it waits for you), follows the bottom unless the
+// reader has scrolled up, and puts the latest answer at the top.
+//
+// An agent run you started stays open after it answers — "Waiting for you" —
+// until you Finish it: reply in the composer and the same run picks its
+// session back up, or open the session in Claude Code on its machine.
 
-import { ArrowDown, ArrowLeft, Ban, CornerDownRight, Copy } from "lucide-react";
+import { ArrowDown, ArrowLeft, Ban, CircleCheck, CornerDownRight, Copy, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError } from "@/api/client";
-import { isActiveRun, useCancelRun, useRun, useRunEvents } from "@/api/hooks";
+import { isActiveRun, isOpenRun, useCancelRun, useFinishRun, useHandoffRun, useRun, useRunEvents } from "@/api/hooks";
 import type { Run, RunEvent, RunPrompt } from "@/api/types";
 import { ColorDot } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -58,8 +62,24 @@ function RunView({
   loadingEvents: boolean;
 }) {
   const cancel = useCancelRun();
+  const finish = useFinishRun();
+  const handoff = useHandoffRun();
+  const navigate = useNavigate();
   const toast = useToast();
   const { newRun, openTask } = useShell();
+  const open = isOpenRun(run);
+  const waiting = run.status === "waiting";
+  // The run can be taken into Claude Code once it has a session and is not mid-work.
+  const canHandoff = run.kind === "agent" && !!run.session_id && !run.handoff && run.status !== "queued" &&
+    !(run.status === "running" && !run.interactive);
+  const openInClaude = () =>
+    handoff.mutate(run.id, {
+      onSuccess: ({ runner_id, session }) => {
+        toast.success(`Opened in Claude Code on ${run.runner_name} (tmux ${session})`);
+        navigate(`/terminal/${runner_id}/${session}`);
+      },
+      onError: (e) => toast.error(e),
+    });
   const items = useMemo(() => mapRunEvents(events ?? []), [events]);
   const bottom = useRef<HTMLDivElement>(null);
   const [follow, setFollow] = useState(true);
@@ -122,19 +142,42 @@ function RunView({
               ) : null}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <RunStatusBadge run={run} />
-            {active ? (
+            {canHandoff ? (
               <Button
                 size="sm"
                 variant="subtle"
+                loading={handoff.isPending}
+                onClick={openInClaude}
+                title={`Open this session in ${run.engine === "codex" ? "Codex" : "Claude Code"} in a terminal on ${run.runner_name}; Forge hands the run over`}
+              >
+                <SquareTerminal className="size-3.5" aria-hidden /> Open in {run.engine === "codex" ? "Codex" : "Claude Code"}
+              </Button>
+            ) : null}
+            {open && run.kind === "agent" ? (
+              <Button
+                size="sm"
+                variant={waiting ? "primary" : "subtle"}
+                disabled={run.finish_requested && run.status === "running"}
+                loading={finish.isPending}
+                onClick={() => finish.mutate(run.id, { onError: (e) => toast.error(e) })}
+                title="The work is done: close the session and the run"
+              >
+                <CircleCheck className="size-3.5" aria-hidden /> {run.finish_requested && run.status === "running" ? "Finishing…" : "Finish"}
+              </Button>
+            ) : null}
+            {open ? (
+              <Button
+                size="sm"
+                variant="ghost"
                 disabled={run.cancel_requested}
                 loading={cancel.isPending}
                 onClick={() => cancel.mutate(run.id, { onError: (e) => toast.error(e) })}
               >
                 <Ban className="size-3.5" aria-hidden /> {run.cancel_requested ? "Cancelling…" : "Cancel"}
               </Button>
-            ) : run.kind === "agent" && run.session_id ? (
+            ) : run.kind === "agent" && run.session_id && !run.handoff ? (
               <Button size="sm" variant="primary" onClick={() => newRun({ resume: run })}>
                 <CornerDownRight className="size-3.5" aria-hidden /> Continue
               </Button>
@@ -198,8 +241,44 @@ function RunView({
               </button>
             </div>
           ) : null}
+          {run.resume_hint ? (
+            <div className="col-span-2 sm:col-span-4 lg:col-span-6">
+              <dt className="text-fg-3">
+                In a terminal on {run.runner_name}{" "}
+                <span className="text-fg-3">(Claude Code's /resume does not list Forge runs; this, or </span>
+                <code className="font-mono text-fg-2">forge resume {run.id}</code>
+                <span className="text-fg-3">, opens it)</span>
+              </dt>
+              <dd className="mt-0.5 flex items-center gap-2">
+                <code className="min-w-0 flex-1 truncate rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[11.5px]">{run.resume_hint}</code>
+                <button
+                  type="button"
+                  aria-label="Copy the resume command"
+                  className="rounded p-0.5 text-fg-3 hover:text-fg"
+                  onClick={() => void navigator.clipboard?.writeText(run.resume_hint).then(() => toast.success("Command copied"))}
+                >
+                  <Copy className="size-3.5" />
+                </button>
+              </dd>
+            </div>
+          ) : null}
         </dl>
       </header>
+
+      {run.handoff ? (
+        <div role="status" className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-accent/40 bg-accent/8 px-3 py-2 text-[13px]">
+          <SquareTerminal className="size-4 text-fg-3" aria-hidden />
+          Continued in {run.engine === "codex" ? "Codex" : "Claude Code"} outside Forge: {run.handoff}.
+          {run.handoff.includes("tmux ") ? (
+            <Link
+              to={`/terminal/${run.runner_id}/${run.handoff.split("tmux ")[1]}`}
+              className="text-accent hover:underline"
+            >
+              Open the terminal
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
 
       {run.error ? (
         <div role="alert" className="mb-4 rounded-lg border border-critical/40 bg-critical/8 px-3 py-2 text-[13px]">
@@ -242,11 +321,18 @@ function RunView({
             {run.awaiting === "answer"
               ? "Waiting for your answer"
               : run.awaiting === "reply"
-                ? "Your turn — reply, or end the session"
-                : "Live"}
+                ? "Your turn — reply, or Finish when the work is done"
+                : run.status === "queued" && run.resumes > 0
+                  ? `Picking the session back up on ${run.runner_name}…`
+                  : "Live"}
+          </p>
+        ) : waiting ? (
+          <p className="mt-3 flex items-center gap-2 text-[12px] text-fg-3" role="status">
+            <span className="size-1.5 rounded-full bg-warning" aria-hidden />
+            Waiting for you — reply and {run.runner_name} picks the session back up in this run, or Finish when the work is done.
           </p>
         ) : null}
-        {active && run.interactive && run.status === "running" ? <RunInteraction run={run} prompts={prompts} /> : null}
+        {(active && run.interactive && run.status === "running") || waiting ? <RunInteraction run={run} prompts={prompts} /> : null}
         <div ref={bottom} />
       </section>
 

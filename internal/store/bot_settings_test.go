@@ -235,7 +235,7 @@ func TestRunFinishReachesTheBot(t *testing.T) {
 		t.Helper()
 		run := must(st.CreateRun(ctx, in))
 		must(st.ClaimRun(ctx, rn.ID))
-		if err := st.FinishRun(ctx, run.ID, rn.ID, store.FinishInput{Status: "succeeded", Result: "All tests pass."}); err != nil {
+		if _, err := st.FinishRun(ctx, run.ID, rn.ID, store.FinishInput{Status: "succeeded", Result: "All tests pass."}); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -208,35 +208,61 @@ func (s *Store) AnswerPrompt(ctx context.Context, runID, promptID int64, in Prom
 	return scanPrompt(s.DB.QueryRow(ctx, promptSelect+` WHERE id = $1`, promptID))
 }
 
-// SendRunMessage queues a follow-up message for the session.
-func (s *Store) SendRunMessage(ctx context.Context, runID int64, text string) error {
-	if _, err := s.interactiveRun(ctx, runID, 0); err != nil {
-		return err
+// SendRunMessage queues a follow-up message for the session. A waiting run
+// (its session parked) is queued again to resume in place on its machine;
+// it reports whether that happened (the caller wakes the machine).
+func (s *Store) SendRunMessage(ctx context.Context, runID int64, text string) (requeued bool, err error) {
+	run, err := s.RunByID(ctx, runID)
+	if err != nil {
+		return false, err
 	}
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return invalid("text", "write a message")
+		return false, invalid("text", "write a message")
 	}
 	if len(text) > 100000 {
-		return invalid("text", "too long")
+		return false, invalid("text", "too long")
+	}
+	switch {
+	case run.Status == "waiting":
+		if !s.resumesInPlace(ctx, run.RunnerID) {
+			return false, invalid("text", "%s runs an older Forge agent that cannot pick this session back up; upgrade it, or use Continue", run.RunnerName)
+		}
+	case run.Status == "queued" && run.Resumes > 0:
+		// A resume already on its way: the message joins it.
+	default:
+		if _, err := s.interactiveRun(ctx, runID, 0); err != nil {
+			return false, err
+		}
 	}
 	data, _ := json.Marshal(map[string]string{"text": text})
-	return s.tx(ctx, func(tx pgxTx) error {
+	err = s.tx(ctx, func(tx pgxTx) error {
+		if run.Status == "waiting" {
+			var last int64
+			if err := tx.QueryRow(ctx, `SELECT coalesce(max(id), 0) FROM run_inbox WHERE run_id = $1`, runID).Scan(&last); err != nil {
+				return err
+			}
+			if last < run.InboxAfter {
+				last = run.InboxAfter
+			}
+			if err := requeueTx(ctx, tx, runID, last); err != nil {
+				return err
+			}
+			requeued = true
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO run_inbox (run_id, kind, data) VALUES ($1, 'message', $2)`, runID, string(data)); err != nil {
 			return err
 		}
 		_, err := tx.Exec(ctx, `UPDATE runs SET awaiting = '' WHERE id = $1`, runID)
 		return err
 	})
+	return requeued, err
 }
 
-// EndRunSession asks the machine to close the session once the current
-// turn is done; the run then finishes normally.
+// EndRunSession is Finish from the session's own controls (the composer,
+// Telegram): see FinishRunByUser.
 func (s *Store) EndRunSession(ctx context.Context, runID int64) error {
-	if _, err := s.interactiveRun(ctx, runID, 0); err != nil {
-		return err
-	}
-	_, err := s.DB.Exec(ctx, `INSERT INTO run_inbox (run_id, kind) VALUES ($1, 'end')`, runID)
+	_, err := s.FinishRunByUser(ctx, runID)
 	return err
 }
 

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -405,4 +406,166 @@ func deref(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// fixCheckupItem does one of the item's suggested fixes, then re-checks the
+// item so the answer says whether it is gone: a task marked done or moved,
+// an endpoint probed now, or a repo pulled/fetched through the master's own
+// command (waiting for that run and the repo scan after it, up to ~2 min).
+func (s *Server) fixCheckupItem(w http.ResponseWriter, r *http.Request, u *store.User) {
+	if s.checkups == nil {
+		writeError(w, http.StatusServiceUnavailable, "internal", "check-ups are not configured")
+		return
+	}
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Fix string `json:"fix"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	ctx := context.WithoutCancel(r.Context()) // a fix that ran must get its re-check
+	c, err := s.store.CheckupByID(ctx, id)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	key := r.PathValue("key")
+	var it *store.CheckItem
+	for i := range c.Items {
+		if c.Items[i].Key == key {
+			it = &c.Items[i]
+		}
+	}
+	if it == nil {
+		writeErr(w, r, store.ErrNotFound)
+		return
+	}
+	offered := false
+	for _, f := range it.Fixes {
+		offered = offered || f.ID == in.Fix
+	}
+	if !offered {
+		writeErr(w, r, &store.ValidationError{Field: "fix", Message: "not a fix this item offers"})
+		return
+	}
+	today := store.TodayFor(u.Timezone)
+	var run *store.Run
+	note := ""
+	switch it.Category {
+	case "tasks":
+		ref := key[strings.Index(key, ":")+1:]
+		t, err := s.store.TaskByRef(ctx, ref)
+		if err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		patch := store.Patch{}
+		switch in.Fix {
+		case "done":
+			patch["status"] = json.RawMessage(`"done"`)
+		case "week":
+			d, _ := time.Parse("2006-01-02", today)
+			patch["due_date"] = json.RawMessage(`"` + d.AddDate(0, 0, 7).Format("2006-01-02") + `"`)
+		case "clear_due":
+			patch["due_date"] = json.RawMessage(`null`)
+		case "unblock":
+			patch["status"] = json.RawMessage(`"todo"`)
+		case "backlog":
+			patch["status"] = json.RawMessage(`"backlog"`)
+		}
+		if _, err := s.store.UpdateTask(ctx, t.ID, patch); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	case "endpoints":
+		eid, err := strconv.ParseInt(strings.TrimPrefix(key, "endpoint:"), 10, 64)
+		if err != nil {
+			writeErr(w, r, store.ErrNotFound)
+			return
+		}
+		e, err := s.store.EndpointByID(ctx, eid)
+		if err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		if err := s.monitor.Check(ctx, *e); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	case "repos":
+		parts := strings.Split(key, ":") // repo:<id>:<what>
+		if len(parts) != 3 {
+			writeErr(w, r, store.ErrNotFound)
+			return
+		}
+		repoID, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			writeErr(w, r, store.ErrNotFound)
+			return
+		}
+		master, err := s.store.MasterRunner(ctx)
+		if err != nil {
+			writeErr(w, r, &store.ValidationError{Field: "fix", Message: "no master machine to run it on"})
+			return
+		}
+		run, err = s.store.CreateRun(ctx, store.RunInput{RunnerID: master.ID, RepoID: repoID, Kind: "command", Command: in.Fix})
+		if err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		s.wakeups.notify(master.ID)
+		if run, err = s.waitRunAndScan(ctx, run.ID, repoID); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		if run.Status != "succeeded" {
+			note = fmt.Sprintf("%s %s on %s", in.Fix, run.Status, master.Name)
+		}
+	default:
+		writeErr(w, r, &store.ValidationError{Field: "fix", Message: "nothing to do for this item"})
+		return
+	}
+	fresh := s.checkups.Recheck(ctx, today, []store.CheckItem{*it})
+	c, err = s.store.ApplyRecheck(ctx, id, []string{key}, fresh, time.Now().UTC())
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	out := map[string]any{"checkup": c, "note": note}
+	if run != nil {
+		out["run"] = run.Public()
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// waitRunAndScan waits for a command run to end, then for the master's repo
+// scan that follows every run, so a re-check reads the repo as it is now.
+func (s *Server) waitRunAndScan(ctx context.Context, runID, repoID int64) (*store.Run, error) {
+	deadline := time.Now().Add(90 * time.Second)
+	var run *store.Run
+	var err error
+	for {
+		if run, err = s.store.RunByID(ctx, runID); err != nil {
+			return nil, err
+		}
+		if !store.OneOf(run.Status, store.RunOpenStatuses) || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if run.FinishedAt == nil {
+		return run, nil // still going: re-check what is known
+	}
+	finished := run.FinishedAt.UTC().Format(time.RFC3339)
+	for scanBy := time.Now().Add(20 * time.Second); time.Now().Before(scanBy); time.Sleep(500 * time.Millisecond) {
+		repo, err := s.store.RepoByID(ctx, repoID)
+		if err == nil && repo.Git != nil && repo.Git.ScannedAt >= finished {
+			break
+		}
+	}
+	return run, nil
 }

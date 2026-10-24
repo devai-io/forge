@@ -50,6 +50,11 @@ const run = (over: Partial<Run> = {}): Run => ({
   created_at: AT,
   started_at: AT,
   finished_at: null,
+  inbox_after: 0,
+  resumes: 0,
+  finish_requested: false,
+  handoff: "",
+  resume_hint: "",
   ...over,
 });
 
@@ -91,6 +96,7 @@ function renderRun(prompts: RunPrompt[], over: Partial<Run> = {}) {
       "POST /runs/42/prompts/2/answer": record("answer"),
       "POST /runs/42/messages": record("message"),
       "POST /runs/42/end": record("end"),
+      "POST /runs/42/finish": record("finish"),
     }),
   );
   renderWithProviders(
@@ -150,13 +156,13 @@ describe("interactive runs", () => {
   it("shows what the user said and sends follow-ups", async () => {
     const sent = renderRun([], { awaiting: "reply" });
     const user = userEvent.setup();
-    expect(await screen.findByText("Your turn — reply, or end the session")).toBeInTheDocument();
+    expect(await screen.findByText("Your turn — reply, or Finish when the work is done")).toBeInTheDocument();
     expect(screen.getByText("You:", { exact: false }).parentElement).toHaveTextContent("Pick a color");
     await user.type(screen.getByLabelText("Message"), "Now make it green{Enter}");
     await waitFor(() => expect(sent).toEqual([{ path: "message", body: { text: "Now make it green" } }]));
     expect(screen.getByLabelText("Message")).toHaveValue("");
-    await user.click(screen.getByRole("button", { name: "End session" }));
-    await waitFor(() => expect(sent.map((s) => s.path)).toEqual(["message", "end"]));
+    await user.click(screen.getAllByRole("button", { name: /^Finish$/ }).at(-1)!);
+    await waitFor(() => expect(sent.map((s) => s.path)).toEqual(["message", "finish"]));
   });
 
   it("has no composer for a plain run", async () => {
@@ -169,5 +175,43 @@ describe("interactive runs", () => {
     renderWithProviders(<RunStatusBadge run={{ status: "running", cancel_requested: false, awaiting: "reply" }} />);
     expect(screen.getByText("Your turn")).toBeInTheDocument();
     expect(mapRunEvents([replay])).toEqual([{ kind: "user", key: "user-1", text: "Pick a color" }]);
+  });
+});
+
+
+describe("runs that stay open until finished", () => {
+  it("shows a waiting run with a composer, Finish, Open in Claude Code and the resume command", async () => {
+    const sent = renderRun([], {
+      status: "waiting",
+      awaiting: "",
+      session_id: "sess-0042-aaaa",
+      result: "Found it.",
+      finished_at: AT,
+      resume_hint: "cd /home/ada/shop && claude --resume sess-0042-aaaa",
+    });
+    const user = userEvent.setup();
+    expect((await screen.findAllByText("Waiting for you")).length).toBeGreaterThan(0);
+    expect(screen.getByText(/picks the session back up in this run/)).toBeInTheDocument();
+    expect(screen.getByText("cd /home/ada/shop && claude --resume sess-0042-aaaa")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open in Claude Code/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Continue/ })).not.toBeInTheDocument();
+
+    // A reply goes to the same run; Finish (header) closes it.
+    await user.type(screen.getByLabelText("Message"), "go on{Enter}");
+    await user.click(screen.getAllByRole("button", { name: /^Finish$/ })[0]);
+    await waitFor(() => expect(sent.map((s) => s.path)).toEqual(["message", "finish"]));
+    expect(sent[0].body).toEqual({ text: "go on" });
+  });
+
+  it("says where a handed-off run went and offers no Continue", async () => {
+    renderRun([], { status: "succeeded", awaiting: "", session_id: "sess-0042-aaaa", handoff: "desk · tmux run-42", finished_at: AT });
+    expect(await screen.findByText(/Continued in Claude Code outside Forge: desk · tmux run-42/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open the terminal" })).toHaveAttribute("href", "/terminal/1/run-42");
+    expect(screen.queryByRole("button", { name: /Continue/ })).not.toBeInTheDocument();
+  });
+
+  it("labels the waiting status", () => {
+    renderWithProviders(<RunStatusBadge run={{ status: "waiting", cancel_requested: false, awaiting: "" }} />);
+    expect(screen.getByText("Waiting for you")).toBeInTheDocument();
   });
 });

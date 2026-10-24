@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -48,11 +49,15 @@ func (s *Server) sendRunMessage(w http.ResponseWriter, r *http.Request, u *store
 	if !decode(w, r, &in) {
 		return
 	}
-	if err := s.store.SendRunMessage(r.Context(), id, in.Text); err != nil {
+	requeued, err := s.store.SendRunMessage(r.Context(), id, in.Text)
+	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
 	s.inboxes.notify(id)
+	if requeued {
+		s.wakeRunner(r.Context(), id)
+	}
 	s.writeRun(w, r, id)
 }
 
@@ -67,6 +72,14 @@ func (s *Server) endRunSession(w http.ResponseWriter, r *http.Request, u *store.
 	}
 	s.inboxes.notify(id)
 	s.writeRun(w, r, id)
+}
+
+// wakeRunner tells a run's machine there is work: a parked run was queued
+// again to resume in place.
+func (s *Server) wakeRunner(ctx context.Context, id int64) {
+	if run, err := s.store.RunByID(ctx, id); err == nil {
+		s.wakeups.notify(run.RunnerID)
+	}
 }
 
 func (s *Server) writeRun(w http.ResponseWriter, r *http.Request, id int64) {

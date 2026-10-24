@@ -318,7 +318,8 @@ export type Runner = {
 /** A one-time code a machine swaps for its token (`forge agent pair <origin> <code>`). */
 export type Pairing = { code: string; expires_at: string };
 
-export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+/** waiting: the run answered and is open until you reply or finish it (its session may be parked on the machine). */
+export type RunStatus = "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
 export type RunKind = "agent" | "command";
 /** Where an agent run's Claude Code sends its requests. */
 export type Engine = "deepseek" | "claude" | "codex";
@@ -357,6 +358,11 @@ export type Run = {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  inbox_after: number;
+  resumes: number; // times a parked session was picked back up in this run
+  finish_requested: boolean; // Finish pressed while the session was live
+  handoff: string; // where the session continued outside Forge ("desk · tmux run-52"), "" if not
+  resume_hint: string; // the shell line that opens the session in Claude Code / Codex on its machine
 };
 export type RunAwaiting = "" | "answer" | "reply";
 
@@ -570,7 +576,10 @@ export type CheckItem = {
   resolved_at: string | null;
   snoozed: boolean;
   snoozed_until: string | null; // null while snoozed = until the item changes
+  fixes: CheckFix[]; // one-click fixes; each re-checks the item after
 };
+/** "done" | "week" | "clear_due" | "unblock" | "backlog" (tasks), "probe" (endpoints), a machine command like "git-pull" (repos). */
+export type CheckFix = { id: string; label: string };
 export type ResolvedItem = {
   key: string;
   category: CheckCategory;

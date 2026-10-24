@@ -219,6 +219,7 @@ func (s *Server) Handler() http.Handler {
 	h("POST /api/checkups/{id}/items/{key}/task", s.authed(s.checkupItemTask))
 	h("POST /api/checkups/{id}/items/{key}/recheck", s.authed(s.recheckCheckupItem))
 	h("POST /api/checkups/{id}/recheck", s.authed(s.recheckCheckup))
+	h("POST /api/checkups/{id}/items/{key}/fix", s.authed(s.fixCheckupItem))
 
 	h("GET /api/projects", s.authed(s.listProjects))
 	h("POST /api/projects", s.authed(s.createProject))
@@ -276,6 +277,8 @@ func (s *Server) Handler() http.Handler {
 	h("POST /api/runs/{id}/prompts/{pid}/answer", s.authed(s.answerPrompt))
 	h("POST /api/runs/{id}/messages", s.authed(s.sendRunMessage))
 	h("POST /api/runs/{id}/end", s.authed(s.endRunSession))
+	h("POST /api/runs/{id}/finish", s.authed(s.finishRun))
+	h("POST /api/runs/{id}/handoff", s.authed(s.elevated(s.handoffRun)))
 
 	h("POST /api/runner/pair", s.runnerPair)
 	h("POST /api/runner/heartbeat", s.runnerAuth(s.runnerHeartbeat))
@@ -286,6 +289,8 @@ func (s *Server) Handler() http.Handler {
 	h("POST /api/runner/runs/{id}/prompts/expire", s.runnerAuth(s.runnerExpirePrompt))
 	h("POST /api/runner/runs/{id}/inbox", s.runnerAuth(s.runnerInbox))
 	h("POST /api/runner/runs/{id}/awaiting", s.runnerAuth(s.runnerAwaiting))
+	h("GET /api/runner/runs", s.runnerAuth(s.runnerRuns))
+	h("POST /api/runner/runs/{id}/handoff", s.runnerAuth(s.runnerHandoff))
 	h("POST /api/runner/repos", s.runnerAuth(s.runnerRepos))
 	h("POST /api/runner/vault/files", s.runnerAuth(s.runnerVaultFiles))
 	h("GET /api/runner/control", s.runnerAuth(s.runnerControl))

@@ -25,7 +25,10 @@ import (
 //   - "always allow" is kept to this session, and a mode switch only to a
 //     mode this machine accepts.
 //
-// After a turn the session waits idle_minutes for a follow-up, then closes.
+// After a turn the session waits idle_minutes for a follow-up, then parks:
+// the process exits, the run stays open on Forge (waiting), and a reply
+// queues it again — resumed in place (Resumes > 0: no prompt is sent again,
+// only inbox items after InboxAfter are read). Only "end" (Finish) closes it.
 
 // interactiveArgs are what an interactive run adds to the claude command.
 var interactiveArgs = []string{"--input-format", "stream-json", "--permission-prompt-tool", "stdio", "--replay-user-messages"}
@@ -51,6 +54,8 @@ type session struct {
 	answer  func(string, pendingPrompt, promptAnswer)
 	idle    *time.Timer
 	waiting bool // a turn ended; nothing new since
+	parked  bool // closed to free the machine, not finished
+	read    int64
 
 	// The awaiting state goes to Forge from one goroutine, latest wins, so
 	// "working again" can never land after the "reply" that followed it.
@@ -70,7 +75,12 @@ func (s *session) start() {
 	go func() {
 		_ = s.write(map[string]any{"type": "control_request", "request_id": "forge-init",
 			"request": map[string]any{"subtype": "initialize"}})
-		_ = s.write(userMessage(s.run.Prompt))
+		if s.run.Resumes == 0 {
+			_ = s.write(userMessage(s.run.Prompt))
+		} else {
+			s.ship.send(textEvent("system", "resuming the session"))
+			s.idleWait()
+		}
 		s.inboxLoop() // after the prompt: a quick follow-up must not overtake it
 	}()
 	go s.awaitLoop()
@@ -172,8 +182,16 @@ func (s *session) observe(line []byte) bool {
 	return true
 }
 
-// turnDone: Claude Code answered; wait for a follow-up, for a while.
+// turnDone: Claude Code answered; wait for a follow-up, for a while, then
+// park the session (the run stays open).
 func (s *session) turnDone() {
+	s.idleWait()
+	s.setAwaiting("reply")
+}
+
+// idleWait starts the quiet-spell timer without telling Forge anything (a
+// resumed session waiting for the message that resumed it).
+func (s *session) idleWait() {
 	minutes := s.r.cfg.IdleMinutes
 	s.mu.Lock()
 	s.waiting = true
@@ -181,11 +199,42 @@ func (s *session) turnDone() {
 		s.idle.Stop()
 	}
 	s.idle = time.AfterFunc(time.Duration(minutes)*time.Minute, func() {
-		s.ship.send(textEvent("system", fmt.Sprintf("no reply for %d minutes: ending the session", minutes)))
-		s.closeInput()
+		s.park(fmt.Sprintf("no reply for %d minutes: parking the session to free the machine — reply to pick it up again", minutes))
 	})
 	s.mu.Unlock()
-	s.setAwaiting("reply")
+}
+
+// park closes the session without finishing the run: Claude Code exits, the
+// run is reported as waiting.
+func (s *session) park(why string) {
+	s.mu.Lock()
+	s.parked = true
+	s.mu.Unlock()
+	s.ship.send(textEvent("system", why))
+	s.closeInput()
+}
+
+func (s *session) isParked() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.parked
+}
+
+// isWaiting: the last turn ended and nothing has started since.
+func (s *session) isWaiting() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.waiting
+}
+
+// inboxRead is the last inbox item this session took in.
+func (s *session) inboxRead() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.read < s.run.InboxAfter {
+		return s.run.InboxAfter
+	}
+	return s.read
 }
 
 // working: the session is busy again (a follow-up was picked up).
@@ -291,7 +340,7 @@ type promptAnswer struct {
 }
 
 func (s *session) inboxLoop() {
-	var after int64
+	after := s.run.InboxAfter
 	for s.ctx.Err() == nil {
 		var resp struct {
 			Items []inboxItem `json:"items"`
@@ -311,6 +360,9 @@ func (s *session) inboxLoop() {
 		for _, it := range resp.Items {
 			after = it.ID
 			s.handle(it)
+			s.mu.Lock()
+			s.read = it.ID
+			s.mu.Unlock()
 		}
 		if resp.Done {
 			return
@@ -335,8 +387,10 @@ func (s *session) handle(it inboxItem) {
 			}
 		}
 	case "end":
-		s.ship.send(textEvent("system", "ending the session (from Forge)"))
+		s.ship.send(textEvent("system", "finishing the session (from Forge)"))
 		s.closeInput()
+	case "park":
+		s.park("parking the session (from Forge): it continues elsewhere")
 	case "answer":
 		var a struct {
 			RequestID string       `json:"request_id"`

@@ -173,7 +173,7 @@ type Runner = {
   running: number; created_at: string;
 };
 
-type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+type RunStatus = "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";  // waiting: see *Runs stay open*
 type Run = {
   id: number; runner_id: number; runner_name: string;
   project_id: number; project_key: string; project_color: string;
@@ -337,8 +337,10 @@ top = first − 1000).
 | GET | /api/runs/{id}/events | query `after` (seq, default 0), `limit` (default 500) | `{events: RunEvent[], run: Run, prompts: RunPrompt[]}` — poll every ~1.5 s while the run is active; `prompts` is the whole list (empty unless interactive) |
 | POST | /api/runs/{id}/cancel | – | `Run` (queued → cancelled immediately; running → `cancel_requested`, the runner kills it) |
 | POST | /api/runs/{id}/prompts/{pid}/answer | `PromptAnswer` | `{prompt: RunPrompt}`; `409` if already answered, `422` for a decision the prompt's kind does not take or a run that is not a running interactive one |
-| POST | /api/runs/{id}/messages | `{text}` | `Run` — a follow-up for the session (read when it finishes what it is doing) |
-| POST | /api/runs/{id}/end | – | `Run` — closes the session after the current turn; the run then finishes normally |
+| POST | /api/runs/{id}/messages | `{text}` | `Run` — a follow-up for the session (read when it finishes what it is doing). On a `waiting` run: the same run is queued again to resume its session in place (`resumes` + 1); `422` if its machine's agent cannot (then use Continue) |
+| POST | /api/runs/{id}/end | – | `Run` — same as `finish` |
+| POST | /api/runs/{id}/finish | – | `Run` — the work is done: a `waiting` (or resume-`queued`) run becomes `succeeded` at once; a running one gets `finish_requested` (an interactive session ends after its current turn) and then finishes as `succeeded`; `422` for a run that is already over |
+| POST | /api/runs/{id}/handoff | – | **elevation**. `{run: Run, runner_id, session}` — opens the run's session in Claude Code (Codex: `codex resume`) in a tmux session `run-<id>` on its machine, in the run's folder, with the run's skip-permissions setting where the machine allows it. A live interactive session is parked first (up to 45 s). The run then ends (`waiting` → `succeeded`) with `handoff` saying where it went. `409 terminal_disabled` / `runner_offline` / `agent_outdated`; `422` while the run is queued or a one-shot run is still working |
 
 Validation for `POST /api/runs`: the runner must exist; `kind = agent` needs a
 non-empty `prompt` and a `permission_mode` listed in the runner's capabilities
@@ -356,12 +358,37 @@ answer under its own rules: permissions and plans are relayed only with
 `"approvals": true` in its `agent.json` (otherwise denied there, as in a plain
 run); "allow for this session" stays in the session; a mode switch only to a
 mode the machine accepts. After each turn it waits `idle_minutes` (default 15)
-for a follow-up, then closes and the run finishes.
+for a follow-up, then parks (below).
+
+#### Runs stay open until you finish them
+
+An agent run the user started (not an Assistant or bot turn) that ends well
+does not become `succeeded` by itself: it becomes `waiting` — open until the
+user replies, Finishes or Cancels it. A one-shot run waits as soon as it
+answered; an interactive one once its session parks after `idle_minutes`, or
+when the time limit catches it between turns. A parked session has no process
+on the machine. A reply queues the same run again (`resumes` + 1,
+`resume_session` = its session, `inbox_after` = the inbox item it had read):
+the machine resumes the session with `--resume` and reads only newer inbox
+items, so the prompt is never sent twice and the transcript continues in one
+run. A message the session had not read when it parked queues it again at
+once. Machines whose capabilities lack `resume_in_place` cannot be replied to
+while waiting (Continue still makes a new run).
+
+Claude Code's own `/resume` picker leaves out sessions started with
+`claude -p` — every run. To get into one: `handoff` (a terminal on the
+machine), `forge resume [RUN]` in a shell there, or the run's `resume_hint`.
 
 ```ts
 type Run = { /* … */ interactive: boolean;
-             awaiting: "" | "answer" | "reply" };   // running interactive runs: a pending prompt / the turn ended
-type RunnerCapabilities = { /* … */ interactive?: boolean; approvals?: boolean };
+             awaiting: "" | "answer" | "reply";     // running interactive runs: a pending prompt / the turn ended
+             inbox_after: number; resumes: number;  // in-place resumes of a parked session
+             finish_requested: boolean;             // Finish pressed while the session was live
+             handoff: string;                       // where the session continued outside Forge, "" if not
+             resume_hint: string };                 // "cd '/path' && claude --resume <session>" ("" without a session)
+type RunnerCapabilities = { /* … */ interactive?: boolean; approvals?: boolean;
+             resume_in_place?: boolean;             // agents from v0.1.32: resumes a waiting run in place
+             terminal_resume?: boolean };           // a terminal can start as `claude --resume <id>`
 type RunPrompt = {
   id: number; run_id: number; request_id: string;
   kind: "question" | "permission" | "plan";        // AskUserQuestion | any other tool | ExitPlanMode
@@ -384,13 +411,15 @@ type PromptAnswer = {
 | Method | Path | Body | Response |
 |---|---|---|---|
 | POST | /api/runner/heartbeat | `{hostname, os, version, capabilities: RunnerCapabilities, running: number[]}` | `{runner_id, cancel: number[] /* run ids to kill */, repos: [{id, project_key, name, path, default_branch}]}` |
-| POST | /api/runner/claim | – | long-poll up to 25 s: `200 {run: Run, engine}` (now `running`; see *Agent engine*) or `204` |
+| POST | /api/runner/claim | – | long-poll up to 25 s: `200 {run: Run, engine}` (now `running`; see *Agent engine*) or `204`. `run.resumes > 0`: resume `run.resume_session` without sending `run.prompt`, reading the inbox after `run.inbox_after` |
 | POST | /api/runner/runs/{id}/events | `{events: [{kind, data}]}` | `204` (seq assigned server-side, in order) |
-| POST | /api/runner/runs/{id}/finish | `{status: "succeeded"|"failed"|"cancelled", exit_code?, session_id?, result?, error?, cost_usd?, num_turns?, duration_ms?, usage?}` | `204` — `usage`: Claude Code's `modelUsage`, stored on the run |
+| POST | /api/runner/runs/{id}/finish | `{status: "succeeded"\|"failed"\|"cancelled"\|"waiting", exit_code?, session_id?, result?, error?, cost_usd?, num_turns?, duration_ms?, usage?, inbox_after?}` | `204` — `usage`: Claude Code's `modelUsage`, stored on the run. `waiting`: the machine parked a session that had answered; `inbox_after`: the last inbox item it read. The server decides the final status (see *Runs stay open*); an agent that gets `422` for `waiting` (an older server) resends `succeeded` |
 | POST | /api/runner/repos | `{repos: [{repo_id, branch, dirty, ahead, behind, head, commits_7d, last_commit_at, error}]}` | `204` |
 | POST | /api/runner/runs/{id}/prompts | `{request_id, tool_name, input, suggestions, description}` | `{prompt: RunPrompt}` — interactive runs; the same `request_id` twice is stored once |
 | POST | /api/runner/runs/{id}/prompts/expire | `{request_id}` | `204` — Claude Code withdrew it |
-| POST | /api/runner/runs/{id}/inbox | `{after: number}` | long-poll up to 25 s: `{items: [{id, kind: "answer"\|"message"\|"end", data}], done: boolean}` — `answer` data is `{request_id, answer: PromptAnswer}`, `message` is `{text}`; `done` once the run is no longer running |
+| POST | /api/runner/runs/{id}/inbox | `{after: number}` | long-poll up to 25 s: `{items: [{id, kind: "answer"\|"message"\|"end"\|"park", data}], done: boolean}` — `answer` data is `{request_id, answer: PromptAnswer}`, `message` is `{text}`; `park`: close the session now, the run stays waiting; `done` once the run is no longer running. A resumed run starts at `after = run.inbox_after` |
+| GET | /api/runner/runs | query `path` (a folder), `limit` (20) | `{runs: [{id, status, awaiting, prompt, project_key, repo_name, engine, permission_mode, session_id, dir, created_at, finished_at, handoff}]}` — `forge resume`: this machine's agent runs with a session in repos at, under or above `path`, newest first |
+| POST | /api/runner/runs/{id}/handoff | – | `{run: …same shape}` — `forge resume <id>`: parks a live session, records `handoff` = "<machine> · shell", ends a waiting run; `409 wrong_machine` for another machine's run |
 | POST | /api/runner/runs/{id}/awaiting | `{awaiting: "reply" \| ""}` | `204` — the session finished a turn / is working again |
 | POST | /api/runner/vault/files | `{cwd, remote_url?, files: [{path, content_base64}], dry_run?}` | `{project_key, repo, repo_id, files: [{path, action: "create"\|"update"\|"same", item_id}]}` — `forge agent secrets push`: stores a checkout's files as repo files (found by `cwd` like the session context, else by git remote; at most 100 files, 1 MB each). Write-only: nothing stored is ever returned |
 
@@ -588,6 +617,7 @@ type CheckItem = {
   resolved_at: string | null;// a re-check found it gone; counts as done
   snoozed: boolean;          // out of the action list, counts, e-mail and bots
   snoozed_until: string | null; // date; null while snoozed = "until the item changes" (its title)
+  fixes: { id: string; label: string }[]; // one-click fixes (below)
 };
 type ResolvedItem = {        // open in the previous check-up, gone in this one
   key: string; category: string; severity: CheckSeverity; title: string;
@@ -619,10 +649,13 @@ type Checkup = CheckupSummary & { items: CheckItem[]; resolved: ResolvedItem[] }
 | POST | /api/checkups/{id}/items/{key}/task | `{project_key?}` | `{task: Task, checkup: Checkup}` (label `checkup`); `409` while the linked task is not done |
 | POST | /api/checkups/{id}/items/{key}/recheck | – | `Checkup`: the one check behind the item is run again now; the item gets `checked_at` and either the fresh severity/title/detail or `resolved_at` |
 | POST | /api/checkups/{id}/recheck | – | `Checkup`: the same for every open (non-ok, not snoozed) item; ~1–10 s |
+| POST | /api/checkups/{id}/items/{key}/fix | `{fix}` (one of the item's `fixes`) | `{checkup: Checkup, note: string, run?: Run}` — does it, then re-checks the item. Tasks (overdue / due today / blocked): `done`, `week` (due in 7 days), `clear_due`, `unblock` (to-do), `backlog`. Endpoints: `probe` (checks it now). Repos: the master machine's own `git-pull` / `git-fetch` command, offered only when its `agent.json` defines it; the request waits for that run and the repo scan after it (≤ ~2 min), `note` says if the command did not succeed. `422` for a fix the item does not offer |
 
 Everything that reads "open actions" (project focus, the bots' events, the
 Telegram and e-mail summaries, the session context and `forge_checkup`) skips
-done, resolved and snoozed items.
+done, resolved and snoozed items. The e-mail and Telegram summaries list what
+is new since the last check-up first, then what is still open (with since
+when), then how many were fixed. Every overdue task is its own item.
 
 ## Runs: confirmed commands
 

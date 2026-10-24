@@ -41,20 +41,29 @@ export function AgentsPage() {
   );
 }
 
-/** Waiting on you first, then the ones working, then the queue — newest first within each. */
+/** Waiting on you first (live, then parked), then the ones working, then the queue — newest first within each. */
 function activeOrder(r: Run): number {
   if (r.status === "running" && r.awaiting) return 0;
-  return r.status === "running" ? 1 : 2;
+  if (r.status === "waiting") return 1;
+  return r.status === "running" ? 2 : 3;
 }
 
 function ActivePanel() {
   const running = useRuns({ status: "running", limit: 50 }, 3000);
   const queued = useRuns({ status: "queued", limit: 50 }, 3000);
-  const runs = [...(running.data ?? []), ...(queued.data ?? [])].sort((a, b) => activeOrder(a) - activeOrder(b) || b.id - a.id);
-  const error = running.error ?? queued.error;
+  const waiting = useRuns({ status: "waiting", limit: 50 }, 8000);
+  const runs = [...(running.data ?? []), ...(queued.data ?? []), ...(waiting.data ?? [])].sort(
+    (a, b) => activeOrder(a) - activeOrder(b) || b.id - a.id,
+  );
+  const error = running.error ?? queued.error ?? waiting.error;
+  const yours = runs.filter((r) => r.status === "waiting" || (r.status === "running" && r.awaiting)).length;
   return (
-    <Panel title={runs.length ? `Running now · ${runs.length}` : "Running now"} icon={<Activity />} id="agents-active">
-      {running.isPending || queued.isPending ? (
+    <Panel
+      title={runs.length ? `Open · ${runs.length}${yours ? ` · ${yours} waiting for you` : ""}` : "Open"}
+      icon={<Activity />}
+      id="agents-active"
+    >
+      {running.isPending || queued.isPending || waiting.isPending ? (
         <SkeletonRows rows={2} />
       ) : error ? (
         <ErrorState
@@ -62,6 +71,7 @@ function ActivePanel() {
           onRetry={() => {
             void running.refetch();
             void queued.refetch();
+            void waiting.refetch();
           }}
         />
       ) : runs.length ? (
@@ -71,8 +81,8 @@ function ActivePanel() {
           ))}
         </div>
       ) : (
-        <EmptyState compact icon={<Bot />} title="Nothing running">
-          Start one with New run, from a task, or from the Assistant.
+        <EmptyState compact icon={<Bot />} title="Nothing open">
+          Start one with New run, from a task, or from the Assistant. A run stays open after it answers until you finish it.
         </EmptyState>
       )}
     </Panel>
@@ -84,8 +94,8 @@ function RunsPanel() {
   const [status, setStatus] = useState<RunStatus | "">("");
   const projects = useProjects();
   const runs = useRuns({ project: project || undefined, status: status || undefined, limit: 100 }, 6000);
-  // What is still going is in "Running now"; here it only shows when asked for.
-  const shown = (runs.data ?? []).filter((r) => status || (r.status !== "running" && r.status !== "queued"));
+  // What is still open is in "Open"; here it only shows when asked for.
+  const shown = (runs.data ?? []).filter((r) => status || (r.status !== "running" && r.status !== "queued" && r.status !== "waiting"));
   return (
     <Panel
       title="History"
@@ -111,6 +121,7 @@ function RunsPanel() {
             <option value="">Any status</option>
             <option value="queued">Queued</option>
             <option value="running">Running</option>
+            <option value="waiting">Waiting for you</option>
             <option value="succeeded">Succeeded</option>
             <option value="failed">Failed</option>
             <option value="cancelled">Cancelled</option>

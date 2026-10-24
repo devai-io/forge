@@ -387,7 +387,7 @@ func (a *Assistant) call(ctx context.Context, user *store.User, name string, raw
 		}
 		f := store.RunFilter{ProjectKey: in.Project, Limit: limit}
 		if in.Active {
-			f.Statuses = []string{"queued", "running"}
+			f.Statuses = store.RunOpenStatuses
 		}
 		runs, err := a.store.ListRuns(ctx, f)
 		if err != nil {

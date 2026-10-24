@@ -24,6 +24,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import {
   useCheckItemDone,
   useCheckItemSnooze,
+  useFixCheckItem,
   useCheckItemTask,
   useCheckup,
   useCheckups,
@@ -431,8 +432,10 @@ function CheckRow({ checkup, item, canAct, rechecking }: { checkup: Checkup; ite
   const done = useCheckItemDone(checkup.id);
   const snooze = useCheckItemSnooze(checkup.id);
   const recheck = useRecheck(checkup.id);
+  const fix = useFixCheckItem(checkup.id);
   const toast = useToast();
   const [making, setMaking] = useState(false);
+  const [fixing, setFixing] = useState<string | null>(null);
   const settled = isSettled(item);
   const resolved = item.resolved_at !== null;
   const taskDone = item.task_id !== null && item.task_status === "done";
@@ -459,7 +462,23 @@ function CheckRow({ checkup, item, canAct, rechecking }: { checkup: Checkup; ite
         onError: (e) => toast.error(e),
       },
     );
-  const busy = recheck.isPending || rechecking;
+  const busy = recheck.isPending || rechecking || fix.isPending;
+  const applyFix = (id: string, label: string) => {
+    setFixing(id);
+    fix.mutate(
+      { key: item.key, fix: id },
+      {
+        onSuccess: ({ checkup: c, note, run }) => {
+          const fresh = c.items.find((i) => i.key === item.key);
+          if (note) toast.error(`${label}: ${note}${run ? ` (run #${run.id})` : ""}`);
+          else if (fresh?.resolved_at) toast.success(`${label} — resolved`);
+          else toast.info(`${label} — done, but it is still there: ${fresh?.title ?? item.title}`);
+        },
+        onError: (e) => toast.error(e),
+        onSettled: () => setFixing(null),
+      },
+    );
+  };
 
   return (
     <div className={clsx("flex items-start gap-3 px-3.5 py-3", settled && "opacity-60")}>
@@ -508,6 +527,22 @@ function CheckRow({ checkup, item, canAct, rechecking }: { checkup: Checkup; ite
               <ListPlus className="size-3.5" aria-hidden /> {taskDone ? "Make another task" : "Make task"}
             </button>
           ) : null}
+          {canAct && !resolved
+            ? item.fixes?.map((f) => (
+                <Button
+                  key={f.id}
+                  size="sm"
+                  variant="subtle"
+                  className="h-6 px-2 text-[12px]"
+                  disabled={busy}
+                  loading={fixing === f.id}
+                  onClick={() => applyFix(f.id, f.label)}
+                  title={`${f.label}, then re-check`}
+                >
+                  {f.label}
+                </Button>
+              ))
+            : null}
           {canAct && !resolved ? (
             <>
               <button

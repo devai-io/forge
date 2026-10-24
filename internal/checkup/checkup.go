@@ -188,6 +188,20 @@ func item(key, cat, sev, title, detail, action, link, project string) store.Chec
 	return it
 }
 
+func withFixes(it store.CheckItem, fixes ...store.CheckFix) store.CheckItem {
+	it.Fixes = append(it.Fixes, fixes...)
+	return it
+}
+
+var (
+	fixDone     = store.CheckFix{ID: "done", Label: "Done"}
+	fixWeek     = store.CheckFix{ID: "week", Label: "Due in a week"}
+	fixClearDue = store.CheckFix{ID: "clear_due", Label: "No due date"}
+	fixUnblock  = store.CheckFix{ID: "unblock", Label: "Back to to-do"}
+	fixBacklog  = store.CheckFix{ID: "backlog", Label: "Backlog"}
+	fixProbe    = store.CheckFix{ID: "probe", Label: "Probe now"}
+)
+
 func allClear(cat, title string) store.CheckItem {
 	return item("ok:"+cat, cat, "ok", title, "", "", "", "")
 }
@@ -206,18 +220,19 @@ func (r *Runner) endpoints(ctx context.Context) []store.CheckItem {
 		switch {
 		case e.LastStatus == "down":
 			detail := e.LastError
-			out = append(out, item(key, "endpoints", "fail", e.Name+" is down", detail+" — "+e.URL,
-				"Check the service and its Nomad job; see Monitoring for the host", link, e.ProjectKey))
+			out = append(out, withFixes(item(key, "endpoints", "fail", e.Name+" is down", detail+" — "+e.URL,
+				"Check the service and its Nomad job; see Monitoring for the host", link, e.ProjectKey), fixProbe))
 		case e.LastStatus == "warning":
-			out = append(out, item(key, "endpoints", "warn",
+			out = append(out, withFixes(item(key, "endpoints", "warn",
 				fmt.Sprintf("%s is failing (retry %d/%d)", e.Name, e.FailStreak, e.RetryLimit), e.LastError+" — "+e.URL,
-				"Being rechecked; it turns down if the retries fail too", link, e.ProjectKey))
+				"Being rechecked; it turns down if the retries fail too", link, e.ProjectKey), fixProbe))
 		case e.Uptime24h != nil && *e.Uptime24h < 0.98:
 			out = append(out, item(key, "endpoints", "warn", fmt.Sprintf("%s flapped (%.1f%% up in 24 h)", e.Name, *e.Uptime24h*100),
 				e.URL, "Look at the check history for when it failed and why", link, e.ProjectKey))
 		case e.LastLatencyMS != nil && *e.LastLatencyMS > 3000:
 			out = append(out, item(key, "endpoints", "warn", fmt.Sprintf("%s is slow (%d ms)", e.Name, *e.LastLatencyMS),
 				e.URL, "Check host load and the service's logs", link, e.ProjectKey))
+			out[len(out)-1] = withFixes(out[len(out)-1], fixProbe)
 		}
 	}
 	if len(out) == 0 {
@@ -459,6 +474,27 @@ func (r *Runner) repos(ctx context.Context) []store.CheckItem {
 	if err != nil {
 		return nil
 	}
+	// One-click pulls and fetches go through the master's own commands (they
+	// are whatever its agent.json defines; offered only when it has them).
+	var pull, fetch *store.CheckFix
+	if m, err := r.store.MasterRunner(ctx); err == nil {
+		for _, name := range m.Capabilities.Commands {
+			switch name {
+			case "git-pull":
+				pull = &store.CheckFix{ID: "git-pull", Label: "Pull on " + m.Name}
+			case "git-fetch":
+				fetch = &store.CheckFix{ID: "git-fetch", Label: "Fetch on " + m.Name}
+			}
+		}
+	}
+	gitFix := func(it store.CheckItem, fixes ...*store.CheckFix) store.CheckItem {
+		for _, f := range fixes {
+			if f != nil {
+				it = withFixes(it, *f)
+			}
+		}
+		return it
+	}
 	var out, ci []store.CheckItem
 	scanned := 0
 	for _, rp := range repos {
@@ -470,7 +506,7 @@ func (r *Runner) repos(ctx context.Context) []store.CheckItem {
 		link := "/p/" + rp.ProjectKey
 		key := fmt.Sprintf("repo:%d", rp.ID)
 		if g.Error != "" {
-			out = append(out, item(key+":err", "repos", "warn", rp.Name+": git error", g.Error, "Look at the repo on "+g.RunnerName, link, rp.ProjectKey))
+			out = append(out, gitFix(item(key+":err", "repos", "warn", rp.Name+": git error", g.Error, "Look at the repo on "+g.RunnerName, link, rp.ProjectKey), fetch))
 		}
 		if g.Ahead > 0 {
 			out = append(out, item(key+":ahead", "repos", "warn", fmt.Sprintf("%s: %d unpushed commit(s) on %s", rp.Name, g.Ahead, g.Branch), "",
@@ -485,12 +521,12 @@ func (r *Runner) repos(ctx context.Context) []store.CheckItem {
 			if g.Sync != nil && g.Sync.Result == "skipped" {
 				detail = "Not pulled automatically: " + g.Sync.Detail
 			}
-			out = append(out, item(key+":behind", "repos", "warn", fmt.Sprintf("%s: %d commit(s) behind origin", rp.Name, g.Behind), detail,
-				"Pull before starting work", link, rp.ProjectKey))
+			out = append(out, gitFix(item(key+":behind", "repos", "warn", fmt.Sprintf("%s: %d commit(s) behind origin", rp.Name, g.Behind), detail,
+				"Pull before starting work", link, rp.ProjectKey), pull))
 		}
 		if g.Sync != nil && g.Sync.Result == "error" {
-			out = append(out, item(key+":sync", "repos", "warn", rp.Name+": automatic pull failed", g.Sync.Detail,
-				"Check the remote and this machine's git credentials (the agent runs without a terminal)", link, rp.ProjectKey))
+			out = append(out, gitFix(item(key+":sync", "repos", "warn", rp.Name+": automatic pull failed", g.Sync.Detail,
+				"Check the remote and this machine's git credentials (the agent runs without a terminal)", link, rp.ProjectKey), fetch))
 		}
 		if g.CI != nil && g.CI.Status == "completed" && g.CI.Conclusion != "" && g.CI.Conclusion != "success" && g.CI.Conclusion != "skipped" {
 			x := item(key+":ci", "ci", "fail", fmt.Sprintf("%s: CI %s (%s)", rp.Name, g.CI.Conclusion, g.CI.Workflow), g.CI.Title,
@@ -511,25 +547,22 @@ func (r *Runner) repos(ctx context.Context) []store.CheckItem {
 
 func (r *Runner) tasks(ctx context.Context, today string) []store.CheckItem {
 	var out []store.CheckItem
+	// Every overdue task is its own item (each can be snoozed or fixed in
+	// one click); the e-mail and Telegram summaries cut the list short.
 	overdue, _ := r.store.OverdueTasks(ctx, today)
-	for i, t := range overdue {
-		if i == 10 {
-			out = append(out, item("tasks:overdue-more", "tasks", "warn", fmt.Sprintf("…and %d more overdue tasks", len(overdue)-10), "",
-				"Reschedule or drop them", "/tasks", ""))
-			break
-		}
-		out = append(out, item("task:"+t.Ref, "tasks", "warn", fmt.Sprintf("%s overdue since %s: %s", t.Ref, deref(t.DueDate), t.Title), "",
-			"Do it today, move the date, or drop it", fmt.Sprintf("/p/%s?task=%d", t.ProjectKey, t.ID), t.ProjectKey))
+	for _, t := range overdue {
+		out = append(out, withFixes(item("task:"+t.Ref, "tasks", "warn", fmt.Sprintf("%s overdue since %s: %s", t.Ref, deref(t.DueDate), t.Title), "",
+			"Do it today, move the date, or drop it", fmt.Sprintf("/p/%s?task=%d", t.ProjectKey, t.ID), t.ProjectKey), fixDone, fixWeek, fixClearDue))
 	}
 	due, _ := r.store.DueOn(ctx, today)
 	for _, t := range due {
-		out = append(out, item("due:"+t.Ref, "tasks", "warn", fmt.Sprintf("%s due today: %s", t.Ref, t.Title), "",
-			"Get it done or move it", fmt.Sprintf("/p/%s?task=%d", t.ProjectKey, t.ID), t.ProjectKey))
+		out = append(out, withFixes(item("due:"+t.Ref, "tasks", "warn", fmt.Sprintf("%s due today: %s", t.Ref, t.Title), "",
+			"Get it done or move it", fmt.Sprintf("/p/%s?task=%d", t.ProjectKey, t.ID), t.ProjectKey), fixDone, fixWeek))
 	}
 	blocked, _ := r.store.StaleBlocked(ctx, 3)
 	for _, t := range blocked {
-		out = append(out, item("blocked:"+t.Ref, "tasks", "warn", fmt.Sprintf("%s blocked for 3+ days: %s", t.Ref, t.Title), "",
-			"Unblock it (who/what is it waiting on?) or park it in the backlog", fmt.Sprintf("/p/%s?task=%d", t.ProjectKey, t.ID), t.ProjectKey))
+		out = append(out, withFixes(item("blocked:"+t.Ref, "tasks", "warn", fmt.Sprintf("%s blocked for 3+ days: %s", t.Ref, t.Title), "",
+			"Unblock it (who/what is it waiting on?) or park it in the backlog", fmt.Sprintf("/p/%s?task=%d", t.ProjectKey, t.ID), t.ProjectKey), fixUnblock, fixBacklog))
 	}
 	if len(out) == 0 {
 		out = append(out, allClear("tasks", "Nothing overdue, due today or stuck"))
@@ -605,23 +638,93 @@ func subject(c *store.Checkup) string {
 	if c.ActionsTotal == 0 {
 		return "Forge check-up " + c.Date + ": all clear"
 	}
-	return fmt.Sprintf("Forge check-up %s: %d to act on (%d failing)", c.Date, c.ActionsTotal, c.Counts.Fail)
+	s := fmt.Sprintf("Forge check-up %s: %d to act on (%d failing", c.Date, c.ActionsTotal, c.Counts.Fail)
+	if c.ActionsNew > 0 {
+		s += fmt.Sprintf(", %d new", c.ActionsNew)
+	}
+	return s + ")"
 }
 
-func (r *Runner) body(c *store.Checkup) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Daily check-up for %s — %d failing, %d warnings, %d clear.\n\n", c.Date, c.Counts.Fail, c.Counts.Warn, c.Counts.OK)
+// Digest splits the open items the way the summaries tell them: what is new
+// since the last check-up first, then what keeps coming back (with since
+// when), then what got fixed.
+type Digest struct {
+	New, Recurring []store.CheckItem
+	Fixed          []store.ResolvedItem
+}
+
+func DigestOf(c *store.Checkup) Digest {
+	var d Digest
 	for _, it := range c.Items {
 		if !it.Open() {
 			continue
 		}
+		if it.FirstSeen == "" || it.FirstSeen == c.Date {
+			d.New = append(d.New, it)
+		} else {
+			d.Recurring = append(d.Recurring, it)
+		}
+	}
+	d.Fixed = c.Resolved
+	return d
+}
+
+// Since says how long an item has been coming back: "since 22 days".
+func Since(it store.CheckItem, date string) string {
+	a, err1 := time.Parse("2006-01-02", it.FirstSeen)
+	b, err2 := time.Parse("2006-01-02", date)
+	if err1 != nil || err2 != nil {
+		return ""
+	}
+	days := int(b.Sub(a).Hours() / 24)
+	if days == 1 {
+		return "since yesterday"
+	}
+	return fmt.Sprintf("since %d days", days)
+}
+
+func (r *Runner) body(c *store.Checkup) string {
+	var b strings.Builder
+	d := DigestOf(c)
+	fmt.Fprintf(&b, "Daily check-up for %s — %d failing, %d warnings, %d clear", c.Date, c.Counts.Fail, c.Counts.Warn, c.Counts.OK)
+	if c.ActionsSnoozed > 0 {
+		fmt.Fprintf(&b, ", %d snoozed", c.ActionsSnoozed)
+	}
+	b.WriteString(".\n")
+	line := func(it store.CheckItem, since string) {
 		mark := "!"
 		if it.Severity == "fail" {
 			mark = "✗"
 		}
-		fmt.Fprintf(&b, "%s %s\n", mark, it.Title)
+		fmt.Fprintf(&b, "%s %s", mark, it.Title)
+		if since != "" {
+			fmt.Fprintf(&b, " (%s)", since)
+		}
+		b.WriteString("\n")
 		if it.Action != "" {
 			fmt.Fprintf(&b, "    → %s\n", it.Action)
+		}
+	}
+	if len(d.New) > 0 {
+		fmt.Fprintf(&b, "\nNew since the last check-up (%d):\n", len(d.New))
+		for _, it := range d.New {
+			line(it, "")
+		}
+	}
+	if len(d.Recurring) > 0 {
+		fmt.Fprintf(&b, "\nStill open (%d):\n", len(d.Recurring))
+		for i, it := range d.Recurring {
+			if i == 15 {
+				fmt.Fprintf(&b, "…and %d more\n", len(d.Recurring)-15)
+				break
+			}
+			line(it, Since(it, c.Date))
+		}
+	}
+	if len(d.Fixed) > 0 {
+		fmt.Fprintf(&b, "\nFixed since the last check-up (%d):\n", len(d.Fixed))
+		for _, f := range d.Fixed {
+			fmt.Fprintf(&b, "✓ %s\n", f.Title)
 		}
 	}
 	fmt.Fprintf(&b, "\nAction list: %s/checkup\n", r.publicURL)

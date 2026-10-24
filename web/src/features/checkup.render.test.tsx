@@ -22,6 +22,7 @@ const item = (o: Partial<CheckItem> = {}): CheckItem => ({
   resolved_at: null,
   snoozed: false,
   snoozed_until: null,
+  fixes: [],
   ...o,
 });
 
@@ -114,5 +115,37 @@ describe("CheckupPage", () => {
     within(row).getByRole("button", { name: /Re-check/ }).click();
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/checkups/7/items/task%3AGAME-1/recheck"), expect.anything()));
     await screen.findByText(/Resolved — "GAME-1 overdue/);
+  });
+
+  it("applies a one-click fix and says whether the item is gone", async () => {
+    const withFix: Checkup = {
+      ...checkup,
+      items: checkup.items.map((i) =>
+        i.key === "task:GAME-1" ? { ...i, fixes: [{ id: "done", label: "Done" }, { id: "week", label: "Due in a week" }] } : i,
+      ),
+    };
+    const fetch = routeFetch({
+      "GET /checkups/latest": () => jsonResponse(200, withFix),
+      "GET /checkups": () => jsonResponse(200, { checkups: [withFix] }),
+      "GET /system": () => jsonResponse(404),
+      "POST /checkups/7/items/task%3AGAME-1/fix": () =>
+        jsonResponse(200, {
+          note: "",
+          checkup: { ...withFix, items: withFix.items.map((i) => (i.key === "task:GAME-1" ? { ...i, resolved_at: "2026-10-22T10:00:00Z", checked_at: "2026-10-22T10:00:00Z" } : i)) },
+        }),
+    });
+    vi.stubGlobal("fetch", fetch);
+    renderWithProviders(
+      <ShellProvider>
+        <CheckupPage />
+      </ShellProvider>,
+      { route: "/checkup" },
+    );
+    const row = (await screen.findByText("GAME-1 overdue since 2026-10-01: Ship it")).closest("li")!;
+    within(row).getByRole("button", { name: "Due in a week" }).click();
+    await screen.findByText("Due in a week — resolved");
+    const call = fetch.mock.calls.find((c) => String(c[0]).includes("/fix"));
+    const body = JSON.parse(String(call?.[1]?.body));
+    expect(body).toEqual({ fix: "week" });
   });
 });

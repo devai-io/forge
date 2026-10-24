@@ -35,6 +35,15 @@ type CheckItem struct {
 	// the bots. SnoozedUntil is a date, or nil for "until the item changes".
 	Snoozed      bool    `json:"snoozed"`
 	SnoozedUntil *string `json:"snoozed_until"`
+	// Fixes are what Forge can do about the item in one click (then it
+	// re-checks it): "done", "week", "clear_due", "unblock", "backlog" on
+	// tasks, "probe" on endpoints, a machine command ("git-pull") on repos.
+	Fixes []CheckFix `json:"fixes"`
+}
+
+type CheckFix struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
 }
 
 // Open: still something to act on — not ok, not ticked, not verified gone,
@@ -435,7 +444,7 @@ func (s *Store) ApplyRecheck(ctx context.Context, id int64, keys []string, fresh
 			found = true
 			it.CheckedAt = &now
 			if f, ok := fresh[it.Key]; ok && f.Severity != "ok" {
-				it.Severity, it.Title, it.Detail, it.Action, it.Link = f.Severity, f.Title, f.Detail, f.Action, f.Link
+				it.Severity, it.Title, it.Detail, it.Action, it.Link, it.Fixes = f.Severity, f.Title, f.Detail, f.Action, f.Link, f.Fixes
 				it.ResolvedAt = nil
 			} else if it.ResolvedAt == nil {
 				it.ResolvedAt = &now

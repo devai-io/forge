@@ -748,12 +748,17 @@ export function useRun(id: number, { live = false }: { live?: boolean } = {}) {
     queryKey: keys.run(id),
     queryFn: () => api.get<Run>(`/runs/${id}`),
     enabled: id > 0,
-    refetchInterval: live ? (query) => (isActiveRun(query.state.data) ? 3_000 : false) : undefined,
+    refetchInterval: live ? (query) => (isActiveRun(query.state.data) ? 3_000 : query.state.data?.status === "waiting" ? 5_000 : false) : undefined,
   });
 }
 
 export function isActiveRun(run: Pick<Run, "status"> | undefined | null): boolean {
   return !!run && (run.status === "queued" || run.status === "running");
+}
+
+/** Not over yet: active, or waiting for you (reply, or Finish). */
+export function isOpenRun(run: Pick<Run, "status"> | undefined | null): boolean {
+  return isActiveRun(run) || run?.status === "waiting";
 }
 
 type RunEventsData = { events: RunEvent[]; run: Run; prompts: RunPrompt[] };
@@ -785,7 +790,8 @@ export function useRunEvents(id: number) {
       if (prev) qc.setQueryData(keys.run(id), prev.run);
       return prev!;
     },
-    refetchInterval: (query) => (isActiveRun(query.state.data?.run) || !query.state.data ? 1500 : false),
+    refetchInterval: (query) =>
+      isActiveRun(query.state.data?.run) || !query.state.data ? 1500 : query.state.data.run.status === "waiting" ? 5000 : false,
     structuralSharing: false,
   });
 }
@@ -819,6 +825,33 @@ export function useSendRunMessage(runId: number) {
 
 export function useEndRunSession(runId: number) {
   return useRunInput(() => api.post<Run>(`/runs/${runId}/end`), runId);
+}
+
+/** Finish: the run is over (a live session ends after its current turn). */
+export function useFinishRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.post<Run>(`/runs/${id}/finish`),
+    onSuccess: (run) => {
+      qc.setQueryData(keys.run(run.id), run);
+      void qc.invalidateQueries({ queryKey: keys.runEvents(run.id) });
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+      void qc.invalidateQueries({ queryKey: keys.dashboard });
+    },
+  });
+}
+
+/** Opens the run's session in Claude Code (a terminal on its machine); needs elevation. */
+export function useHandoffRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.post<{ run: Run; runner_id: number; session: string }>(`/runs/${id}/handoff`),
+    onSuccess: ({ run }) => {
+      qc.setQueryData(keys.run(run.id), run);
+      void qc.invalidateQueries({ queryKey: keys.runEvents(run.id) });
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+    },
+  });
 }
 
 export function useCreateRun() {
@@ -1033,6 +1066,20 @@ export function useCheckItemSnooze(checkupId: number) {
       patchCheckItem(qc, checkupId, key, (i) => ({ ...i, snoozed: until !== "off", snoozed_until: until === "off" ? null : until })),
     onSuccess: (checkup) => storeCheckup(qc, checkup),
     onError: () => refetchCheckup(qc, checkupId),
+  });
+}
+
+/** Applies one of an item's fixes, then re-checks it (a repo pull waits for its run, up to ~2 min). */
+export function useFixCheckItem(checkupId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ key, fix }: { key: string; fix: string }) =>
+      api.post<{ checkup: Checkup; note: string; run?: Run }>(`/checkups/${checkupId}/items/${encodeURIComponent(key)}/fix`, { fix }),
+    onSuccess: ({ checkup }) => {
+      storeCheckup(qc, checkup);
+      invalidateTaskViews(qc);
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+    },
   });
 }
 

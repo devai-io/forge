@@ -467,6 +467,25 @@ func (s *Store) ContextForPath(ctx context.Context, cwd string, trim TaskTrimmer
 			w("\n## Open check-up actions (%s)\n%s\n", c.Date, strings.Join(lines, "\n"))
 		}
 	}
+
+	// Agent runs still open in this project: Claude Code's /resume picker
+	// does not list them (they began as `claude -p`), so say how to get in.
+	if runs, err := s.ListRuns(ctx, RunFilter{ProjectKey: key, Statuses: RunOpenStatuses, Limit: 8}); err == nil && len(runs) > 0 {
+		var lines []string
+		for _, r := range runs {
+			if r.Kind != "agent" {
+				continue
+			}
+			state := r.Status
+			if r.Status == "running" && r.Awaiting != "" {
+				state = "your turn"
+			}
+			lines = append(lines, fmt.Sprintf("- run #%d (%s, %s on %s): %s — `forge resume %d`", r.ID, state, r.RepoName, r.RunnerName, excerpt(r.Prompt, 100), r.ID))
+		}
+		if len(lines) > 0 {
+			w("\n## Open agent runs\n%s\n", strings.Join(lines, "\n"))
+		}
+	}
 	w("\nUse the `forge` MCP tools to read or update this (forge_tasks, forge_update_task, forge_comment, forge_create_task, forge_checkup). Refer to tasks by ref (%s-N).\n", key)
 	w("Memory: forge_recall searches what earlier sessions learned; when you learn something a future session would need " +
 		"(a decision and its reason, a convention, a gotcha, how to do X here), save it with forge_remember — one fact per memory, " +

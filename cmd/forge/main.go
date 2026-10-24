@@ -77,6 +77,8 @@ Machine (settings: ~/.config/forge/agent.json):
   forge agent setup-codex                the same for Codex (run codex login first)
   forge agent [-config path]             run the agent in the foreground
   forge agent mcp | context [--hook]     Claude Code integration (used by setup-claude)
+  forge resume [--list] [RUN]            open a Forge run's session in Claude Code here
+                                         (lists this folder's runs; Claude's /resume hides them)
   forge agent secrets scan               list this checkout's git-ignored secret files
   forge agent secrets push [--yes] [FILE…]
                                          store them in the vault (Vault → Set up a machine)
@@ -95,6 +97,8 @@ func main() {
 	switch os.Args[1] {
 	case "agent", "runner":
 		err = runAgent(os.Args[2:])
+	case "resume":
+		err = runAgent(append([]string{"resume"}, os.Args[2:]...))
 	case "version", "--version", "-v":
 		fmt.Println(version)
 		return
@@ -167,6 +171,15 @@ func runAgent(args []string) error {
 		return nil
 	case "secrets":
 		return agentSecrets(cfg, err, fs.Args()[1:])
+	case "resume":
+		if err != nil {
+			return fmt.Errorf("%w\nthis machine is not paired yet: forge agent pair <server-url> <code>", err)
+		}
+		cwd, werr := os.Getwd()
+		if werr != nil {
+			return werr
+		}
+		return runner.Resume(cfg, cwd, fs.Args()[1:], os.Stdin, os.Stdout)
 	case "", "run":
 	default:
 		return fmt.Errorf("unknown agent command %q (see forge help)", fs.Arg(0))

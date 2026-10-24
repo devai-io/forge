@@ -84,6 +84,7 @@ const num = (v: unknown): number | null => (typeof v === "number" && Number.isFi
 const RUN_STATUS: Record<RunStatus, string> = {
   queued: "queued",
   running: "still running",
+  waiting: "waiting for you",
   succeeded: "succeeded",
   failed: "failed",
   cancelled: "cancelled",

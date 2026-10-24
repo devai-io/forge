@@ -117,6 +117,8 @@ func (r *Runner) capabilities() map[string]any {
 		"code":             r.codeEnabled(),
 		"code_gateway":     r.codeGateway(),
 		"interactive":      true,
+		"resume_in_place":  true,
+		"terminal_resume":  true,
 		"approvals":        r.cfg.Approvals,
 	}
 }
@@ -294,6 +296,10 @@ func (r *Runner) handle(parent context.Context, run claimedRun) {
 		}
 		var ae *apiError
 		if errors.As(err, &ae) && ae.status < 500 {
+			if rep.Status == "waiting" {
+				rep.Status = "succeeded" // a server from before waiting runs
+				continue
+			}
 			slog.Error("finish rejected", "run", run.ID, "err", err)
 			break
 		}

@@ -112,6 +112,7 @@ describe("check-up grouping", () => {
     resolved_at: null,
     snoozed: false,
     snoozed_until: null,
+    fixes: [],
     ...extra,
   });
   it("groups non-ok items by category in a fixed order; open before settled, new before chronic, fails first; snoozed apart", () => {

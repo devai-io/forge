@@ -5,9 +5,9 @@
 // "approvals" setting); this only collects the user's choice.
 
 import clsx from "clsx";
-import { ArrowUp, CircleHelp, ClipboardCheck, ShieldQuestion, Square } from "lucide-react";
+import { ArrowUp, CircleCheck, CircleHelp, ClipboardCheck, ShieldQuestion } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
-import { useAnswerPrompt, useEndRunSession, useSendRunMessage } from "@/api/hooks";
+import { useAnswerPrompt, useFinishRun, useSendRunMessage } from "@/api/hooks";
 import type { PromptAnswer, Run, RunPrompt } from "@/api/types";
 import { Button } from "@/components/ui/Button";
 import { Markdown } from "@/components/ui/Markdown";
@@ -230,7 +230,7 @@ function PlanForm({ prompt, busy, onAnswer }: { prompt: RunPrompt; busy: boolean
 
 function RunComposer({ run }: { run: Run }) {
   const send = useSendRunMessage(run.id);
-  const end = useEndRunSession(run.id);
+  const end = useFinishRun();
   const toast = useToast();
   const [text, setText] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -263,7 +263,17 @@ function RunComposer({ run }: { run: Run }) {
           aria-label="Message"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder={run.engine === "codex" ? (run.awaiting === "reply" ? "Reply to Codex…" : "Send a message to Codex…") : run.awaiting === "reply" ? "Reply to Claude…" : "Send a message — Claude reads it when it can…"}
+          placeholder={
+            run.status === "waiting"
+              ? `Reply to ${run.engine === "codex" ? "Codex" : "Claude"} — the session picks back up…`
+              : run.engine === "codex"
+                ? run.awaiting === "reply"
+                  ? "Reply to Codex…"
+                  : "Send a message to Codex…"
+                : run.awaiting === "reply"
+                  ? "Reply to Claude…"
+                  : "Send a message — Claude reads it when it can…"
+          }
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
@@ -281,10 +291,11 @@ function RunComposer({ run }: { run: Run }) {
         <button
           type="button"
           disabled={end.isPending}
-          onClick={() => end.mutate(undefined, { onError: (e) => toast.error(e) })}
+          onClick={() => end.mutate(run.id, { onError: (e) => toast.error(e) })}
           className="ml-auto inline-flex items-center gap-1 hover:text-fg-2 disabled:opacity-50"
+          title="The work is done: close the session and the run"
         >
-          <Square className="size-3" aria-hidden /> End session
+          <CircleCheck className="size-3" aria-hidden /> Finish
         </button>
       </div>
     </form>

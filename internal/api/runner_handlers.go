@@ -115,11 +115,17 @@ func (s *Server) runnerFinish(w http.ResponseWriter, r *http.Request, rn *store.
 	if !decode16(w, r, &in) {
 		return
 	}
-	if err := s.store.FinishRun(r.Context(), id, rn.ID, in); err != nil {
+	requeued, err := s.store.FinishRun(r.Context(), id, rn.ID, in)
+	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
 	s.inboxes.notify(id) // a session's inbox poll ends with the run
+	if requeued {
+		s.wakeups.notify(rn.ID) // a message came in while it parked: resume at once
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	s.inboxes.forget(id)
 	if run, err := s.store.RunByID(r.Context(), id); err == nil && run.ChatTurnID != nil {
 		s.assistant.FinishSession(r.Context(), run) // an Assistant turn on Claude Code

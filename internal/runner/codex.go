@@ -148,10 +148,13 @@ func (r *Runner) runCodex(ctx context.Context, run claimedRun, dir string, ship 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	duration := time.Since(start).Milliseconds()
-	rep := finishReport{SessionID: c.thread, Result: c.result, Usage: c.reportUsage(), ExitCode: code, DurationMS: &duration, NumTurns: &c.turns}
+	rep := finishReport{SessionID: c.thread, Result: c.result, Usage: c.reportUsage(), ExitCode: code, DurationMS: &duration, NumTurns: &c.turns,
+		InboxAfter: sess.inboxRead()}
 	switch {
 	case errors.Is(ctx.Err(), context.Canceled):
 		rep.Status, rep.Error = "cancelled", "cancelled from Forge"
+	case ctx.Err() != nil && sess.isWaiting() && c.failure == "":
+		rep.Status = "waiting" // the time limit caught it between turns
 	case ctx.Err() != nil:
 		rep.Status, rep.Error = "failed", "Codex run timed out"
 	case runErr != nil:
@@ -160,6 +163,8 @@ func (r *Runner) runCodex(ctx context.Context, run claimedRun, dir string, ship 
 		rep.Status, rep.Error = "failed", c.failure
 	case !c.completed:
 		rep.Status, rep.Error = "failed", "Codex exited before completing a turn"
+	case sess.isParked():
+		rep.Status = "waiting"
 	case code != nil && *code != 0:
 		rep.Status, rep.Error = "failed", fmt.Sprintf("Codex exited with %d", *code)
 	default:
@@ -287,8 +292,14 @@ func (c *codexSession) observe(line []byte) event {
 				c.model = res.Model
 			}
 			c.mu.Unlock()
-			if err := c.message(c.s.run.Prompt); err != nil {
-				c.fail(err.Error())
+			if c.s.run.Resumes == 0 {
+				if err := c.message(c.s.run.Prompt); err != nil {
+					c.fail(err.Error())
+				}
+			} else {
+				c.completed = true // nothing to finish before the next message
+				c.s.ship.send(textEvent("system", "resuming the Codex thread"))
+				c.s.idleWait()
 			}
 			if c.s.run.Interactive && c.s.run.Assistant == nil {
 				go c.s.inboxLoop()

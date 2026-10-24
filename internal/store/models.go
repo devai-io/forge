@@ -282,6 +282,11 @@ type RunnerCapabilities struct {
 	// approvals (the machine's "approvals" setting); otherwise only questions.
 	Interactive bool `json:"interactive"`
 	Approvals   bool `json:"approvals"`
+	// ResumeInPlace: a parked (waiting) run can be queued again and the agent
+	// resumes its session without resending the prompt. TerminalResume: a
+	// terminal session can start as `claude --resume <id>`.
+	ResumeInPlace  bool `json:"resume_in_place"`
+	TerminalResume bool `json:"terminal_resume"`
 }
 
 type CommandDetail struct {
@@ -379,6 +384,18 @@ type Run struct {
 	// Awaiting is what a running interactive session waits for: "answer" (a
 	// pending prompt), "reply" (it finished a turn), or "" (it is working).
 	Awaiting string `json:"awaiting"`
+	// InboxAfter: the last inbox item the machine had read when the session
+	// parked; a resumed session reads only what came after. Resumes counts the
+	// in-place resumes (the machine must not send the original prompt again).
+	InboxAfter int64 `json:"inbox_after"`
+	Resumes    int   `json:"resumes"`
+	// FinishRequested: the user pressed Finish while the session was live.
+	FinishRequested bool `json:"finish_requested"`
+	// Handoff says where the session continued outside Forge ("" = it did not).
+	Handoff string `json:"handoff"`
+	// ResumeHint is the shell line that opens this run's session in Claude
+	// Code (or Codex) on its machine; "" when there is no session.
+	ResumeHint string `json:"resume_hint"`
 }
 
 type RunEvent struct {
@@ -435,7 +452,7 @@ var (
 	TaskStatuses    = []string{"backlog", "todo", "in_progress", "blocked", "done"}
 	Priorities      = []string{"urgent", "high", "medium", "low"}
 	TaskTypes       = []string{"feature", "bug", "chore", "research", "ops"}
-	RunStatuses     = []string{"queued", "running", "succeeded", "failed", "cancelled"}
+	RunStatuses     = []string{"queued", "running", "waiting", "succeeded", "failed", "cancelled"}
 	PermissionModes = []string{"plan", "acceptEdits", "auto", "dontAsk", "bypassPermissions"}
 	RunnerRoles     = []string{"master", "ios", "worker"}
 	Engines         = []string{"deepseek", "claude", "codex"}

@@ -141,7 +141,7 @@ func TestAgentRunEngines(t *testing.T) {
 		}
 		if claimed.Run.ID == ds.ID {
 			// Continuing a DeepSeek run stays on DeepSeek.
-			if err := h.store.FinishRun(ctx, ds.ID, created.Runner.ID, store.FinishInput{Status: "succeeded", SessionID: "s1"}); err != nil {
+			if _, err := h.store.FinishRun(ctx, ds.ID, created.Runner.ID, store.FinishInput{Status: "succeeded", SessionID: "s1"}); err != nil {
 				t.Fatal(err)
 			}
 		}

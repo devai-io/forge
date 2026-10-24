@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/devai-io/forge/internal/assistant"
+	"github.com/devai-io/forge/internal/checkup"
 	"github.com/devai-io/forge/internal/store"
 	"github.com/devai-io/forge/internal/telegram"
 )
@@ -369,7 +370,7 @@ func (s *Server) tgRuns(ctx context.Context) string {
 }
 
 func runIcon(status string) string {
-	return map[string]string{"queued": "⏳", "running": "▶️", "succeeded": "✅", "failed": "❌", "cancelled": "⏹"}[status]
+	return map[string]string{"queued": "⏳", "running": "▶️", "waiting": "💬", "succeeded": "✅", "failed": "❌", "cancelled": "⏹"}[status]
 }
 
 func runWhere(r *store.Run) string {
@@ -382,29 +383,51 @@ func runWhere(r *store.Run) string {
 
 func checkupMarkdown(c *store.Checkup, publicURL string) string {
 	var b strings.Builder
+	d := checkup.DigestOf(c)
 	if c.ActionsTotal == 0 {
 		fmt.Fprintf(&b, "🩺 **Check-up %s: all clear** (%d checks)\n", c.Date, c.Counts.OK)
 	} else {
-		fmt.Fprintf(&b, "🩺 **Check-up %s** — %d failing, %d warnings\n\n", c.Date, c.Counts.Fail, c.Counts.Warn)
+		fmt.Fprintf(&b, "🩺 **Check-up %s** — %d failing, %d warnings · %d new, %d still open\n", c.Date, c.Counts.Fail, c.Counts.Warn,
+			len(d.New), len(d.Recurring))
 	}
-	n := 0
-	for _, it := range c.Items {
-		if !it.Open() {
-			continue
-		}
-		if n++; n > 15 {
-			fmt.Fprintf(&b, "- …and more\n")
-			break
-		}
+	line := func(it store.CheckItem, since string) {
 		mark := "!"
 		if it.Severity == "fail" {
 			mark = "✗"
 		}
-		line := fmt.Sprintf("- %s %s", mark, it.Title)
-		if it.Action != "" {
-			line += " → " + it.Action
+		l := fmt.Sprintf("- %s %s", mark, it.Title)
+		if since != "" {
+			l += " _(" + since + ")_"
+		} else if it.Action != "" {
+			l += " → " + it.Action
 		}
-		b.WriteString(telegram.Clip(line, 300) + "\n")
+		b.WriteString(telegram.Clip(l, 300) + "\n")
+	}
+	if len(d.New) > 0 {
+		b.WriteString("\n**New**\n")
+		for i, it := range d.New {
+			if i == 12 {
+				fmt.Fprintf(&b, "- …and %d more\n", len(d.New)-12)
+				break
+			}
+			line(it, "")
+		}
+	}
+	if len(d.Recurring) > 0 {
+		b.WriteString("\n**Still open**\n")
+		for i, it := range d.Recurring {
+			if i == 8 {
+				fmt.Fprintf(&b, "- …and %d more\n", len(d.Recurring)-8)
+				break
+			}
+			line(it, checkup.Since(it, c.Date))
+		}
+	}
+	if len(d.Fixed) > 0 {
+		fmt.Fprintf(&b, "\n✅ %d fixed since the last check-up\n", len(d.Fixed))
+	}
+	if c.ActionsSnoozed > 0 {
+		fmt.Fprintf(&b, "_%d snoozed_\n", c.ActionsSnoozed)
 	}
 	fmt.Fprintf(&b, "\n[Open the check-up](%s/checkup)", publicURL)
 	return b.String()
@@ -577,11 +600,15 @@ func (s *Server) tgReply(ctx context.Context, set store.TelegramSettings, l *sto
 		if l.RunID == nil {
 			return
 		}
-		if err := s.store.SendRunMessage(ctx, *l.RunID, text); err != nil {
+		requeued, err := s.store.SendRunMessage(ctx, *l.RunID, text)
+		if err != nil {
 			say("Not sent: " + tgErrText(err))
 			return
 		}
 		s.inboxes.notify(*l.RunID)
+		if requeued {
+			s.wakeRunner(ctx, *l.RunID)
+		}
 		s.tgSecurity(ctx, "telegram_run_message", fmt.Sprintf("run %d", *l.RunID))
 		say(fmt.Sprintf("Sent to run #%d.", *l.RunID))
 	case "chat":
@@ -918,7 +945,14 @@ func (s *Server) tgNotifyFinished(runID int64) {
 			return
 		}
 		run, err := s.store.RunByID(ctx, runID)
-		if err != nil || run.ChatTurnID != nil || run.Status == "cancelled" {
+		if err != nil || run.ChatTurnID != nil || run.Status == "cancelled" || run.Status == "queued" {
+			return // queued: a message came in while it parked, it resumed
+		}
+		if run.Status == "waiting" && run.Interactive {
+			return // parked after a quiet spell: "waits for you" went out when it answered
+		}
+		if run.Status == "waiting" {
+			s.tgNotifyAwaiting(runID) // a one-shot run answered: same as a session's turn
 			return
 		}
 		body := run.Result

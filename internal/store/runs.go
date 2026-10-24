@@ -158,7 +158,7 @@ func (s *Store) RunnerTokenHash(ctx context.Context, id int64) ([]byte, error) {
 func (s *Store) DeleteRunner(ctx context.Context, id int64) error {
 	return s.tx(ctx, func(tx pgxTx) error {
 		if _, err := tx.Exec(ctx, `UPDATE runs SET status = 'cancelled', error = 'runner deleted', finished_at = now()
-			WHERE runner_id = $1 AND status IN ('queued', 'running')`, id); err != nil {
+			WHERE runner_id = $1 AND status IN ('queued', 'running', 'waiting')`, id); err != nil {
 			return err
 		}
 		tag, err := tx.Exec(ctx, `DELETE FROM runners WHERE id = $1`, id)
@@ -242,7 +242,8 @@ SELECT r.id, coalesce(r.runner_id, 0), coalesce(rn.name, r.runner_name), coalesc
        r.effort, r.chat_turn_id, r.usage, r.append_system, r.interactive, r.cwd,
        CASE WHEN r.status <> 'running' THEN ''
             WHEN EXISTS (SELECT 1 FROM run_prompts pr WHERE pr.run_id = r.id AND pr.status = 'pending') THEN 'answer'
-            ELSE r.awaiting END
+            ELSE r.awaiting END,
+       r.inbox_after, r.resumes, r.finish_requested, r.handoff
 FROM runs r
 LEFT JOIN projects p ON p.id = r.project_id
 LEFT JOIN repos rp ON rp.id = r.repo_id
@@ -258,18 +259,66 @@ func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 		&r.Model, &r.Worktree, &r.ResumeRunID, &r.Status, &r.CancelRequested, &r.SessionID, &r.Result, &r.Error,
 		&r.ExitCode, &r.CostUSD, &r.NumTurns, &r.DurationMS, &r.CreatedAt, &r.StartedAt, &r.FinishedAt,
 		&r.RepoPath, &r.ResumeSession, &r.ModelNote, &r.Engine, &r.Effort, &r.ChatTurnID, &usage, &r.AppendSystem,
-		&r.Interactive, &r.Cwd, &r.Awaiting); err != nil {
+		&r.Interactive, &r.Cwd, &r.Awaiting, &r.InboxAfter, &r.Resumes, &r.FinishRequested, &r.Handoff); err != nil {
 		return nil, mapErr(err)
 	}
 	r.Usage = json.RawMessage(usage)
 	return &r, nil
 }
 
-// Public strips the fields only a runner needs.
+// Public strips the fields only a runner needs (after deriving the resume
+// hint, which needs the run's folder).
 func (r Run) Public() Run {
+	r.ResumeHint = r.resumeHint()
 	r.RepoPath, r.ResumeSession, r.AppendSystem, r.Cwd = "", "", "", ""
 	return r
 }
+
+// SessionDir is the folder the run's agent session lives in on its machine:
+// Claude Code files a session under the folder it ran in, and only finds it
+// from there.
+func (r Run) SessionDir() string {
+	if r.Cwd != "" && !strings.Contains(r.Cwd, "\n") {
+		return r.Cwd
+	}
+	return r.RepoPath
+}
+
+// resumeHint is the line that opens this run's session by hand.
+func (r Run) resumeHint() string {
+	if r.Kind != "agent" || r.SessionID == "" || r.ChatTurnID != nil {
+		return ""
+	}
+	dir := r.SessionDir()
+	cmd := "claude --resume " + r.SessionID
+	if r.Engine == "codex" {
+		cmd = "codex resume " + r.SessionID
+	}
+	if dir == "" {
+		return cmd
+	}
+	return "cd " + shellQuote(dir) + " && " + cmd
+}
+
+func shellQuote(s string) string {
+	if s != "" && !strings.ContainsAny(s, " '\"\\$`!*?[]{}()<>|&;#~") {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// KeepsOpen: a run the user started (not an Assistant or bot turn) with an
+// agent session to come back to ends as waiting, not succeeded — until the
+// user finishes it.
+func (r Run) KeepsOpen() bool {
+	return r.Kind == "agent" && r.ChatTurnID == nil && r.RepoID != 0 && r.SessionID != ""
+}
+
+// RunOpenStatuses are the statuses of a run that is not over yet.
+var RunOpenStatuses = []string{"queued", "running", "waiting"}
+
+// RunDoneStatuses are the final ones.
+var RunDoneStatuses = []string{"succeeded", "failed", "cancelled"}
 
 type RunFilter struct {
 	ProjectKey string
@@ -295,7 +344,7 @@ func (s *Store) ListRuns(ctx context.Context, f RunFilter) ([]Run, error) {
 		where = append(where, "r.status IN (SELECT value FROM json_each("+arg(f.Statuses)+"))")
 	}
 	if f.Finished {
-		where = append(where, "r.finished_at IS NOT NULL")
+		where = append(where, "r.finished_at IS NOT NULL AND r.status IN ('succeeded', 'failed', 'cancelled')")
 	}
 	q := runSelect + " WHERE " + strings.Join(where, " AND ")
 	if f.Limit <= 0 || f.Limit > 500 {
@@ -528,12 +577,12 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 	return s.RunByID(ctx, id)
 }
 
-// CancelRun cancels a queued run outright; a running one is flagged and the
-// runner kills it on its next heartbeat.
+// CancelRun cancels a queued or waiting run outright; a running one is
+// flagged and the runner kills it on its next heartbeat.
 func (s *Store) CancelRun(ctx context.Context, id int64) (*Run, error) {
 	if _, err := s.DB.Exec(ctx, `UPDATE runs SET
-		status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
-		finished_at = CASE WHEN status = 'queued' THEN now() ELSE finished_at END,
+		status = CASE WHEN status IN ('queued', 'waiting') THEN 'cancelled' ELSE status END,
+		finished_at = CASE WHEN status IN ('queued', 'waiting') THEN now() ELSE finished_at END,
 		cancel_requested = CASE WHEN status = 'running' THEN true ELSE cancel_requested END
 		WHERE id = $1`, id); err != nil {
 		return nil, err
@@ -624,6 +673,8 @@ func (s *Store) ListEvents(ctx context.Context, runID int64, after, limit int) (
 }
 
 type FinishInput struct {
+	// Status: succeeded, failed, cancelled — or waiting: the machine parked
+	// a live session that had answered (idle, or asked to), the run stays open.
 	Status     string   `json:"status"`
 	ExitCode   *int     `json:"exit_code"`
 	SessionID  string   `json:"session_id"`
@@ -634,15 +685,44 @@ type FinishInput struct {
 	DurationMS *int64   `json:"duration_ms"`
 	// Usage: Claude Code's modelUsage (tokens and cost per model).
 	Usage json.RawMessage `json:"usage"`
+	// InboxAfter: the last inbox item the session read (agents that resume
+	// in place); later messages wait for the resumed session.
+	InboxAfter int64 `json:"inbox_after"`
 }
 
-func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishInput) error {
-	if !OneOf(in.Status, []string{"succeeded", "failed", "cancelled"}) {
-		return invalid("status", "must be succeeded, failed or cancelled")
+// FinishRun records what the machine reports. A run the user started stays
+// open: "succeeded" (or a parked session, "waiting") becomes waiting unless
+// the user asked to finish it. Messages the parked session never read queue
+// the run again at once, so nothing sent in the last seconds is lost. It
+// reports whether the run was queued again (the caller wakes the machine).
+func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishInput) (requeued bool, err error) {
+	if !OneOf(in.Status, []string{"succeeded", "failed", "cancelled", "waiting"}) {
+		return false, invalid("status", "must be succeeded, failed, cancelled or waiting")
+	}
+	cur, err := s.RunByID(ctx, runID)
+	if err != nil {
+		return false, err
+	}
+	if cur.RunnerID != runnerID || cur.Status != "running" {
+		return false, ErrNotFound
+	}
+	if in.SessionID != "" {
+		cur.SessionID = in.SessionID
+	}
+	status := in.Status
+	if status == "succeeded" || status == "waiting" {
+		status = "succeeded"
+		if cur.KeepsOpen() && !cur.FinishRequested && cur.Handoff == "" {
+			status = "waiting"
+		}
+	}
+	inboxAfter := cur.InboxAfter
+	if in.InboxAfter > inboxAfter {
+		inboxAfter = in.InboxAfter
 	}
 	var dirtyProject *int64
 	var repoName string
-	err := s.tx(ctx, func(tx pgxTx) error {
+	err = s.tx(ctx, func(tx pgxTx) error {
 		var projectID, taskID, repoID *int64
 		usage := "{}"
 		if len(in.Usage) > 0 && json.Valid(in.Usage) && len(in.Usage) < 64<<10 {
@@ -651,13 +731,28 @@ func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishI
 		err := tx.QueryRow(ctx, `
 			UPDATE runs SET status = $3, exit_code = $4, session_id = CASE WHEN $5 = '' THEN session_id ELSE $5 END,
 			       result = $6, error = $7, cost_usd = $8, num_turns = $9, duration_ms = $10, finished_at = now(),
-			       usage = $11, awaiting = ''
+			       usage = $11, awaiting = '', inbox_after = $12
 			WHERE id = $1 AND runner_id = $2 AND status = 'running'
 			RETURNING project_id, task_id, repo_id`,
-			runID, runnerID, in.Status, in.ExitCode, truncate(in.SessionID, 200), truncate(in.Result, 200000),
-			truncate(in.Error, 5000), in.CostUSD, in.NumTurns, in.DurationMS, usage).Scan(&projectID, &taskID, &repoID)
+			runID, runnerID, status, in.ExitCode, truncate(in.SessionID, 200), truncate(in.Result, 200000),
+			truncate(in.Error, 5000), in.CostUSD, in.NumTurns, in.DurationMS, usage, inboxAfter).Scan(&projectID, &taskID, &repoID)
 		if err != nil {
 			return mapErr(err)
+		}
+		if status == "waiting" {
+			// The parked session's machine resumes in place: anything it did not
+			// read goes to the resumed session right away.
+			var unread bool
+			if err := tx.QueryRow(ctx, `SELECT exists(SELECT 1 FROM run_inbox WHERE run_id = $1 AND id > $2 AND kind = 'message')`,
+				runID, inboxAfter).Scan(&unread); err != nil {
+				return err
+			}
+			if unread && s.resumesInPlace(ctx, runnerID) {
+				if err := requeueTx(ctx, tx, runID, inboxAfter); err != nil {
+					return err
+				}
+				requeued = true
+			}
 		}
 		if _, err := tx.Exec(ctx, `UPDATE run_prompts SET status = 'expired' WHERE run_id = $1 AND status = 'pending'`, runID); err != nil {
 			return err
@@ -668,7 +763,14 @@ func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishI
 		if err := tx.QueryRow(ctx, `SELECT name FROM repos WHERE id = $1`, repoID).Scan(&repoName); err != nil {
 			return mapErr(err)
 		}
-		summary := fmt.Sprintf("Run #%d on %s %s", runID, repoName, in.Status)
+		if requeued || (status == "waiting" && in.Status == "waiting") {
+			return nil // a parked session is not news: its answer was, when it came
+		}
+		verb := status
+		if status == "waiting" {
+			verb = "answered and waits for you"
+		}
+		summary := fmt.Sprintf("Run #%d on %s %s", runID, repoName, verb)
 		if in.CostUSD != nil {
 			summary += fmt.Sprintf(" ($%.2f)", *in.CostUSD)
 		}
@@ -677,10 +779,122 @@ func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishI
 			Kind: "run.finished", Summary: summary})
 	})
 	if err == nil && dirtyProject != nil {
-		s.MarkFocusDirty(ctx, *dirtyProject, fmt.Sprintf("run #%d %s", runID, in.Status))
+		in.Status = status
+		s.MarkFocusDirty(ctx, *dirtyProject, fmt.Sprintf("run #%d %s", runID, status))
 		s.runBotEvent(ctx, *dirtyProject, runID, repoName, in)
 	}
+	return requeued, err
+}
+
+// resumesInPlace: the runner's agent can resume a parked run in place.
+func (s *Store) resumesInPlace(ctx context.Context, runnerID int64) bool {
+	rn, err := s.RunnerByID(ctx, runnerID)
+	return err == nil && rn.Capabilities.ResumeInPlace
+}
+
+// requeueTx puts a waiting run back in the queue to resume its session in
+// place, reading the inbox after `inboxAfter`.
+func requeueTx(ctx context.Context, tx pgxTx, runID, inboxAfter int64) error {
+	_, err := tx.Exec(ctx, `UPDATE runs SET status = 'queued', resumes = resumes + 1, resume_session = session_id,
+		interactive = true, inbox_after = $2, awaiting = '', cancel_requested = false, error = '', exit_code = NULL,
+		finished_at = NULL WHERE id = $1`, runID, inboxAfter)
 	return err
+}
+
+// FinishRunByUser closes an open run: a waiting one at once; a live one is
+// asked to end its session after the current turn and then finishes as
+// succeeded; a queued one (a resume nobody picked up yet) at once.
+func (s *Store) FinishRunByUser(ctx context.Context, id int64) (*Run, error) {
+	run, err := s.RunByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	switch run.Status {
+	case "waiting", "queued":
+		if _, err := s.DB.Exec(ctx, `UPDATE runs SET status = 'succeeded', finished_at = coalesce(finished_at, now()),
+			awaiting = '', finish_requested = true WHERE id = $1 AND status IN ('waiting', 'queued')`, id); err != nil {
+			return nil, err
+		}
+		if run.RepoID != 0 {
+			_ = logActivity(ctx, s.DB, ActivityInput{ProjectID: &run.ProjectID, TaskID: run.TaskID, RunID: &run.ID,
+				Kind: "run.finished", Summary: fmt.Sprintf("Run #%d on %s finished", run.ID, run.RepoName)})
+		}
+	case "running":
+		if err := s.tx(ctx, func(tx pgxTx) error {
+			if _, err := tx.Exec(ctx, `UPDATE runs SET finish_requested = true WHERE id = $1`, id); err != nil {
+				return err
+			}
+			if !run.Interactive {
+				return nil // a one-shot run ends by itself; it then finishes as succeeded
+			}
+			_, err := tx.Exec(ctx, `INSERT INTO run_inbox (run_id, kind) VALUES ($1, 'end')`, id)
+			return err
+		}); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, invalid("status", "run #%d is already %s", run.ID, run.Status)
+	}
+	return s.RunByID(ctx, id)
+}
+
+// RequestPark asks a live interactive session to park now (close its process,
+// keep the run waiting). It reports false when there is nothing live to park.
+func (s *Store) RequestPark(ctx context.Context, id int64) (bool, error) {
+	run, err := s.RunByID(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if run.Status != "running" || !run.Interactive {
+		return false, nil
+	}
+	_, err = s.DB.Exec(ctx, `INSERT INTO run_inbox (run_id, kind) VALUES ($1, 'park')`, id)
+	return err == nil, err
+}
+
+// HandOffRun records that the run's session continues outside Forge
+// (`where`): a waiting run ends as succeeded; a finished one keeps its status.
+func (s *Store) HandOffRun(ctx context.Context, id int64, where string) (*Run, error) {
+	run, err := s.RunByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.DB.Exec(ctx, `UPDATE runs SET handoff = $2,
+		status = CASE WHEN status = 'waiting' THEN 'succeeded' ELSE status END,
+		finished_at = coalesce(finished_at, now()) WHERE id = $1`, id, truncate(where, 200)); err != nil {
+		return nil, err
+	}
+	if run.RepoID != 0 {
+		_ = logActivity(ctx, s.DB, ActivityInput{ProjectID: &run.ProjectID, TaskID: run.TaskID, RunID: &run.ID,
+			Kind: "run.handoff", Summary: fmt.Sprintf("Run #%d on %s continues in Claude Code (%s)", run.ID, run.RepoName, where)})
+	}
+	return s.RunByID(ctx, id)
+}
+
+// RunsForPath lists the agent runs a machine can resume from a folder: runs
+// of repos at or under it (or containing it), newest first.
+func (s *Store) RunsForPath(ctx context.Context, runnerID int64, dir string, limit int) ([]Run, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	dir = strings.TrimRight(dir, "/")
+	rows, err := s.DB.Query(ctx, runSelect+` WHERE r.kind = 'agent' AND r.session_id <> '' AND r.chat_turn_id IS NULL
+		AND r.runner_id = $1 AND rp.path <> ''
+		AND ($2 = rp.path OR substr($2, 1, length(rp.path) + 1) = rp.path || '/' OR substr(rp.path, 1, length($2) + 1) = $2 || '/')
+		ORDER BY r.id DESC LIMIT $3`, runnerID, dir, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Run{}
+	for rows.Next() {
+		r, err := scanRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *r)
+	}
+	return out, rows.Err()
 }
 
 // runBotEvent tells the project's bot a run finished — unless the bot

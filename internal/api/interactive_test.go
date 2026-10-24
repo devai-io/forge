@@ -58,6 +58,20 @@ func TestFakeClaude(t *testing.T) {
 			"total_cost_usd": cost, "num_turns": 1, "duration_ms": 10})
 	}
 
+	// Resumed (a parked run picked back up): no prompt comes, only follow-ups.
+	for _, a := range os.Args {
+		if a == "--resume" {
+			_ = out.Encode(map[string]any{"type": "system", "subtype": "init", "session_id": "sess-1"})
+			for m := next(); m != nil; m = next() {
+				_ = out.Encode(map[string]any{"type": "user", "message": m["message"], "isReplay": true})
+				msg, _ := m["message"].(map[string]any)
+				say(fmt.Sprintf("resumed, got %v", msg["content"]))
+				result("turn three", 0.05)
+			}
+			return
+		}
+	}
+
 	first := next()
 	_ = out.Encode(map[string]any{"type": "user", "message": first["message"], "isReplay": true})
 	_ = out.Encode(map[string]any{"type": "system", "subtype": "init", "session_id": "sess-1"})
@@ -211,10 +225,31 @@ func TestInteractiveRun(t *testing.T) {
 	expect(t, "empty message", h.do("POST", fmt.Sprintf("/api/runs/%d/messages", run.ID), map[string]any{"text": " "}, nil), 422)
 	expect(t, "message", h.do("POST", fmt.Sprintf("/api/runs/%d/messages", run.ID), map[string]any{"text": "and now?"}, nil), 200)
 	v = poll("turn two", func(v view) bool { return strings.Contains(transcript(v), "got and now?") && v.Run.Awaiting == "reply" })
-	expect(t, "end", h.do("POST", fmt.Sprintf("/api/runs/%d/end", run.ID), nil, nil), 200)
+	// The session parks (as after a quiet spell): the process ends, the run
+	// stays open, waiting.
+	if _, err := h.store.RequestPark(ctx, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	v = poll("the park", func(v view) bool { return v.Run.Status == "waiting" })
+	if v.Run.Result != "turn two" || v.Run.InboxAfter == 0 || !strings.Contains(transcript(v), "parking the session") {
+		t.Fatalf("parked run = %+v", v.Run)
+	}
+
+	// A reply resumes the same run in place: the session gets the reply, not
+	// the original prompt again.
+	expect(t, "reply to the parked run", h.do("POST", fmt.Sprintf("/api/runs/%d/messages", run.ID), map[string]any{"text": "go on"}, nil), 200)
+	v = poll("the resumed turn", func(v view) bool {
+		return v.Run.Status == "running" && v.Run.Awaiting == "reply" && strings.Contains(transcript(v), "resumed, got go on")
+	})
+	got = transcript(v)
+	if v.Run.Resumes != 1 || strings.Count(got, "Pick a color") != 1 || strings.Contains(got, "resumed, got and now?") {
+		t.Fatalf("resume resent old input (resumes %d):\n%s", v.Run.Resumes, got)
+	}
+
+	// Finish: the session is told to end, and the run is over.
+	expect(t, "finish", h.do("POST", fmt.Sprintf("/api/runs/%d/finish", run.ID), nil, nil), 200)
 	v = poll("the finish", func(v view) bool { return v.Run.Status != "running" })
-	if v.Run.Status != "succeeded" || v.Run.Result != "turn two" || v.Run.SessionID != "sess-1" ||
-		v.Run.NumTurns == nil || *v.Run.NumTurns != 2 || v.Run.Awaiting != "" {
+	if v.Run.Status != "succeeded" || v.Run.Result != "turn three" || v.Run.SessionID != "sess-1" || v.Run.Awaiting != "" {
 		t.Fatalf("finished run = %+v", v.Run)
 	}
 	expect(t, "message after the end", h.do("POST", fmt.Sprintf("/api/runs/%d/messages", run.ID), map[string]any{"text": "hi"}, nil), 422)

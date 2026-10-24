@@ -34,6 +34,10 @@ type claimedRun struct {
 	Effort         string  `json:"effort"`
 	ChatTurnID     *int64  `json:"chat_turn_id"`
 	Interactive    bool    `json:"interactive"`
+	// Resumes > 0: the run was parked and is resumed in place — the session
+	// already has the prompt; only inbox items after InboxAfter are new.
+	Resumes    int   `json:"resumes"`
+	InboxAfter int64 `json:"inbox_after"`
 	// Setup and Assistant come alongside the run in the claim answer.
 	Setup     *engineSetup    `json:"-"`
 	Assistant *assistantSetup `json:"-"`
@@ -83,6 +87,8 @@ type finishReport struct {
 	DurationMS *int64   `json:"duration_ms"`
 	// Usage is Claude Code's modelUsage, passed through.
 	Usage json.RawMessage `json:"usage,omitempty"`
+	// InboxAfter is the last inbox item the session read (interactive runs).
+	InboxAfter int64 `json:"inbox_after,omitempty"`
 }
 
 // shipper batches a run's events to the server: every 400 ms or 100 events,
@@ -283,6 +289,9 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 
 	rep := finishReport{ExitCode: code, SessionID: res.SessionID, Result: res.Result,
 		CostUSD: res.CostUSD, NumTurns: res.NumTurns, DurationMS: res.DurationMS, Usage: res.RawUsage}
+	if sess != nil {
+		rep.InboxAfter = sess.inboxRead()
+	}
 	if run.Engine == "deepseek" {
 		// Claude Code prices tokens at Anthropic's rates; the provider's are not.
 		rep.CostUSD = res.deepseekCost(time.Now())
@@ -290,6 +299,10 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 	switch {
 	case errors.Is(ctx.Err(), context.Canceled):
 		rep.Status, rep.Error = "cancelled", "cancelled from Forge"
+	case errors.Is(ctx.Err(), context.DeadlineExceeded) && sess != nil && sess.isWaiting():
+		// The time limit caught the session between turns: park, do not fail.
+		ship.send(textEvent("system", fmt.Sprintf("time limit (%d minutes) reached while waiting for a reply: parking the session", r.cfg.MaxRunMinutes)))
+		rep.Status = "waiting"
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		rep.Status, rep.Error = "failed", fmt.Sprintf("timed out after %d minutes", r.cfg.MaxRunMinutes)
 	case runErr != nil:
@@ -300,6 +313,8 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 		if rep.Error == "" {
 			rep.Error = fmt.Sprintf("claude exited with %d", derefInt(code))
 		}
+	case sess != nil && sess.isParked():
+		rep.Status = "waiting"
 	default:
 		rep.Status = "succeeded"
 	}
