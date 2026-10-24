@@ -518,10 +518,14 @@ func (s *Server) tgAnswer(ctx context.Context, p *store.RunPrompt, ans store.Pro
 	if p.Status != "pending" {
 		return fmt.Errorf("%w: already %s", store.ErrConflict, p.Status)
 	}
-	if _, err := s.store.AnswerPrompt(ctx, p.RunID, p.ID, ans); err != nil {
+	_, requeued, err := s.store.AnswerPrompt(ctx, p.RunID, p.ID, ans)
+	if err != nil {
 		return err
 	}
 	s.inboxes.notify(p.RunID)
+	if requeued {
+		s.wakeRunner(ctx, p.RunID)
+	}
 	s.tgSecurity(ctx, "telegram_answer", fmt.Sprintf("run %d prompt %d: %s %s", p.RunID, p.ID, p.ToolName, ans.Decision))
 	return nil
 }

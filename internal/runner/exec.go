@@ -301,7 +301,7 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 		rep.Status, rep.Error = "cancelled", "cancelled from Forge"
 	case errors.Is(ctx.Err(), context.DeadlineExceeded) && sess != nil && sess.isWaiting():
 		// The time limit caught the session between turns: park, do not fail.
-		ship.send(textEvent("system", fmt.Sprintf("time limit (%d minutes) reached while waiting for a reply: parking the session", r.cfg.MaxRunMinutes)))
+		ship.send(textEvent("system", fmt.Sprintf("time limit (%d minutes) reached while waiting for you: parking the session — answer or reply to pick it back up", r.cfg.MaxRunMinutes)))
 		rep.Status = "waiting"
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		rep.Status, rep.Error = "failed", fmt.Sprintf("timed out after %d minutes", r.cfg.MaxRunMinutes)

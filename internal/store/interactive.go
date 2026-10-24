@@ -160,29 +160,41 @@ func (s *Store) ListPrompts(ctx context.Context, runID int64) ([]RunPrompt, erro
 }
 
 // AnswerPrompt records the user's answer and queues it for the machine.
-// A prompt is answered once: a second answer is a conflict.
-func (s *Store) AnswerPrompt(ctx context.Context, runID, promptID int64, in PromptAnswer) (*RunPrompt, error) {
-	if _, err := s.interactiveRun(ctx, runID, 0); err != nil {
-		return nil, err
-	}
-	p, err := scanPrompt(s.DB.QueryRow(ctx, promptSelect+` WHERE id = $1 AND run_id = $2`, promptID, runID))
+// A prompt is answered once: a second answer is a conflict. A question left
+// pending when its session parked (the run is waiting) can still be
+// answered: the answer becomes the reply that resumes the session in place
+// (requeued reports that; the caller wakes the machine).
+func (s *Store) AnswerPrompt(ctx context.Context, runID, promptID int64, in PromptAnswer) (p *RunPrompt, requeued bool, err error) {
+	run, err := s.RunByID(ctx, runID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	parked := run.Status == "waiting"
+	if parked && !s.resumesInPlace(ctx, run.RunnerID) {
+		return nil, false, invalid("decision", "%s runs an older Forge agent that cannot pick this session back up; upgrade it, or use Continue", run.RunnerName)
+	}
+	if !parked {
+		if _, err := s.interactiveRun(ctx, runID, 0); err != nil {
+			return nil, false, err
+		}
+	}
+	if p, err = scanPrompt(s.DB.QueryRow(ctx, promptSelect+` WHERE id = $1 AND run_id = $2`, promptID, runID)); err != nil {
+		return nil, false, err
 	}
 	if !OneOf(in.Decision, PromptDecisions[p.Kind]) {
-		return nil, invalid("decision", "must be one of %s", strings.Join(PromptDecisions[p.Kind], ", "))
+		return nil, false, invalid("decision", "must be one of %s", strings.Join(PromptDecisions[p.Kind], ", "))
 	}
 	in.Message = strings.TrimSpace(in.Message)
 	if len(in.Message) > 20000 {
-		return nil, invalid("message", "too long")
+		return nil, false, invalid("message", "too long")
 	}
 	if in.Decision == "answer" {
 		if len(in.Answers) == 0 {
-			return nil, invalid("answers", "answer at least one question")
+			return nil, false, invalid("answers", "answer at least one question")
 		}
 		for q, a := range in.Answers {
 			if strings.TrimSpace(a) == "" || len(q) > 2000 || len(a) > 5000 {
-				return nil, invalid("answers", "every answer needs some text")
+				return nil, false, invalid("answers", "every answer needs some text")
 			}
 		}
 	} else {
@@ -199,13 +211,82 @@ func (s *Store) AnswerPrompt(ctx context.Context, runID, promptID int64, in Prom
 		if tag.RowsAffected() == 0 {
 			return fmt.Errorf("%w: this prompt was already answered", ErrConflict)
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO run_inbox (run_id, kind, data) VALUES ($1, 'answer', $2)`, runID, string(item))
+		if !parked {
+			_, err = tx.Exec(ctx, `INSERT INTO run_inbox (run_id, kind, data) VALUES ($1, 'answer', $2)`, runID, string(item))
+			return err
+		}
+		// The session that asked is gone: resume it with the answer as the reply.
+		var last int64
+		if err := tx.QueryRow(ctx, `SELECT coalesce(max(id), 0) FROM run_inbox WHERE run_id = $1`, runID).Scan(&last); err != nil {
+			return err
+		}
+		if last < run.InboxAfter {
+			last = run.InboxAfter
+		}
+		if err := requeueTx(ctx, tx, runID, last); err != nil {
+			return err
+		}
+		msg, _ := json.Marshal(map[string]string{"text": answerText(p, in)})
+		_, err = tx.Exec(ctx, `INSERT INTO run_inbox (run_id, kind, data) VALUES ($1, 'message', $2)`, runID, string(msg))
 		return err
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return scanPrompt(s.DB.QueryRow(ctx, promptSelect+` WHERE id = $1`, promptID))
+	p, err = scanPrompt(s.DB.QueryRow(ctx, promptSelect+` WHERE id = $1`, promptID))
+	return p, parked && err == nil, err
+}
+
+// answerText says an answer in words, for a session resumed after it parked
+// with the question still open (the tool call that asked is gone with it).
+func answerText(p *RunPrompt, a PromptAnswer) string {
+	note := ""
+	if a.Message != "" {
+		note = " " + a.Message
+	}
+	switch p.Kind {
+	case "question":
+		if a.Decision != "answer" {
+			return "I'm not answering that question; continue with your best judgement." + note
+		}
+		var order []string
+		var in struct {
+			Questions []struct {
+				Question string `json:"question"`
+			} `json:"questions"`
+		}
+		_ = json.Unmarshal(p.Input, &in)
+		for _, q := range in.Questions {
+			order = append(order, q.Question)
+		}
+		for q := range a.Answers {
+			if !OneOf(q, order) {
+				order = append(order, q)
+			}
+		}
+		var b strings.Builder
+		b.WriteString("My answers to your questions (the session was paused while you asked):")
+		for _, q := range order {
+			if ans, ok := a.Answers[q]; ok {
+				fmt.Fprintf(&b, "\n- %s → %s", q, ans)
+			}
+		}
+		return b.String()
+	case "plan":
+		switch a.Decision {
+		case "approve":
+			return "Plan approved: go ahead (ask before edits)."
+		case "approve_edits":
+			return "Plan approved: go ahead and make the edits."
+		}
+		return "Keep planning; don't start yet." + note
+	default:
+		switch a.Decision {
+		case "allow", "allow_always":
+			return fmt.Sprintf("Yes, go ahead with %s (it was waiting for my approval when the session paused).", p.ToolName)
+		}
+		return fmt.Sprintf("No, don't use %s.", p.ToolName) + note
+	}
 }
 
 // SendRunMessage queues a follow-up message for the session. A waiting run

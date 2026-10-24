@@ -587,6 +587,8 @@ func (s *Store) CancelRun(ctx context.Context, id int64) (*Run, error) {
 		WHERE id = $1`, id); err != nil {
 		return nil, err
 	}
+	_, _ = s.DB.Exec(ctx, `UPDATE run_prompts SET status = 'expired' WHERE run_id = $1 AND status = 'pending'
+		AND (SELECT status FROM runs WHERE id = $1) = 'cancelled'`, id)
 	return s.RunByID(ctx, id)
 }
 
@@ -754,8 +756,10 @@ func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishI
 				requeued = true
 			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE run_prompts SET status = 'expired' WHERE run_id = $1 AND status = 'pending'`, runID); err != nil {
-			return err
+		if status != "waiting" { // a parked run keeps its open question answerable
+			if _, err := tx.Exec(ctx, `UPDATE run_prompts SET status = 'expired' WHERE run_id = $1 AND status = 'pending'`, runID); err != nil {
+				return err
+			}
 		}
 		if repoID == nil {
 			return nil // an assistant session: its chat records it
@@ -795,9 +799,14 @@ func (s *Store) resumesInPlace(ctx context.Context, runnerID int64) bool {
 // requeueTx puts a waiting run back in the queue to resume its session in
 // place, reading the inbox after `inboxAfter`.
 func requeueTx(ctx context.Context, tx pgxTx, runID, inboxAfter int64) error {
-	_, err := tx.Exec(ctx, `UPDATE runs SET status = 'queued', resumes = resumes + 1, resume_session = session_id,
+	if _, err := tx.Exec(ctx, `UPDATE runs SET status = 'queued', resumes = resumes + 1, resume_session = session_id,
 		interactive = true, inbox_after = $2, awaiting = '', cancel_requested = false, error = '', exit_code = NULL,
-		finished_at = NULL WHERE id = $1`, runID, inboxAfter)
+		finished_at = NULL WHERE id = $1`, runID, inboxAfter); err != nil {
+		return err
+	}
+	// Whatever the parked session still had open was asked by a process that
+	// is gone; the resumed one asks again if it needs to.
+	_, err := tx.Exec(ctx, `UPDATE run_prompts SET status = 'expired' WHERE run_id = $1 AND status = 'pending'`, runID)
 	return err
 }
 
@@ -815,6 +824,7 @@ func (s *Store) FinishRunByUser(ctx context.Context, id int64) (*Run, error) {
 			awaiting = '', finish_requested = true WHERE id = $1 AND status IN ('waiting', 'queued')`, id); err != nil {
 			return nil, err
 		}
+		_, _ = s.DB.Exec(ctx, `UPDATE run_prompts SET status = 'expired' WHERE run_id = $1 AND status = 'pending'`, id)
 		if run.RepoID != 0 {
 			_ = logActivity(ctx, s.DB, ActivityInput{ProjectID: &run.ProjectID, TaskID: run.TaskID, RunID: &run.ID,
 				Kind: "run.finished", Summary: fmt.Sprintf("Run #%d on %s finished", run.ID, run.RepoName)})

@@ -220,11 +220,13 @@ func (s *session) isParked() bool {
 	return s.parked
 }
 
-// isWaiting: the last turn ended and nothing has started since.
+// isWaiting: the last turn ended and nothing has started since — or the
+// session is blocked on the user (a question or approval is pending). Either
+// way the time limit parks it rather than failing the run.
 func (s *session) isWaiting() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.waiting
+	return s.waiting || len(s.pending) > 0
 }
 
 // inboxRead is the last inbox item this session took in.

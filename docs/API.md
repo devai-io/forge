@@ -372,7 +372,9 @@ on the machine. A reply queues the same run again (`resumes` + 1,
 the machine resumes the session with `--resume` and reads only newer inbox
 items, so the prompt is never sent twice and the transcript continues in one
 run. A message the session had not read when it parked queues it again at
-once. Machines whose capabilities lack `resume_in_place` cannot be replied to
+once. A question or approval still open when the session parked (the time
+limit caught it there) stays answerable: the answer becomes the reply that
+resumes the session, in words ("My answers to your questions: … → …"). Machines whose capabilities lack `resume_in_place` cannot be replied to
 while waiting (Continue still makes a new run).
 
 Claude Code's own `/resume` picker leaves out sessions started with

@@ -29,12 +29,15 @@ func (s *Server) answerPrompt(w http.ResponseWriter, r *http.Request, u *store.U
 	if !decode(w, r, &in) {
 		return
 	}
-	p, err := s.store.AnswerPrompt(r.Context(), id, pid, in)
+	p, requeued, err := s.store.AnswerPrompt(r.Context(), id, pid, in)
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
 	s.inboxes.notify(id)
+	if requeued {
+		s.wakeRunner(r.Context(), id) // answered after the session parked: it resumes with the answer
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"prompt": p})
 }
 

@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/devai-io/forge/internal/store"
@@ -130,5 +131,63 @@ func TestRunStaysOpenUntilFinished(t *testing.T) {
 	expect(t, "cancel a waiting run", h.do("POST", fmt.Sprintf("/api/runs/%d/cancel", old.ID), nil, &old), 200)
 	if old.Status != "cancelled" {
 		t.Fatalf("cancelled = %+v", old)
+	}
+}
+
+// A question still open when the session parks (the time limit caught it)
+// stays answerable; the answer resumes the session in place as the reply.
+func TestAnswerAfterPark(t *testing.T) {
+	h := setup(t)
+	h.login()
+	var rn store.Runner
+	var token string
+	expect(t, "create runner", h.newRunner("desktop", &rn, &token), 201)
+	runner := &harness{t: t, srv: h.srv, client: &http.Client{}}
+	bearer := []string{"Authorization", "Bearer " + token}
+	var hb struct{ Repos []store.RunnerRepo }
+	expect(t, "heartbeat", runner.do("POST", "/api/runner/heartbeat", map[string]any{
+		"hostname": "desk", "os": "linux/amd64", "version": "test",
+		"capabilities": map[string]any{"claude": true, "permission_modes": []string{"plan"}, "interactive": true, "resume_in_place": true, "max_concurrent": 2},
+		"running":      []int64{},
+	}, &hb, bearer...), 200)
+	var repoID int64
+	for _, r := range hb.Repos {
+		if r.Path != "" {
+			repoID = r.ID
+			break
+		}
+	}
+	var run store.Run
+	expect(t, "queue", h.do("POST", "/api/runs", map[string]any{"runner_id": rn.ID, "repo_id": repoID, "kind": "agent",
+		"prompt": "Deploy?", "interactive": true}, &run), 201)
+	var claim struct{ Run store.Run }
+	expect(t, "claim", runner.do("POST", "/api/runner/claim", nil, &claim, bearer...), 200)
+	var asked struct{ Prompt store.RunPrompt }
+	expect(t, "question", runner.do("POST", fmt.Sprintf("/api/runner/runs/%d/prompts", run.ID), map[string]any{
+		"request_id": "q1", "tool_name": "AskUserQuestion",
+		"input": map[string]any{"questions": []any{map[string]any{"question": "Merge the PRs?", "options": []any{map[string]any{"label": "Yes"}, map[string]any{"label": "Hold"}}}}},
+	}, &asked, bearer...), 200)
+	// The time limit parks it with the question still open.
+	expect(t, "park", runner.do("POST", fmt.Sprintf("/api/runner/runs/%d/finish", run.ID), map[string]any{
+		"status": "waiting", "session_id": "sess-0077-cccc", "exit_code": 143}, nil, bearer...), 204)
+	var ev struct {
+		Run     store.Run
+		Prompts []store.RunPrompt
+	}
+	expect(t, "events", h.do("GET", fmt.Sprintf("/api/runs/%d/events", run.ID), nil, &ev), 200)
+	if ev.Run.Status != "waiting" || len(ev.Prompts) != 1 || ev.Prompts[0].Status != "pending" {
+		t.Fatalf("parked with the question open: run %+v prompts %+v", ev.Run, ev.Prompts)
+	}
+	expect(t, "answer", h.do("POST", fmt.Sprintf("/api/runs/%d/prompts/%d/answer", run.ID, asked.Prompt.ID),
+		map[string]any{"decision": "answer", "answers": map[string]string{"Merge the PRs?": "Hold"}}, nil), 200)
+	expect(t, "run", h.do("GET", fmt.Sprintf("/api/runs/%d", run.ID), nil, &run), 200)
+	if run.Status != "queued" || run.Resumes != 1 {
+		t.Fatalf("the answer resumes it: %+v", run)
+	}
+	expect(t, "claim the resume", runner.do("POST", "/api/runner/claim", nil, &claim, bearer...), 200)
+	var inbox struct{ Items []store.InboxItem }
+	expect(t, "inbox", runner.do("POST", fmt.Sprintf("/api/runner/runs/%d/inbox", run.ID), map[string]int64{"after": claim.Run.InboxAfter}, &inbox, bearer...), 200)
+	if len(inbox.Items) != 1 || inbox.Items[0].Kind != "message" || !strings.Contains(string(inbox.Items[0].Data), "Merge the PRs? → Hold") {
+		t.Fatalf("the answer as the reply: %+v", inbox.Items)
 	}
 }
