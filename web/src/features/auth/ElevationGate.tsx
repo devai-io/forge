@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/Button";
 import { CodeInput } from "@/components/ui/CodeInput";
 import { Dialog } from "@/components/ui/Dialog";
 import { Field, Input } from "@/components/ui/Input";
-import { useCurrentUser } from "@/lib/auth";
+import { useCurrentUser, useDeviceTrusted } from "@/lib/auth";
 
 export function ElevationGate() {
   const [resolve, setResolve] = useState<((ok: boolean) => void) | null>(null);
@@ -36,14 +36,20 @@ export function ElevationGate() {
 
 function ElevationDialog({ onDone }: { onDone: (ok: boolean) => void }) {
   const { user } = useCurrentUser();
+  const trusted = useDeviceTrusted();
   const elevate = useElevate();
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
-  const needsCode = !!user?.totp_enabled;
+  // A browser that passed two-factor before is only asked for the password —
+  // unless the server has forgotten it since (it then asks for the code).
+  const codeAsked = elevate.error instanceof ApiError && elevate.error.field === "code";
+  const needsCode = !!user?.totp_enabled && (!trusted || codeAsked);
 
   const error =
     elevate.error instanceof ApiError
-      ? elevate.error.status === 401
+      ? codeAsked && trusted && !code
+        ? "This browser needs the authenticator code again."
+        : elevate.error.status === 401
         ? needsCode
           ? "Wrong password or code."
           : "Wrong password."

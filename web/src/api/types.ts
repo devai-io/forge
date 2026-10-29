@@ -19,7 +19,8 @@ export type User = {
 };
 
 /** GET /api/auth/me, POST /api/auth/login and POST /api/setup. */
-export type MeResponse = { user: User; elevated_until: string | null };
+/** device_trusted: this browser passed two-factor before, so it is not asked for the code again. */
+export type MeResponse = { user: User; elevated_until: string | null; device_trusted?: boolean };
 
 /** GET /api/setup (no auth): true until the server has its one account. */
 export type SetupStatus = { needed: boolean };
@@ -805,6 +806,7 @@ export type SecurityKind =
   | "totp_disabled"
   | "session_revoked"
   | "sessions_revoked_others"
+  | "devices_forgotten"
   | "vault_reveal"
   | "vault_download"
   | "vault_bundle"

@@ -481,6 +481,13 @@ type Dashboard = { /* … as above, plus */ checkup: CheckupSummary | null };
 - **Elevation** (step-up): some actions need the password (and TOTP code when on)
   re-entered within the last 10 minutes. Without it they answer
   `403 {"code":"elevation_required"}`; the UI then asks and retries.
+- **Trusted devices**: a correct TOTP code (at login, elevation or enrolment)
+  sets a `forge_device` cookie (HttpOnly, SameSite=Strict, path `/api/auth`,
+  400 days; only its hash is stored). While it is valid — used within 180
+  days — that browser signs in and elevates with the password alone. Changing
+  the password or "sign out everywhere else" forgets every other device; a
+  reset by e-mail, turning 2FA off and `DELETE /api/auth/trusted-devices`
+  forget them all. `login` and `me` answer `device_trusted: boolean`.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
@@ -488,6 +495,7 @@ type Dashboard = { /* … as above, plus */ checkup: CheckupSummary | null };
 | POST | /api/auth/totp/setup | – (elevation required) | `{secret, otpauth_url}` — pending until enabled |
 | POST | /api/auth/totp/enable | `{code}` | `204` |
 | POST | /api/auth/totp/disable | `{password, code}` | `204` |
+| DELETE | /api/auth/trusted-devices | – (elevation required) | `{forgotten: number}` — every browser, this one too, is asked for the code again. Logged as `devices_forgotten` |
 | PATCH | /api/auth/me | also `checkup_time`, `checkup_email` | `{user}` |
 
 ## Vault — encrypted secrets and files

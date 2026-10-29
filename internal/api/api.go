@@ -154,6 +154,7 @@ func (s *Server) Handler() http.Handler {
 	h("POST /api/auth/password", s.authed(s.changePassword))
 	h("GET /api/auth/sessions", s.authed(s.listSessions))
 	h("POST /api/auth/sessions/revoke-others", s.authed(s.revokeOtherSessions))
+	h("DELETE /api/auth/trusted-devices", s.authed(s.elevated(s.forgetTrustedDevices)))
 	h("GET /api/auth/security", s.authed(s.securityLog))
 	h("GET /api/system", s.authed(s.systemFacts))
 	h("GET /api/provider", s.authed(s.getProvider))

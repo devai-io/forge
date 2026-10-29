@@ -510,6 +510,32 @@ func TestTwoFactorLogin(t *testing.T) {
 	next, _ := auth.TOTPCode(setup.Secret, time.Now().Add(30*time.Second))
 	expect(t, "next code", fresh.do("POST", "/api/auth/login",
 		map[string]string{"username": "ada", "password": testPassword, "code": next}, nil), 200)
+
+	// That browser is trusted now: the password alone signs in and confirms.
+	expect(t, "logout", fresh.do("POST", "/api/auth/logout", nil, nil), 204)
+	expect(t, "trusted device, password only", fresh.do("POST", "/api/auth/login",
+		map[string]string{"username": "ada", "password": testPassword}, nil), 200)
+	expect(t, "elevate without a code", fresh.do("POST", "/api/auth/elevate", map[string]string{"password": testPassword}, nil), 200)
+	var me struct {
+		DeviceTrusted bool `json:"device_trusted"`
+	}
+	expect(t, "me", fresh.do("GET", "/api/auth/me", nil, &me), 200)
+	if !me.DeviceTrusted {
+		t.Fatal("me: device_trusted should be true")
+	}
+	// The browser that enrolled is trusted too (it typed the code).
+	expect(t, "enrolling browser elevates without a code", h.do("POST", "/api/auth/elevate", map[string]string{"password": testPassword}, nil), 200)
+
+	// "Sign out everywhere else" forgets the other browsers, not this one.
+	expect(t, "revoke others", h.do("POST", "/api/auth/sessions/revoke-others", nil, nil), 200)
+	expect(t, "forgotten device asks again", fresh.do("POST", "/api/auth/login",
+		map[string]string{"username": "ada", "password": testPassword}, &e), 401)
+	if e["error"]["code"] != "totp_required" {
+		t.Fatalf("error = %v", e)
+	}
+	expect(t, "kept device", h.do("POST", "/api/auth/elevate", map[string]string{"password": testPassword}, nil), 200)
+	expect(t, "forget all", h.do("DELETE", "/api/auth/trusted-devices", nil, nil), 200)
+	expect(t, "now this one asks too", h.do("POST", "/api/auth/elevate", map[string]string{"password": testPassword}, nil), 422)
 }
 
 func TestCheckupAndItemTask(t *testing.T) {

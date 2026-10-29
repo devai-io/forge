@@ -172,3 +172,42 @@ func NextCheckup(now time.Time, tz, hhmm string, ranToday bool) time.Time {
 	}
 	return next
 }
+
+// TrustDevice remembers a browser that just passed two-factor.
+func (s *Store) TrustDevice(ctx context.Context, userID int64, tokenHash []byte, userAgent, ip string) error {
+	_, err := s.DB.Exec(ctx, `INSERT INTO trusted_devices (user_id, token_hash, user_agent, ip) VALUES ($1, $2, $3, $4)`,
+		userID, tokenHash, truncate(userAgent, 300), truncate(ip, 64))
+	return err
+}
+
+// TrustedDevice says whether the cookie is a device the user trusted within
+// maxIdle, and marks it used.
+func (s *Store) TrustedDevice(ctx context.Context, userID int64, tokenHash []byte, maxIdle time.Duration) (bool, error) {
+	tag, err := s.DB.Exec(ctx, `UPDATE trusted_devices SET last_used_at = now()
+		WHERE user_id = $1 AND token_hash = $2 AND last_used_at > ts_add(now(), -$3)`, userID, tokenHash, maxIdle.Seconds())
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ForgetDevices drops the user's trusted devices except keep (a token hash;
+// nil keeps none), returning how many went.
+func (s *Store) ForgetDevices(ctx context.Context, userID int64, keep []byte) (int, error) {
+	if keep == nil {
+		keep = []byte{}
+	}
+	tag, err := s.DB.Exec(ctx, `DELETE FROM trusted_devices WHERE user_id = $1 AND token_hash <> $2`, userID, keep)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// CountTrustedDevices is how many devices skip the two-factor code.
+func (s *Store) CountTrustedDevices(ctx context.Context, userID int64, maxIdle time.Duration) (int, error) {
+	var n int
+	err := s.DB.QueryRow(ctx, `SELECT count(*) FROM trusted_devices WHERE user_id = $1 AND last_used_at > ts_add(now(), -$2)`,
+		userID, maxIdle.Seconds()).Scan(&n)
+	return n, err
+}

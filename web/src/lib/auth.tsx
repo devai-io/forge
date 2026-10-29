@@ -53,6 +53,11 @@ export function useCurrentUser(): { user: User | null | undefined; loading: bool
   return { user: null, loading: false, failed: !unauthorized, retry };
 }
 
+/** This browser passed two-factor before: sign-in and step-up skip the code. */
+export function useDeviceTrusted(): boolean {
+  return useMe().data?.device_trusted ?? false;
+}
+
 /** When the last password re-entry stops counting for step-up actions (null = not elevated). */
 export function useElevatedUntil(): string | null {
   return useMe().data?.elevated_until ?? null;

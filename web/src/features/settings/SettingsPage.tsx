@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "@/api/client";
 import {
   useChangePassword,
+  useForgetTrustedDevices,
   useRevokeSession,
   useSessions,
   useTotpDisable,
@@ -20,7 +21,7 @@ import { RelativeTime } from "@/components/ui/RelativeTime";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { Segmented } from "@/components/ui/Tabs";
 import { useToast } from "@/components/ui/Toast";
-import { useUser } from "@/lib/auth";
+import { useDeviceTrusted, useUser } from "@/lib/auth";
 import { passwordStrength } from "@/lib/password";
 import { useTheme, type ThemePref } from "@/lib/theme";
 import { describeAgent } from "@/lib/security";
@@ -483,9 +484,11 @@ function DisableTotp() {
       }}
     >
       <p className="text-[13px] text-fg-2">
-        Sign-in and sensitive actions ask for a code from your authenticator app. To turn it off, confirm with your
-        password and a current code.
+        A browser is asked for a code from your authenticator app the first time it signs in or confirms a sensitive
+        action; after that it is trusted and the password is enough. To turn two-factor off, confirm with your password
+        and a current code.
       </p>
+      <TrustedDevices />
       <input type="text" autoComplete="username" value={user.username} className="hidden" readOnly aria-hidden tabIndex={-1} />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_10rem_auto] sm:items-end">
         <Field label="Password" error={wrong ? "Wrong password or code" : undefined}>
@@ -506,6 +509,35 @@ function DisableTotp() {
         </Button>
       </div>
     </form>
+  );
+}
+
+/** Whether this browser skips the code, and a way to make every browser ask again. */
+function TrustedDevices() {
+  const trusted = useDeviceTrusted();
+  const forget = useForgetTrustedDevices();
+  const toast = useToast();
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line px-3 py-2 text-[13px]">
+      <span className="flex items-center gap-2 text-fg-2">
+        <Laptop className="size-3.5 text-fg-3" aria-hidden />
+        {trusted ? "This browser is trusted: no code needed here." : "This browser will be asked for the code."}
+      </span>
+      <Button
+        size="sm"
+        variant="ghost"
+        loading={forget.isPending}
+        onClick={() =>
+          forget.mutate(undefined, {
+            onSuccess: ({ forgotten }) =>
+              toast.success(`Every browser asks for the code again (${forgotten} forgotten)`),
+            onError: (e) => toast.error(e),
+          })
+        }
+      >
+        Ask for the code everywhere
+      </Button>
+    </div>
   );
 }
 

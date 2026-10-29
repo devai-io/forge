@@ -214,6 +214,15 @@ export function useElevate() {
   });
 }
 
+/** Every browser is asked for the two-factor code again, this one included. */
+export function useForgetTrustedDevices() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.del<{ forgotten: number }>("/auth/trusted-devices"),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.me }),
+  });
+}
+
 export function useTotpEnable() {
   const qc = useQueryClient();
   return useMutation({

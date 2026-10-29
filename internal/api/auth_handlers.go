@@ -44,7 +44,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "wrong username or password")
 		return
 	}
-	if u.TOTPEnabled {
+	// A browser that passed two-factor before skips the code.
+	trusted := u.TOTPEnabled && s.deviceTrusted(r, u)
+	if u.TOTPEnabled && !trusted {
 		if strings.TrimSpace(in.Code) == "" {
 			// The password was right; say what is missing. Not counted as a
 			// failure, or the first half of every 2FA login would be one.
@@ -58,6 +60,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "wrong code")
 			return
 		}
+		s.trustDevice(w, r, u)
 	}
 	s.logins.Reset(ip)
 
@@ -73,15 +76,18 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("known devices", "err", err)
 	}
-	kind := "login"
+	kind, detail := "login", ""
 	if !known && err == nil {
 		kind = "login_new_device"
 	}
-	_ = s.store.LogSecurity(r.Context(), kind, "", ip, r.UserAgent(), sid)
+	if trusted {
+		detail = "trusted device, no two-factor code"
+	}
+	_ = s.store.LogSecurity(r.Context(), kind, detail, ip, r.UserAgent(), sid)
 	if kind == "login_new_device" {
 		s.notifyNewDevice(u, ip, r.UserAgent())
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": u, "elevated_until": nil})
+	writeJSON(w, http.StatusOK, map[string]any{"user": u, "elevated_until": nil, "device_trusted": u.TOTPEnabled})
 }
 
 // notifyNewDevice e-mails the account about a sign-in from an address and
@@ -138,8 +144,9 @@ func totpAAD(userID int64) []byte { return []byte(fmt.Sprintf("forge-totp:%d", u
 
 const elevationTTL = 10 * time.Minute
 
-// elevate re-confirms the password (and code) and opens a 10-minute window
-// for sensitive actions on this session only.
+// elevate re-confirms the password (and the code, on a browser that has not
+// passed two-factor before) and opens a 10-minute window for sensitive
+// actions on this session only.
 func (s *Server) elevate(w http.ResponseWriter, r *http.Request, u *store.User) {
 	var in struct {
 		Password string `json:"password"`
@@ -159,11 +166,14 @@ func (s *Server) elevate(w http.ResponseWriter, r *http.Request, u *store.User) 
 		writeErr(w, r, &store.ValidationError{Field: "password", Message: "is not your password"})
 		return
 	}
-	if u.TOTPEnabled && !s.checkTOTP(r, u, in.Code) {
-		s.logins.Record(ip)
-		s.sec(r, "elevate_failed", "wrong two-factor code")
-		writeErr(w, r, &store.ValidationError{Field: "code", Message: "wrong or reused code"})
-		return
+	if u.TOTPEnabled && !s.deviceTrusted(r, u) {
+		if !s.checkTOTP(r, u, in.Code) {
+			s.logins.Record(ip)
+			s.sec(r, "elevate_failed", "wrong two-factor code")
+			writeErr(w, r, &store.ValidationError{Field: "code", Message: "wrong or reused code"})
+			return
+		}
+		s.trustDevice(w, r, u)
 	}
 	until, err := s.store.ElevateSession(r.Context(), sessionID(r), elevationTTL)
 	if err != nil {
@@ -228,6 +238,7 @@ func (s *Server) totpEnable(w http.ResponseWriter, r *http.Request, u *store.Use
 		return
 	}
 	slog.Info("two-factor enabled", "user", u.Username)
+	s.trustDevice(w, r, u) // the code was just typed here
 	s.sec(r, "totp_enabled", "")
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -254,6 +265,7 @@ func (s *Server) totpDisable(w http.ResponseWriter, r *http.Request, u *store.Us
 		writeErr(w, r, err)
 		return
 	}
+	s.forgetDevices(r, u.ID, false)
 	slog.Warn("two-factor disabled", "user", u.Username, "ip", ip)
 	s.sec(r, "totp_disabled", "")
 	w.WriteHeader(http.StatusNoContent)
@@ -281,7 +293,8 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request, u *store.User) {
 	if info := sessionInfo(r); info.Elevated() {
 		until = info.ElevatedUntil
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": u, "elevated_until": until})
+	writeJSON(w, http.StatusOK, map[string]any{"user": u, "elevated_until": until,
+		"device_trusted": u.TOTPEnabled && s.deviceTrusted(r, u)})
 }
 
 func (s *Server) updateMe(w http.ResponseWriter, r *http.Request, u *store.User) {
@@ -345,6 +358,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, u *store
 		writeErr(w, r, err)
 		return
 	}
+	s.forgetDevices(r, u.ID, true)
 	slog.Info("password changed", "user", u.Username)
 	s.sec(r, "password_changed", "other sessions signed out")
 	w.WriteHeader(http.StatusNoContent)
@@ -434,6 +448,7 @@ func (s *Server) reset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
+	s.forgetDevices(r, userID, false)
 	slog.Info("password reset via e-mail link", "user_id", userID)
 	_ = s.store.LogSecurity(r.Context(), "password_reset", "via e-mail link; all sessions signed out", s.clientIP(r), r.UserAgent(), 0)
 	s.clearCookie(w)
@@ -471,6 +486,7 @@ func (s *Server) revokeOtherSessions(w http.ResponseWriter, r *http.Request, u *
 		writeErr(w, r, err)
 		return
 	}
+	s.forgetDevices(r, u.ID, true) // a stolen laptop must be asked for the code again
 	s.sec(r, "sessions_revoked_others", fmt.Sprintf("%d session(s)", n))
 	writeJSON(w, http.StatusOK, map[string]int{"revoked": n})
 }
