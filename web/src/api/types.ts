@@ -418,6 +418,7 @@ export type Dashboard = {
   daily: DayCount[];
   focus: Task[];
   overdue: Task[];
+  in_progress: Task[]; // every task being worked on, in any project
   projects: Project[];
   endpoints_down: Endpoint[];
   endpoints_warning: Endpoint[];
@@ -751,6 +752,26 @@ export type TerminalHost = {
 
 export type TerminalHosts = { hosts: TerminalHost[]; default_runner_id: number | null };
 
+/** One project's long-running Claude session on the master (F-<Project>, Remote Control on). */
+export type ProjectSessionState = "running" | "starting" | "stopped" | "missing" | "offline";
+export type ProjectSession = {
+  project_key: string;
+  project_name: string;
+  project_color: string;
+  name: string; // the tmux session, and the name Remote Control shows
+  dir: string;
+  state: ProjectSessionState;
+  url: string | null; // the claude.ai/code link, once Claude has printed it
+  attached: number;
+  activity: string | null;
+};
+export type ProjectSessionsSettings = { enabled: boolean; skip_permissions: boolean };
+export type ProjectSessions = {
+  settings: ProjectSessionsSettings;
+  host: { runner_id: number; runner_name: string; online: boolean; skip_permissions: boolean } | null;
+  sessions: ProjectSession[];
+};
+
 // What a new terminal session runs: Claude Code, Codex (both with the Forge context) or a plain shell.
 export type SessionStart = "claude" | "codex" | "shell";
 
@@ -793,6 +814,7 @@ export type SecurityKind =
   | "terminal_attach"
   | "terminal_keys"
   | "terminal_create"
+  | "project_sessions"
   | "code_open"
   | "setup"
   | "runner_created"

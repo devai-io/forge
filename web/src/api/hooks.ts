@@ -42,6 +42,8 @@ import type {
   RunnerRole,
   NewSessionInput,
   TerminalHosts,
+  ProjectSessions,
+  ProjectSessionsSettings,
   VaultAudit,
   VaultInput,
   VaultItem,
@@ -117,6 +119,7 @@ export const keys = {
   checkupLatest: ["checkup", "latest"] as const,
   checkup: (id: number) => ["checkup", id] as const,
   terminalHosts: ["terminal-hosts"] as const,
+  projectSessions: ["project-sessions"] as const,
   codeStatus: ["code-status"] as const,
   security: (kind: string, limit: number) => ["security", kind, limit] as const,
   system: ["system"] as const,
@@ -1123,6 +1126,26 @@ export function useTerminalHosts(options: { enabled?: boolean; refetchInterval?:
       isElevationError(query.state.error) ? false : (options.refetchInterval ?? 5_000),
     enabled: options.enabled ?? true,
     retry: false,
+  });
+}
+
+export function useProjectSessions() {
+  return useQuery({
+    queryKey: keys.projectSessions,
+    queryFn: () => api.get<ProjectSessions>("/project-sessions"),
+    refetchInterval: 15_000,
+  });
+}
+
+export function useUpdateProjectSessions() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: Partial<ProjectSessionsSettings>) => api.patch<ProjectSessions>("/project-sessions", patch),
+    onSuccess: (v) => {
+      qc.setQueryData(keys.projectSessions, v);
+      // The first sessions start in the background; show them as they come up.
+      setTimeout(() => void qc.invalidateQueries({ queryKey: keys.projectSessions }), 4_000);
+    },
   });
 }
 

@@ -383,6 +383,7 @@ func serve(ctx context.Context, cfg config.Config, database *db.DB, st *store.St
 	go app.RunTelegram(ctx)
 	go app.RunFocus(ctx)
 	go app.RunBots(ctx)
+	go app.RunProjectSessions(ctx)
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,

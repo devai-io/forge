@@ -426,13 +426,15 @@ type DashboardStats struct {
 }
 
 type Dashboard struct {
-	Today         string         `json:"today"`
-	Stats         DashboardStats `json:"stats"`
-	Daily         []DayCount     `json:"daily"`
-	Focus         []Task         `json:"focus"`
-	Overdue       []Task         `json:"overdue"`
-	Projects      []Project      `json:"projects"`
-	EndpointsDown []Endpoint     `json:"endpoints_down"`
+	Today   string         `json:"today"`
+	Stats   DashboardStats `json:"stats"`
+	Daily   []DayCount     `json:"daily"`
+	Focus   []Task         `json:"focus"`
+	Overdue []Task         `json:"overdue"`
+	// InProgress: every task being worked on, in any project.
+	InProgress    []Task     `json:"in_progress"`
+	Projects      []Project  `json:"projects"`
+	EndpointsDown []Endpoint `json:"endpoints_down"`
 	// EndpointsWarning: failing, still being rechecked before "down".
 	EndpointsWarning []Endpoint      `json:"endpoints_warning"`
 	Runners          []Runner        `json:"runners"`

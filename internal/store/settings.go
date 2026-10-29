@@ -219,3 +219,22 @@ func (s *Store) TelegramChat(ctx context.Context) int64 {
 func (s *Store) SetTelegramChat(ctx context.Context, chatID int64) error {
 	return s.putSetting(ctx, "telegram_chat", map[string]int64{"chat_id": chatID})
 }
+
+// ProjectSessionsSettings keep one long-running Claude Code session per
+// project on the master machine, with Remote Control on, named F-<Project>
+// (see internal/api/project_sessions.go). SkipPermissions starts them with
+// --dangerously-skip-permissions where the machine allows bypassPermissions.
+type ProjectSessionsSettings struct {
+	Enabled         bool `json:"enabled"`
+	SkipPermissions bool `json:"skip_permissions"`
+}
+
+func (s *Store) ProjectSessionsSettings(ctx context.Context) (ProjectSessionsSettings, error) {
+	var v ProjectSessionsSettings
+	_, err := s.getSetting(ctx, "project_sessions", &v)
+	return v, err
+}
+
+func (s *Store) SetProjectSessionsSettings(ctx context.Context, v ProjectSessionsSettings) error {
+	return s.putSetting(ctx, "project_sessions", v)
+}

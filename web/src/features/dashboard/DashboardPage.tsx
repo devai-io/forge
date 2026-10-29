@@ -7,7 +7,6 @@ import {
   Ban,
   Bot,
   CalendarCheck,
-  CircleAlert,
   CircleCheck,
   Circle,
   Rocket,
@@ -18,7 +17,6 @@ import {
   Plus,
   Star,
   TrendingUp,
-  TriangleAlert,
   WifiOff,
 } from "lucide-react";
 import { useState } from "react";
@@ -32,7 +30,6 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { useToast } from "@/components/ui/Toast";
 import { RunRow } from "@/features/agents/RunBits";
 import { roleOf } from "@/lib/agents";
-import { retryLabel } from "@/lib/infra";
 import { CheckupPanel } from "@/features/checkup/CheckupPage";
 import { ProjectCard } from "@/features/projects/ProjectCard";
 import { useShell } from "@/features/shell/context";
@@ -42,6 +39,7 @@ import { useUser } from "@/lib/auth";
 import { greeting, hourInTz, longDate } from "@/lib/format";
 import { dismissGettingStarted, docsRead, gettingStartedDismissed, gettingStartedSteps } from "@/lib/gettingStarted";
 import { ActivityFeed } from "./ActivityFeed";
+import { TopWidgets } from "./TopWidgets";
 import { CompletionsChart, GoalRing, StatTile } from "./charts";
 
 export function DashboardPage() {
@@ -64,6 +62,7 @@ export function DashboardPage() {
         </div>
       </div>
 
+      <TopWidgets d={d} />
       {d.runners.length === 0 ? <GettingStarted d={d} /> : null}
       <Alerts d={d} />
       <CheckupPanel summary={d.checkup ?? null} />
@@ -179,32 +178,7 @@ function Alerts({ d }: { d: Dashboard }) {
   // Only the master is expected to be always on; the Mac and laptops sleep.
   const offline = d.runners.filter((r) => !r.online && roleOf(r) === "master");
   const items: { key: string; icon: React.ReactNode; text: React.ReactNode; to: string }[] = [];
-  for (const e of d.endpoints_down) {
-    items.push({
-      key: `e${e.id}`,
-      icon: <CircleAlert className="size-4 text-critical" aria-hidden />,
-      text: (
-        <>
-          <strong className="font-semibold">{e.name}</strong> is down
-          {e.last_code ? ` (HTTP ${e.last_code})` : e.last_error ? ` — ${e.last_error}` : ""} · {e.project_key}
-        </>
-      ),
-      to: "/infra",
-    });
-  }
-  for (const e of d.endpoints_warning ?? []) {
-    items.push({
-      key: `w${e.id}`,
-      icon: <TriangleAlert className="size-4 text-warning" aria-hidden />,
-      text: (
-        <>
-          <strong className="font-semibold">{e.name}</strong> is failing ({retryLabel(e)})
-          {e.last_code ? ` — HTTP ${e.last_code}` : e.last_error ? ` — ${e.last_error}` : ""} · {e.project_key}
-        </>
-      ),
-      to: `/p/${e.project_key}`,
-    });
-  }
+  // Endpoints are in the Services widget above.
   if (offline.length) {
     items.push({
       key: "runners",

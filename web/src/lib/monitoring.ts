@@ -162,3 +162,56 @@ export function scopeMonitoring(m: Monitoring, scope: MonitoringScope): Monitori
     },
   };
 }
+
+/** One service in trouble, for the dashboard's status widget. */
+export type ServiceIssue = { key: string; level: "warn" | "fail"; title: string; detail: string; to: string };
+
+/**
+ * Every service that is failing or about to: endpoints (down, or failing and
+ * being rechecked), hosts not reporting or out of disk, Nomad service jobs
+ * not running, and Grafana alerts — the same rules as the check-up. Failing
+ * first.
+ */
+export function serviceIssues(
+  endpoints: { down: Endpoint[]; warning: Endpoint[] },
+  mon: Monitoring | undefined,
+): ServiceIssue[] {
+  const out: ServiceIssue[] = [];
+  const why = (e: Endpoint) => (e.last_code ? `HTTP ${e.last_code}` : e.last_error || "");
+  for (const e of endpoints.down)
+    out.push({ key: `e${e.id}`, level: "fail", title: `${e.name} is down`, detail: [e.project_key, why(e)].filter(Boolean).join(" · "), to: `/p/${e.project_key}` });
+  for (const e of endpoints.warning)
+    out.push({ key: `w${e.id}`, level: "warn", title: `${e.name} is failing`, detail: [e.project_key, why(e), "rechecking"].filter(Boolean).join(" · "), to: `/p/${e.project_key}` });
+  if (mon) {
+    for (const h of mon.hosts) {
+      if (!h.up) out.push({ key: `h${h.name}`, level: "fail", title: `${h.name} is not reporting`, detail: "host", to: "/monitoring" });
+      else if (usageLevel(h.disk_pct) !== "ok")
+        out.push({ key: `d${h.name}`, level: usageLevel(h.disk_pct) as "warn" | "fail", title: `${h.name} disk ${Math.round(h.disk_pct ?? 0)}% full`, detail: "host", to: "/monitoring" });
+    }
+    for (const n of mon.nomad) {
+      if (!n.reachable) {
+        out.push({ key: `n${n.host}`, level: "fail", title: `Nomad on ${n.host} is unreachable`, detail: n.error, to: "/monitoring" });
+        continue;
+      }
+      for (const j of n.jobs) {
+        if (j.type !== "service" && j.type !== "system") continue; // batch jobs are "dead" when done
+        const key = `j${n.host}:${j.id}`;
+        if (j.status === "dead") out.push({ key, level: "fail", title: `${j.id} is dead`, detail: `Nomad · ${n.host}`, to: "/monitoring" });
+        else if (j.running === 0) out.push({ key, level: "fail", title: `${j.id} has nothing running`, detail: `Nomad · ${n.host} · ${j.status}`, to: "/monitoring" });
+        else if (j.queued > 0) out.push({ key, level: "warn", title: `${j.id} has ${j.queued} waiting`, detail: `Nomad · ${n.host}`, to: "/monitoring" });
+      }
+    }
+    for (const a of mon.grafana.alerts) {
+      if (a.state === "normal") continue;
+      const where = a.labels?.host || a.labels?.instance || "";
+      out.push({
+        key: `a${a.name}:${where}`,
+        level: a.state === "firing" && (a.severity === "critical" || a.severity === "") ? "fail" : "warn",
+        title: where ? `${a.name} on ${where}` : a.name,
+        detail: `alert · ${a.state}`,
+        to: "/monitoring",
+      });
+    }
+  }
+  return out.sort((a, b) => Number(a.level === "warn") - Number(b.level === "warn"));
+}

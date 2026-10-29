@@ -82,6 +82,9 @@ type Server struct {
 	botLocks  focusLocks
 	botTick   time.Duration
 	botSettle time.Duration
+
+	// Project sessions (project_sessions.go): what Forge started, and when.
+	projectSessions projectSessionState
 }
 
 // Deps are the optional collaborators; a zero value turns the feature off
@@ -117,6 +120,8 @@ func New(cfg config.Config, st *store.Store, m *mail.Mailer, mon *monitor.Monito
 		botSettle:     botSettle,
 	}
 	s.tgs.following = map[int64]bool{}
+	s.projectSessions.started = map[string]time.Time{}
+	s.projectSessions.urls = map[string]string{}
 	s.tg = telegram.New(s.telegramToken)
 	s.jev = jev.New(s.providerKey, s.jevConfig)
 	s.jev.AppURL = cfg.PublicURL
@@ -311,6 +316,8 @@ func (s *Server) Handler() http.Handler {
 	h("DELETE /api/runner/memories/{id}", s.runnerAuth(s.runnerForget))
 
 	h("GET /api/terminal/hosts", s.authed(s.terminalHosts))
+	h("GET /api/project-sessions", s.authed(s.getProjectSessions))
+	h("PATCH /api/project-sessions", s.authed(s.elevated(s.updateProjectSessions)))
 	h("GET /api/terminal/{runner}/attach", s.authed(s.elevated(s.terminalAttach)))
 	h("POST /api/terminal/{runner}/sessions", s.authed(s.elevated(s.terminalCreate)))
 	h("DELETE /api/terminal/{runner}/sessions/{name}", s.authed(s.elevated(s.terminalKill)))

@@ -26,6 +26,7 @@ export const SECURITY_KINDS: Record<SecurityKind, KindMeta> = {
   terminal_attach: { label: "Terminal attached", tone: "accent", group: "sensitive" },
   terminal_keys: { label: "Keys sent to a session", tone: "accent", group: "sensitive" },
   terminal_create: { label: "Session started", tone: "accent", group: "sensitive" },
+  project_sessions: { label: "Project sessions switched", tone: "accent", group: "sensitive" },
   code_open: { label: "VS Code opened", tone: "accent", group: "sensitive" },
   setup: { label: "Account created (first-run setup)", tone: "accent", group: "account" },
   runner_created: { label: "Machine added", tone: "neutral", group: "machines" },

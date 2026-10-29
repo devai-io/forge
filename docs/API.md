@@ -214,6 +214,7 @@ type Dashboard = {
   daily: DayCount[];           // last 28 days, oldest first, includes today
   focus: Task[];               // focus = true and not done, ordered by priority then due date
   overdue: Task[];             // not done, due before today (max 20)
+  in_progress: Task[];         // status in_progress, any project (not archived), latest change first (max 50)
   projects: Project[];         // status != archived, ordered by priority, then name
   endpoints_down: Endpoint[];
   endpoints_warning: Endpoint[]; // failing, being rechecked (not down yet)
@@ -716,12 +717,49 @@ equal the app's own origin. Errors before the upgrade are ordinary JSON errors
 Session names: `[A-Za-z0-9_.-]{1,40}`; a name given for a session that exists
 just returns it.
 
+### Project sessions (one Claude per project, Remote Control on)
+
+When on, the server keeps one long-running Claude Code session per project on
+the master: tmux session `F-<Project name>` (unsafe characters become `-`),
+started as `claude --remote-control F-<Project>` (plus
+`--dangerously-skip-permissions` when `skip_permissions` is on and the machine
+allows `bypassPermissions`) in the project's folder — its one repo, else the
+folder all its repos share unless that folder also holds another project's
+repo (then its first repo). Projects with no repo path are left out. Once a
+minute: a missing session is started; one whose Claude has exited, with
+nobody attached, is killed and started again (3 minutes' grace after a
+start); a running one has its Remote Control link (`https://claude.ai/code/session_…`)
+read off its scrollback once. The `F-` prefix is Forge's. Needs agent v0.1.34+
+(older agents start a plain Claude and report no link).
+
+```ts
+type ProjectSession = {
+  project_key: string; project_name: string; project_color: string;
+  name: string;              // F-<Project>: the tmux session and the Remote Control name
+  dir: string;
+  state: "running" | "starting" | "stopped" | "missing" | "offline";
+  url: string | null;        // the claude.ai/code link, once read
+  attached: number;          // browsers/terminals attached to the tmux session
+  activity: string | null;
+};
+type ProjectSessions = {
+  settings: { enabled: boolean; skip_permissions: boolean }; // off by default
+  host: { runner_id: number; runner_name: string; online: boolean; skip_permissions: boolean } | null; // the master
+  sessions: ProjectSession[];
+};
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | /api/project-sessions | – | `ProjectSessions` |
+| PATCH | /api/project-sessions | `{enabled?, skip_permissions?}` (**elevated**) | `ProjectSessions`; turning on starts the missing sessions right away. Logged as `project_sessions` |
+
 ## Runner side (Bearer runner token)
 
 | Method | Path | Notes |
 |---|---|---|
 | POST | /api/runner/heartbeat | body gains `tmux: TmuxSession[]` (without the project fields); capabilities `terminal: true` |
-| GET (WebSocket) | /api/runner/control | server → runner JSON: `{"type":"open","channel","session","cols","rows"}`, `{"type":"create","id","session","cwd","start","context","prompt"}`, `{"type":"capture","id","session","lines"}`, `{"type":"keys","id","session","text","enter"}`, `{"type":"kill","id","session"}`; runner → server `{"type":"result","id","ok","error","text"}` |
+| GET (WebSocket) | /api/runner/control | server → runner JSON: `{"type":"open","channel","session","cols","rows"}`, `{"type":"create","id","session","cwd","start","context","prompt","skip_permissions","resume","remote_control"}` (`remote_control`: start Claude with `--remote-control <name>`), `{"type":"rc_url","id","session"}` (result `text`: the first `https://claude.ai/code/session_…` in the pane's scrollback, or ""), `{"type":"capture","id","session","lines"}`, `{"type":"keys","id","session","text","enter"}`, `{"type":"kill","id","session"}`; runner → server `{"type":"result","id","ok","error","text"}` |
 | GET (WebSocket) | /api/runner/tty/{channel} | the runner's end of one terminal: binary = bytes, text = the same JSON control frames |
 | GET | /api/runner/context | query `cwd`; `{project_key, repo_name, markdown}` — compact Forge context for a Claude session started in that directory (404 when the path belongs to no project) |
 | GET | /api/runner/projects | `{projects: [{key, name, status, summary}]}` |

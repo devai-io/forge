@@ -256,6 +256,9 @@ type controlMsg struct {
 	// Resume starts Claude with --resume <session> (Codex: `codex resume`),
 	// in Cwd: an agent run's session, taken over in a terminal.
 	Resume string `json:"resume"`
+	// RemoteControl starts Claude with --remote-control <name>: the session
+	// can be driven from claude.ai/code and the Claude app under that name.
+	RemoteControl string `json:"remote_control"`
 	// SSH is the destination a Start "ssh" session connects to.
 	SSH     string          `json:"ssh"`
 	Name    string          `json:"name"`
@@ -305,6 +308,9 @@ func (r *Runner) serveControl(ctx context.Context, c *websocket.Conn) {
 				reply(m.ID, "", r.sendKeys(ctx, m))
 			case "create":
 				reply(m.ID, "", r.createSession(ctx, m))
+			case "rc_url":
+				u, err := r.remoteControlURL(ctx, m)
+				reply(m.ID, u, err)
 			case "code_folder":
 				p, err := r.codeFolder(m.Folder)
 				reply(m.ID, p, err)
@@ -424,12 +430,29 @@ func (r *Runner) createSession(ctx context.Context, m controlMsg) error {
 		if m.SkipPermissions {
 			line += " --dangerously-skip-permissions"
 		}
+		if m.RemoteControl != "" {
+			line += " --remote-control " + shellQuote(m.RemoteControl)
+		}
 	}
 	if strings.TrimSpace(m.Prompt) != "" && m.Resume == "" {
 		line += " " + shellQuote(m.Prompt)
 	}
 	time.Sleep(300 * time.Millisecond) // let the shell print its prompt
 	return r.sendKeys(ctx, controlMsg{Session: m.Session, Text: line, Enter: true})
+}
+
+// rcURL is the session link Claude Code prints once Remote Control is on.
+var rcURL = regexp.MustCompile(`https://claude\.ai/code/session_[A-Za-z0-9]+`)
+
+// remoteControlURL finds the Remote Control link in the pane's scrollback:
+// the first one, which Claude Code prints under its banner, not one that came
+// up later in the conversation ("" while there is none yet).
+func (r *Runner) remoteControlURL(ctx context.Context, m controlMsg) (string, error) {
+	out, err := r.tmux(ctx, "capture-pane", "-p", "-J", "-t", target(m), "-S", "-", "-E", "-")
+	if err != nil {
+		return "", err
+	}
+	return rcURL.FindString(out), nil
 }
 
 // ── One terminal ──────────────────────────────────────────────────────────
