@@ -215,6 +215,10 @@ func TestCodexInteractiveFollowup(t *testing.T) {
 			case <-waiting:
 			case <-r.Context().Done():
 				return
+			case <-time.After(30 * time.Second):
+				// Never hold the server open: srv.Close waits for this handler.
+				w.WriteHeader(204)
+				return
 			}
 			polls++
 			if polls == 1 {
@@ -231,7 +235,8 @@ func TestCodexInteractiveFollowup(t *testing.T) {
 	r := New(cfg)
 	ship := newShipper(r.client, 1)
 	defer ship.close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Generous: the release image runs this under arm64 emulation.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	rep := r.runCodex(ctx, claimedRun{ID: 1, Engine: "codex", PermissionMode: "plan", Prompt: "First turn", Interactive: true}, dir, ship)
 	if rep.Status != "succeeded" || rep.NumTurns == nil || *rep.NumTurns != 2 {
