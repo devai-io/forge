@@ -67,7 +67,11 @@ func (r *Runner) runCode(ctx context.Context) {
 		slog.Error("vscode: token dir", "err", err)
 		return
 	}
-	go cs.supervise(ctx)
+	// Wait for serve-web to stop before returning: a restart onto a new
+	// binary must find its port free.
+	supervised := make(chan struct{})
+	go func() { defer close(supervised); cs.supervise(ctx) }()
+	defer func() { <-supervised }()
 
 	upstream, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", c.Port))
 	proxy := &httputil.ReverseProxy{

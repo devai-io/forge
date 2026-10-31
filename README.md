@@ -90,6 +90,8 @@ curl -fsSL https://github.com/devai-io/forge/releases/latest/download/install.sh
 
 That installs `forge`, pairs the machine, runs the agent in the background
 (systemd user unit / launchd) and connects Claude Code.
+Later, `forge update` on the machine installs the newest release; the agent
+switches to it as soon as no run is in progress.
 
 ## The workspace folder
 

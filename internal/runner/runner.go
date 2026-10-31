@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -38,6 +39,15 @@ type Runner struct {
 	// jevRetryAt holds off another attempt after a failed one (no claude,
 	// no network) so a broken setup is not retried every heartbeat.
 	jevRetryAt time.Time
+
+	// Self-restart onto a new binary (selfrestart.go).
+	exe        string
+	exeStamp   string
+	updateSeen bool
+	draining   bool         // update seen while idle: no new claims, restart once the slots empty
+	claiming   atomic.Int32 // claim requests in flight (each holds a slot while it long-polls)
+	restart    atomic.Bool
+	stop       context.CancelFunc
 }
 
 func New(cfg *Config) *Runner {
@@ -59,6 +69,10 @@ func New(cfg *Config) *Runner {
 // capabilities, cancellations, the repo list), claim (take work while there
 // is a free slot), and scan (report git state).
 func (r *Runner) Run(ctx context.Context) error {
+	ctx, r.stop = context.WithCancel(ctx)
+	defer r.stop()
+	r.watchBinary()
+	r.writeState()
 	_, claudeErr := exec.LookPath(r.cfg.ClaudePath)
 	slog.Info("forge runner starting", "api", r.cfg.APIURL, "host", r.hostname, "version", Version,
 		"claude", claudeErr == nil, "terminal", r.terminalEnabled(), "code", r.codeEnabled(), "modes", r.cfg.PermissionModes, "commands", r.cfg.CommandNames(),
@@ -93,6 +107,10 @@ func (r *Runner) Run(ctx context.Context) error {
 	// Let in-flight runs report before exiting (their contexts are already
 	// cancelled, so this is the kill + final report, not the whole run).
 	r.slots.drain()
+	if r.restart.Load() {
+		return ErrRestart
+	}
+	_ = os.Remove(StateFile())
 	return nil
 }
 
@@ -226,6 +244,7 @@ func (r *Runner) heartbeatLoop(ctx context.Context) {
 			if err := r.heartbeat(ctx); err != nil && ctx.Err() == nil {
 				slog.Warn("heartbeat failed", "err", err)
 			}
+			r.selfCheck()
 		}
 	}
 }
@@ -242,7 +261,9 @@ func (r *Runner) claimLoop(ctx context.Context) {
 			Engine    *engineSetup    `json:"engine"`
 			Assistant *assistantSetup `json:"assistant"`
 		}
+		r.claiming.Add(1)
 		got, err := r.client.post(ctx, "/api/runner/claim", nil, &resp)
+		r.claiming.Add(-1)
 		if err != nil || !got {
 			r.slots.release()
 			if ctx.Err() != nil {

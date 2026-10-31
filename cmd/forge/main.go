@@ -37,6 +37,7 @@ import (
 	"github.com/devai-io/forge/internal/monitoring"
 	"github.com/devai-io/forge/internal/runner"
 	"github.com/devai-io/forge/internal/seed"
+	"github.com/devai-io/forge/internal/selfupdate"
 	"github.com/devai-io/forge/internal/store"
 	"github.com/devai-io/forge/internal/vault"
 )
@@ -83,6 +84,9 @@ Machine (settings: ~/.config/forge/agent.json):
   forge agent secrets push [--yes] [FILE…]
                                          store them in the vault (Vault → Set up a machine)
 
+Both:
+  forge update [--check] [--version V]   install the latest release here: binary, Claude/Codex
+                                         hooks, and the agent (switches over once idle)
   forge version
 
 Docs: https://github.com/devai-io/forge
@@ -102,6 +106,8 @@ func main() {
 	case "version", "--version", "-v":
 		fmt.Println(version)
 		return
+	case "update", "upgrade":
+		err = runUpdate(os.Args[2:], os.Stdout)
 	case "help", "--help", "-h":
 		fmt.Print(usage)
 		return
@@ -191,8 +197,18 @@ func runAgent(args []string) error {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	return runner.New(cfg).Run(ctx)
+	err = runner.New(cfg).Run(ctx)
+	stop()
+	if errors.Is(err, runner.ErrRestart) {
+		// A new binary was installed over this one and the agent is idle:
+		// become it, keeping the PID, arguments and environment.
+		exe, xerr := selfupdate.Executable()
+		if xerr != nil {
+			return xerr
+		}
+		return syscall.Exec(exe, os.Args, os.Environ())
+	}
+	return err
 }
 
 // agentSecrets is `forge agent secrets scan|push`.

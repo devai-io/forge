@@ -13,6 +13,7 @@ type slots struct {
 	mu      sync.Mutex
 	used    int
 	limit   int
+	closed  bool // no more runs: the agent is restarting onto a new binary
 	changed chan struct{}
 }
 
@@ -30,7 +31,7 @@ func (s *slots) signal() {
 func (s *slots) acquire(ctx context.Context) bool {
 	for {
 		s.mu.Lock()
-		if s.used < s.limit {
+		if !s.closed && s.used < s.limit {
 			s.used++
 			s.mu.Unlock()
 			return true
@@ -65,6 +66,29 @@ func (s *slots) max() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.limit
+}
+
+// close stops further acquires (the agent is about to restart); reopen
+// undoes it. Slots already held are not affected.
+func (s *slots) close() {
+	s.mu.Lock()
+	s.closed = true
+	s.signal()
+	s.mu.Unlock()
+}
+
+func (s *slots) reopen() {
+	s.mu.Lock()
+	s.closed = false
+	s.signal()
+	s.mu.Unlock()
+}
+
+// inUse is how many runs hold a slot.
+func (s *slots) inUse() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.used
 }
 
 // drain waits until no run holds a slot.

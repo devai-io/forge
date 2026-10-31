@@ -259,7 +259,7 @@ Claude Code session's tokens (at API prices), and each run it queued.
 `forge` MCP server (tasks, comments, check-up), a SessionStart hook with the
 project's context, and a UserPromptSubmit hook that matches each request to
 the open tasks it is about (Jev when on, else shared keywords) so Claude keeps
-them current. Run it again after upgrading to pick up new hooks.
+them current. `forge update` runs it again for you after an upgrade.
 
 **Memory.** The context also lists the project's memories (what earlier
 sessions saved: decisions, conventions, gotchas, how-tos) and those about you;
@@ -387,10 +387,22 @@ start); an environment variable with the same meaning wins.
 
 ## 5. Upgrading
 
-- Docker: `docker compose pull && docker compose up -d`.
-- Binary: run the install script again (the server: then restart it).
-- Machines: run the install script again without `--pair`, then
-  `forge agent install` to restart the agent.
+- Machines: `forge update`. It downloads the latest release, checks it
+  against the release's `checksums.txt`, swaps the binary in place (the old
+  one stays next to it as `forge.prev`), re-runs `setup-claude` (and
+  `setup-codex` where Codex is connected) so the hooks match, and moves the
+  agent onto it. Agents from this release on do that themselves: when the
+  binary on disk changes they stop claiming work once no run is in progress
+  and re-exec the new binary (same PID, nothing interrupted), within about
+  half a minute. Older agents are restarted through systemd/launchd.
+  `forge update --check` only tells you; `--version vX` installs a given
+  release (also to go back); `--no-restart` leaves the agent alone.
+  Running the install script again (without `--pair`) also works, and the
+  agent picks the new binary up the same way.
+- Binary server under the systemd unit from 1b: `sudo forge update`
+  (as root it restarts `forge.service`; otherwise it tells you to).
+- Docker: `docker compose pull && docker compose up -d` (`forge update`
+  refuses to run inside a container).
 
 **From v0.1.x:** the default folder moved from `~/.forge` to
 `~/.config/forge`. Nothing breaks — Forge keeps using `~/.forge` while that
