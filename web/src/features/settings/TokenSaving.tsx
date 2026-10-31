@@ -27,7 +27,7 @@ const USES: { key: "routing" | "context" | "match"; label: string; hint: string 
   {
     key: "match",
     label: "Match what you ask Claude Code to your tasks",
-    hint: "Each request typed into Claude Code (with the Forge hook installed) is checked against the project's open tasks; the likely ones are added to the conversation once per session. Off: shared keywords decide instead.",
+    hint: "Each request typed into Claude Code (with the Forge hook installed) is checked against the project's open tasks; the likely ones are added to the conversation once per session. Shared keywords are tried first; Jev is asked only about longer requests they did not place (the request waits for its answer). Off: keywords only.",
   },
 ];
 

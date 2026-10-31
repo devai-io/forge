@@ -37,6 +37,11 @@ const (
 	matchMaxTasks  = 60  // candidates per request
 	matchJevMin    = 0.6 // Jev probability to report a task
 	matchMax       = 3
+	// Jev is asked only for prompts of at least this many words that shared
+	// keywords did not place: the prompt waits for the answer (2-4 s), and
+	// short requests ("fix the dashboard widget") almost never are task work
+	// that keywords miss.
+	matchJevMinWords = 6
 )
 
 func (s *Server) runnerMatch(w http.ResponseWriter, r *http.Request, rn *store.Runner) {
@@ -110,15 +115,16 @@ func (s *Server) matchTasks(ctx context.Context, cwd, prompt string) ([]taskMatc
 		return out, key
 	}
 
-	var found []taskMatch
-	if set, on := s.jevOn(ctx); on && set.Match {
-		found, err = s.jevMatch(ctx, prompt, cands)
-		if err != nil {
-			slog.Warn("jev task matching fell back to keywords", "err", err)
-			found = keywordMatch(prompt, cands)
+	// Keywords are free and decide when they find something; Jev (one call
+	// the prompt waits for) only gets the longer requests they did not place.
+	found := keywordMatch(prompt, cands)
+	if len(found) == 0 && len(strings.Fields(prompt)) >= matchJevMinWords {
+		if set, on := s.jevOn(ctx); on && set.Match {
+			if found, err = s.jevMatch(ctx, prompt, cands); err != nil {
+				slog.Warn("jev task matching failed", "err", err)
+				found = nil
+			}
 		}
-	} else {
-		found = keywordMatch(prompt, cands)
 	}
 	sort.SliceStable(found, func(i, j int) bool { return found[i].Score > found[j].Score })
 	for _, m := range found {

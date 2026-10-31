@@ -965,13 +965,16 @@ request typed into Claude Code it posts:
 
 - `POST /api/runner/match` `{cwd, prompt, known?: string[]}` →
   `{project_key, matches: [{ref, title, status, priority, score, why}], markdown}`.
-  `why`: `named` (a ref such as `SHOP-3` in the prompt, score 1), `jev` (Jev
-  probability ≥ 0.6 that the request is work on that task; Jev on with `match`),
-  or `keywords` (≥ 2 significant title words shared, covering ≥ ⅓ of the title).
-  Candidates: the open tasks of the project `cwd` resolves to (as the session
-  context does; all projects when none), up to 60. Prompts under 12 characters or
-  starting with `/` only match named refs. At most 3 matches; refs in `known` are
-  left out. `markdown` is empty when nothing matched.
+  `why`: `named` (a ref such as `SHOP-3` in the prompt, score 1), `keywords`
+  (≥ 2 significant title words shared, covering ≥ ⅓ of the title), or `jev`
+  (Jev probability ≥ 0.6 that the request is work on that task). Keywords are
+  tried first and decide when they find something; Jev (on with `match`) is
+  asked only for prompts of at least 6 words that keywords did not place, since
+  the prompt waits for its answer (2–4 s). Candidates: the open tasks of the
+  project `cwd` resolves to (as the session context does; all projects when
+  none), up to 60. Prompts under 12 characters or starting with `/` only match
+  named refs. At most 3 matches; refs in `known` are left out. `markdown` is
+  empty when nothing matched.
 
 - With `known_memories: number[]` in the body (agents since memory; older
   ones leave it out and get no memories), the answer also carries `memories:

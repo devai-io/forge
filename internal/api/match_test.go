@@ -88,4 +88,13 @@ func TestPromptMatchesTasks(t *testing.T) {
 	if r := match(cwd, "the payment step loses the basket when I go back"); refs(r) != checkout+":jev" || calls.Load() != before+1 {
 		t.Fatalf("jev: %+v", r)
 	}
+	// Keywords that place the request skip Jev (the prompt waits for it)…
+	before = calls.Load()
+	if r := match(cwd, "add rate limiting on the login endpoint, 5 tries a minute"); refs(r) != rateLimit+":keywords" || calls.Load() != before {
+		t.Fatalf("keywords before jev: %+v calls=%d", r, calls.Load()-before)
+	}
+	// …and so does a short request keywords did not place.
+	if r := match(cwd, "fix the dashboard widget"); len(r.Matches) != 0 || calls.Load() != before {
+		t.Fatalf("short skips jev: %+v calls=%d", r, calls.Load()-before)
+	}
 }
