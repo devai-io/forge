@@ -60,7 +60,12 @@ type session struct {
 	// The awaiting state goes to Forge from one goroutine, latest wins, so
 	// "working again" can never land after the "reply" that followed it.
 	awaitWant string
-	awaitKick chan struct{}
+	// awaitDirty: awaitWant changed since awaitLoop last looked. A quick
+	// follow-up turn moves it "reply" → "" → "reply" between two looks; the
+	// server cleared awaiting when the message arrived, so that second
+	// "reply" must still be sent although it equals the last one sent.
+	awaitDirty bool
+	awaitKick  chan struct{}
 }
 
 func newSession(ctx context.Context, r *Runner, run claimedRun, ship *shipper, w io.WriteCloser) *session {
@@ -88,6 +93,9 @@ func (s *session) start() {
 
 func (s *session) setAwaiting(v string) {
 	s.mu.Lock()
+	if v != s.awaitWant {
+		s.awaitDirty = true
+	}
 	s.awaitWant = v
 	s.mu.Unlock()
 	select {
@@ -105,10 +113,18 @@ func (s *session) awaitLoop() {
 		case <-s.awaitKick:
 		}
 		s.mu.Lock()
-		want := s.awaitWant
+		want, dirty := s.awaitWant, s.awaitDirty
+		s.awaitDirty = false
 		s.mu.Unlock()
-		if want != sent && s.post("awaiting", map[string]string{"awaiting": want}, nil) == nil {
+		if want == sent && !dirty {
+			continue
+		}
+		if s.post("awaiting", map[string]string{"awaiting": want}, nil) == nil {
 			sent = want
+		} else {
+			s.mu.Lock()
+			s.awaitDirty = true // try again with the next change
+			s.mu.Unlock()
 		}
 	}
 }

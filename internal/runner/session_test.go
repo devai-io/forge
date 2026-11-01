@@ -1,8 +1,13 @@
 package runner
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestSessionResponseFollowsTheMachine(t *testing.T) {
@@ -43,5 +48,59 @@ func TestSessionResponseFollowsTheMachine(t *testing.T) {
 	s.r.cfg.PermissionModes = []string{"plan"}
 	if got := s.response(plan, promptAnswer{Decision: "approve_edits"}); got["behavior"] != "allow" || got["updatedPermissions"] != nil {
 		t.Fatalf("approve_edits without acceptEdits = %v", got)
+	}
+}
+
+// A follow-up turn that ends before the first "reply" report has gone out
+// moves awaiting "reply" → "" → "reply" in one go: the second "reply" must
+// still reach Forge, which cleared awaiting when the follow-up arrived.
+func TestAwaitingReplyAfterAQuickFollowUpIsReported(t *testing.T) {
+	var mu sync.Mutex
+	var got []string
+	first := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var v struct {
+			Awaiting string `json:"awaiting"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&v)
+		mu.Lock()
+		got = append(got, v.Awaiting)
+		n := len(got)
+		mu.Unlock()
+		if n == 1 {
+			close(first)
+			<-release // hold the first report while the follow-up turn comes and goes
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := New(&Config{APIURL: srv.URL, Token: "frg_test"})
+	s := newSession(ctx, r, claimedRun{ID: 7}, nil, nil)
+	go s.awaitLoop()
+
+	s.setAwaiting("reply") // turn 1 ended
+	<-first
+	s.setAwaiting("")      // the follow-up was picked up…
+	s.setAwaiting("reply") // …and its turn ended, all while the report was in flight
+	close(release)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(got)
+		mu.Unlock()
+		if n >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 2 || got[0] != "reply" || got[1] != "reply" {
+		t.Fatalf("awaiting reports = %q, want the second reply too", got)
 	}
 }
