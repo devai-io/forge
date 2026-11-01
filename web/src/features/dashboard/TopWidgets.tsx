@@ -3,9 +3,9 @@
 // Claude session (F-<Project>, Remote Control on).
 
 import clsx from "clsx";
-import { CircleAlert, CircleCheck, ExternalLink, Hammer, Plug, Power, Sparkles, TriangleAlert, Activity as Pulse } from "lucide-react";
+import { Bot, CircleAlert, CircleCheck, ExternalLink, Hammer, Plug, Power, Sparkles, TriangleAlert, Activity as Pulse } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
-import { useMonitoring, useProjectSessions, useUpdateProjectSessions } from "@/api/hooks";
+import { useMonitoring, useProjectSessions, useServers, useUpdateProjectSessions } from "@/api/hooks";
 import type { Dashboard, ProjectSession, ProjectSessionState, Run } from "@/api/types";
 import { Badge, ColorDot } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -16,7 +16,7 @@ import { useToast } from "@/components/ui/Toast";
 import { RunStatusBadge } from "@/features/agents/RunBits";
 import { useShell } from "@/features/shell/context";
 import { runTitle } from "@/lib/agents";
-import { serviceIssues } from "@/lib/monitoring";
+import { investigationProject, investigationPrompt, serviceIssues, type ServiceIssue } from "@/lib/monitoring";
 import { attachPath } from "@/lib/terminal";
 
 const SHOWN = 5;
@@ -31,13 +31,21 @@ export function TopWidgets({ d }: { d: Dashboard }) {
   );
 }
 
-/** 1) Services: all clear, or which ones are failing or warning. */
+/**
+ * 1) Services: all clear, or which ones are failing or warning — with an
+ * agent run one click away that looks into them (all, or one), in the
+ * project they belong to.
+ */
 export function ServicesWidget({ d }: { d: Dashboard }) {
   const mon = useMonitoring();
+  const servers = useServers();
+  const { newRun } = useShell();
   const issues = serviceIssues({ down: d.endpoints_down, warning: d.endpoints_warning ?? [] }, mon.data);
   const fail = issues.filter((i) => i.level === "fail").length;
   const warn = issues.length - fail;
   const level = fail ? "fail" : warn ? "warn" : "ok";
+  const investigate = (list: ServiceIssue[]) =>
+    newRun({ project_key: investigationProject(list, servers.data ?? []), prompt: investigationPrompt(list) });
 
   return (
     <Panel
@@ -45,9 +53,22 @@ export function ServicesWidget({ d }: { d: Dashboard }) {
       icon={<Pulse />}
       id="dash-services"
       actions={
-        <Link to="/monitoring" className="text-[12px] text-fg-3 hover:text-fg">
-          Monitoring →
-        </Link>
+        <span className="flex items-center gap-2">
+          {issues.length ? (
+            <Button
+              size="sm"
+              variant="subtle"
+              onClick={() => investigate(issues)}
+              title="Start an agent run that looks into these issues"
+            >
+              <Bot className="size-3.5" aria-hidden />
+              Investigate{issues.length > 1 ? ` all ${issues.length}` : ""}
+            </Button>
+          ) : null}
+          <Link to="/monitoring" className="text-[12px] text-fg-3 hover:text-fg">
+            Monitoring →
+          </Link>
+        </span>
       }
     >
       <div className="flex items-center gap-2.5 px-2 pt-1 pb-2" data-level={level}>
@@ -74,8 +95,8 @@ export function ServicesWidget({ d }: { d: Dashboard }) {
       {issues.length ? (
         <ul aria-label="Services with problems">
           {issues.slice(0, SHOWN).map((i) => (
-            <li key={i.key}>
-              <Link to={i.to} className="flex min-w-0 items-start gap-2 rounded-md px-2 py-1.5 hover:bg-surface-2">
+            <li key={i.key} className="group flex items-start gap-1">
+              <Link to={i.to} className="flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-1.5 hover:bg-surface-2">
                 {i.level === "fail" ? (
                   <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-critical" aria-label="Failing" />
                 ) : (
@@ -86,6 +107,16 @@ export function ServicesWidget({ d }: { d: Dashboard }) {
                   {i.detail ? <span className="block truncate text-[11.5px] text-fg-3">{i.detail}</span> : null}
                 </span>
               </Link>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                className="mt-0.5 shrink-0 opacity-60 group-hover:opacity-100 focus-visible:opacity-100"
+                aria-label={`Investigate ${i.title}`}
+                title="Start an agent run that looks into this"
+                onClick={() => investigate([i])}
+              >
+                <Bot className="size-3.5" />
+              </Button>
             </li>
           ))}
           {issues.length > SHOWN ? (

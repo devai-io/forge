@@ -164,7 +164,17 @@ export function scopeMonitoring(m: Monitoring, scope: MonitoringScope): Monitori
 }
 
 /** One service in trouble, for the dashboard's status widget. */
-export type ServiceIssue = { key: string; level: "warn" | "fail"; title: string; detail: string; to: string };
+export type ServiceIssue = {
+  key: string;
+  level: "warn" | "fail";
+  title: string;
+  detail: string;
+  to: string;
+  /** The endpoint's project, for endpoint issues. */
+  project_key?: string;
+  /** The host it is about (a server name or address), for host, Nomad and alert issues. */
+  host?: string;
+};
 
 /**
  * Every service that is failing or about to: endpoints (down, or failing and
@@ -179,26 +189,27 @@ export function serviceIssues(
   const out: ServiceIssue[] = [];
   const why = (e: Endpoint) => (e.last_code ? `HTTP ${e.last_code}` : e.last_error || "");
   for (const e of endpoints.down)
-    out.push({ key: `e${e.id}`, level: "fail", title: `${e.name} is down`, detail: [e.project_key, why(e)].filter(Boolean).join(" · "), to: `/p/${e.project_key}` });
+    out.push({ key: `e${e.id}`, level: "fail", title: `${e.name} is down`, detail: [e.project_key, why(e)].filter(Boolean).join(" · "), to: `/p/${e.project_key}`, project_key: e.project_key });
   for (const e of endpoints.warning)
-    out.push({ key: `w${e.id}`, level: "warn", title: `${e.name} is failing`, detail: [e.project_key, why(e), "rechecking"].filter(Boolean).join(" · "), to: `/p/${e.project_key}` });
+    out.push({ key: `w${e.id}`, level: "warn", title: `${e.name} is failing`, detail: [e.project_key, why(e), "rechecking"].filter(Boolean).join(" · "), to: `/p/${e.project_key}`, project_key: e.project_key });
   if (mon) {
     for (const h of mon.hosts) {
-      if (!h.up) out.push({ key: `h${h.name}`, level: "fail", title: `${h.name} is not reporting`, detail: "host", to: "/monitoring" });
+      if (!h.up) out.push({ key: `h${h.name}`, level: "fail", title: `${h.name} is not reporting`, detail: "host", to: "/monitoring", host: h.name });
       else if (usageLevel(h.disk_pct) !== "ok")
-        out.push({ key: `d${h.name}`, level: usageLevel(h.disk_pct) as "warn" | "fail", title: `${h.name} disk ${Math.round(h.disk_pct ?? 0)}% full`, detail: "host", to: "/monitoring" });
+        out.push({ key: `d${h.name}`, level: usageLevel(h.disk_pct) as "warn" | "fail", title: `${h.name} disk ${Math.round(h.disk_pct ?? 0)}% full`, detail: "host", to: "/monitoring", host: h.name });
     }
     for (const n of mon.nomad) {
       if (!n.reachable) {
-        out.push({ key: `n${n.host}`, level: "fail", title: `Nomad on ${n.host} is unreachable`, detail: n.error, to: "/monitoring" });
+        out.push({ key: `n${n.host}`, level: "fail", title: `Nomad on ${n.host} is unreachable`, detail: n.error, to: "/monitoring", host: n.host });
         continue;
       }
       for (const j of n.jobs) {
         if (j.type !== "service" && j.type !== "system") continue; // batch jobs are "dead" when done
         const key = `j${n.host}:${j.id}`;
-        if (j.status === "dead") out.push({ key, level: "fail", title: `${j.id} is dead`, detail: `Nomad · ${n.host}`, to: "/monitoring" });
-        else if (j.running === 0) out.push({ key, level: "fail", title: `${j.id} has nothing running`, detail: `Nomad · ${n.host} · ${j.status}`, to: "/monitoring" });
-        else if (j.queued > 0) out.push({ key, level: "warn", title: `${j.id} has ${j.queued} waiting`, detail: `Nomad · ${n.host}`, to: "/monitoring" });
+        const host = n.host;
+        if (j.status === "dead") out.push({ key, level: "fail", title: `${j.id} is dead`, detail: `Nomad · ${n.host}`, to: "/monitoring", host });
+        else if (j.running === 0) out.push({ key, level: "fail", title: `${j.id} has nothing running`, detail: `Nomad · ${n.host} · ${j.status}`, to: "/monitoring", host });
+        else if (j.queued > 0) out.push({ key, level: "warn", title: `${j.id} has ${j.queued} waiting`, detail: `Nomad · ${n.host}`, to: "/monitoring", host });
       }
     }
     for (const a of mon.grafana.alerts) {
@@ -208,10 +219,57 @@ export function serviceIssues(
         key: `a${a.name}:${where}`,
         level: a.state === "firing" && (a.severity === "critical" || a.severity === "") ? "fail" : "warn",
         title: where ? `${a.name} on ${where}` : a.name,
-        detail: `alert · ${a.state}`,
+        detail: [`alert · ${a.state}`, a.summary].filter(Boolean).join(" · "),
         to: "/monitoring",
+        ...(where ? { host: where } : {}),
       });
     }
   }
   return out.sort((a, b) => Number(a.level === "warn") - Number(b.level === "warn"));
+}
+
+/**
+ * The project an investigation of these issues runs in: the one most of them
+ * belong to — an endpoint's own project, or the projects linked to the server
+ * a host, Nomad or alert issue is about. Ties go to the project linked to the
+ * most servers (usually the one that holds the infrastructure).
+ */
+export function investigationProject(issues: ServiceIssue[], servers: Server[]): string | undefined {
+  const votes = new Map<string, number>();
+  const vote = (key: string) => votes.set(key, (votes.get(key) ?? 0) + 1);
+  const byAlias = new Map<string, Server>();
+  for (const s of servers) for (const a of serverAliases(s)) byAlias.set(a, s);
+  for (const i of issues) {
+    if (i.project_key) vote(i.project_key);
+    else if (i.host) {
+      const server = hostAliases(i.host).map((a) => byAlias.get(a)).find(Boolean);
+      for (const p of server?.projects ?? []) vote(p.key);
+    }
+  }
+  const reach = (key: string) => servers.filter((s) => s.projects.some((p) => p.key === key)).length;
+  let best: string | undefined;
+  for (const [key, n] of votes) {
+    const b = best ? (votes.get(best) ?? 0) : -1;
+    if (n > b || (n === b && best && reach(key) > reach(best))) best = key;
+  }
+  return best;
+}
+
+/** The prompt for an agent run that looks into these issues. */
+export function investigationPrompt(issues: ServiceIssue[], now = new Date()): string {
+  const one = issues.length === 1;
+  const lines = issues.map((i) => `- [${i.level === "fail" ? "failing" : "warning"}] ${i.title}${i.detail ? ` (${i.detail})` : ""}`);
+  return [
+    `Forge reports ${one ? "this service issue" : `these ${issues.length} service issues`} (as of ${now.toISOString().slice(0, 16).replace("T", " ")} UTC):`,
+    "",
+    ...lines,
+    "",
+    `Look into ${one ? "it" : "each one"}:`,
+    "1. Find out what is actually wrong and why: logs, recent deploys and commits, CI, the host and its Nomad jobs. This project's Forge context (forge_context) and its infra notes say how to reach the servers; forge_checkup shows today's check-up.",
+    "2. Say whether it is still happening, the most likely root cause, and how sure you are.",
+    "3. Propose the fix. Read-only checks are fine; make no production change (deploys, restarts, database writes, host rebuilds) without my explicit go-ahead, and follow the project's change-control notes.",
+    "4. File a Forge task (forge_create_task) for each fix that needs doing.",
+    "",
+    `End with a short summary${one ? "" : " per issue"}: status, cause, next step.`,
+  ].join("\n");
 }
