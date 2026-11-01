@@ -3,7 +3,8 @@
 // Claude session (F-<Project>, Remote Control on).
 
 import clsx from "clsx";
-import { Bot, CircleAlert, CircleCheck, ExternalLink, Hammer, Plug, Power, Sparkles, TriangleAlert, Activity as Pulse } from "lucide-react";
+import { Bot, CircleAlert, CircleCheck, ExternalLink, Hammer, Plug, Power, RefreshCw, Sparkles, TriangleAlert, Activity as Pulse } from "lucide-react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMonitoring, useProjectSessions, useServers, useUpdateProjectSessions } from "@/api/hooks";
 import type { Dashboard, ProjectSession, ProjectSessionState, Run } from "@/api/types";
@@ -14,6 +15,7 @@ import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { useToast } from "@/components/ui/Toast";
 import { RunStatusBadge } from "@/features/agents/RunBits";
+import { RefreshWorkDialog } from "@/features/dashboard/RefreshWork";
 import { useShell } from "@/features/shell/context";
 import { runTitle } from "@/lib/agents";
 import { investigationProject, investigationPrompt, serviceIssues, type ServiceIssue } from "@/lib/monitoring";
@@ -137,9 +139,14 @@ export function ServicesWidget({ d }: { d: Dashboard }) {
   );
 }
 
-/** 2) Working on: every in-progress task, with the agent run on it if any. */
+/**
+ * 2) Working on: every in-progress task, with the agent run on it if any.
+ * Refresh asks each task's session to bring the task's status up to date
+ * and carry on (resuming or continuing it when it is not running).
+ */
 export function WorkingOnWidget({ d }: { d: Dashboard }) {
   const { openTask } = useShell();
+  const [refreshing, setRefreshing] = useState(false);
   const tasks = d.in_progress ?? [];
   const runByTask = new Map<number, Run>();
   for (const r of d.active_runs) if (r.task_id !== null && !runByTask.has(r.task_id)) runByTask.set(r.task_id, r);
@@ -156,11 +163,25 @@ export function WorkingOnWidget({ d }: { d: Dashboard }) {
       icon={<Hammer />}
       id="dash-working"
       actions={
-        <Link to="/tasks?status=in_progress" className="text-[12px] text-fg-3 hover:text-fg">
-          Tasks →
-        </Link>
+        <span className="flex items-center gap-2">
+          {tasks.length ? (
+            <Button
+              size="sm"
+              variant="subtle"
+              onClick={() => setRefreshing(true)}
+              title="Have each task's agent session update its status and keep going"
+            >
+              <RefreshCw className="size-3.5" aria-hidden />
+              Refresh
+            </Button>
+          ) : null}
+          <Link to="/tasks?status=in_progress" className="text-[12px] text-fg-3 hover:text-fg">
+            Tasks →
+          </Link>
+        </span>
       }
     >
+      {refreshing ? <RefreshWorkDialog tasks={tasks} open={d.active_runs} onClose={() => setRefreshing(false)} /> : null}
       {busy === 0 ? (
         <p className="px-2 py-2 text-[13px] text-fg-3">Nothing in progress right now.</p>
       ) : (
