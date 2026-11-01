@@ -17,6 +17,7 @@ import { TaskDrawer } from "@/features/tasks/TaskDrawer";
 import { useUser } from "@/lib/auth";
 import { useTheme, type ThemePref } from "@/lib/theme";
 import { CommandPalette } from "./CommandPalette";
+import { PullToRefresh } from "@/features/shell/PullToRefresh";
 import { ShellProvider, useShell } from "./context";
 import { NAV } from "./nav";
 
@@ -102,6 +103,7 @@ function ShellFrame() {
         </main>
       </div>
       <MobileNav />
+      <PullToRefresh />
       <TaskDrawer />
       <CommandPalette />
     </div>
