@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { Dashboard, Run } from "@/api/types";
 import { WorkingOnWidget } from "@/features/dashboard/TopWidgets";
 import { ShellProvider } from "@/features/shell/context";
-import { continueInput, planRefresh, refreshText, summarize } from "@/lib/working";
+import { DEFAULT_BUMP, continueInput, modelLabel, planRefresh, refreshText, startInput, summarize, type StartTarget } from "@/lib/working";
 import { makeTask } from "@/test/fixtures";
 import { jsonResponse, renderWithProviders } from "@/test/render";
 
@@ -20,9 +20,9 @@ const run = (o: Partial<Run>): Run =>
     prompt: "Work on it",
     command: "",
     permission_mode: "acceptEdits",
-    model: "",
+    model: "claude-sonnet-5-5",
     engine: "claude",
-    effort: "",
+    effort: "high",
     interactive: true,
     awaiting: "",
     worktree: false,
@@ -39,56 +39,93 @@ const tB = makeTask({ id: 2, ref: "SHOP-2", title: "Login rate limit", status: "
 const tC = makeTask({ id: 3, ref: "SHOP-3", title: "Receipts", status: "in_progress" });
 const tD = makeTask({ id: 4, ref: "SHOP-4", title: "Docs", status: "in_progress" });
 const tE = makeTask({ id: 5, ref: "SHOP-5", title: "Question pending", status: "in_progress" });
+const tF = makeTask({ id: 6, ref: "SHOP-6", title: "Parked on Opus already", status: "in_progress" });
+const target: StartTarget = { runner_id: 3, repo_id: 7, permission_mode: "bypassPermissions", interactive: true };
 
 describe("planRefresh", () => {
-  it("asks running sessions, resumes parked ones, continues ended ones", () => {
+  it("bumps every task: asks, resumes, continues, starts", () => {
     const open = [
       run({ id: 10, task_id: 1, status: "running" }),
-      run({ id: 11, task_id: 2, status: "waiting" }),
+      run({ id: 11, task_id: 2, status: "waiting" }), // parked on Sonnet/high: continue on Opus/medium
       run({ id: 14, task_id: 5, status: "running", awaiting: "answer" }),
+      run({ id: 15, task_id: 6, status: "waiting", model: "claude-opus-5-5", effort: "medium" }), // already on the settings: resume in place
+      run({ id: 16, task_id: null, status: "waiting" }), // parked, on no task
+      run({ id: 17, task_id: null, status: "running" }), // working already: not listed
     ];
     const latest = new Map<number, Run | undefined>([
       [3, run({ id: 12, task_id: 3, status: "succeeded" })],
       [4, undefined],
     ]);
-    const plan = planRefresh([tA, tB, tC, tD, tE], open, latest);
-    expect(plan.map((s) => [s.task.ref, s.action, s.run?.id ?? null])).toEqual([
-      ["SHOP-1", "ask", 10],
-      ["SHOP-2", "resume", 11],
-      ["SHOP-3", "continue", 12],
-      ["SHOP-4", "skip", null],
-      ["SHOP-5", "skip", 14],
+    const plan = planRefresh([tA, tB, tC, tD, tE, tF], open, latest, DEFAULT_BUMP, new Map([[4, target]]));
+    expect(plan.map((s) => [s.key, s.action, s.run?.id ?? null])).toEqual([
+      ["t1", "ask", 10],
+      ["t2", "continue", 11],
+      ["t3", "continue", 12],
+      ["t4", "start", null],
+      ["t5", "skip", 14],
+      ["t6", "resume", 15],
+      ["r16", "continue", 16],
     ]);
+    expect(plan[1]!.parked).toBe(true);
+    expect(plan[3]!.why).toContain("Opus 5.5 · medium");
     expect(plan[4]!.why).toBe("waiting for your answer");
-    expect(summarize(plan)).toBe("1 to ask for status · 1 to resume · 1 to continue · 2 left alone");
+    expect(summarize(plan)).toBe("1 to ask for status · 1 to resume · 3 to continue · 1 to start · 1 left alone");
   });
 
-  it("leaves queued, ending, handed-off and session-less runs alone", () => {
+  it("leaves alone what is queued, ending, handed off, or has nowhere to run", () => {
     const plan = planRefresh(
       [tA, tB, tC, tD],
       [run({ id: 10, task_id: 1, status: "queued" }), run({ id: 11, task_id: 2, finish_requested: true })],
       new Map([
         [3, run({ id: 12, task_id: 3, status: "succeeded", handoff: "desk · tmux run-12" })],
-        [4, run({ id: 13, task_id: 4, status: "failed", session_id: "" })],
+        [4, undefined],
       ]),
+      DEFAULT_BUMP,
+      new Map(), // no machine or repo for SHOP-4
     );
     expect(plan.map((s) => s.action)).toEqual(["skip", "skip", "skip", "skip"]);
+    expect(plan[3]!.why).toContain("no machine or repo");
   });
 
-  it("continues a session with the same machine, repo and settings", () => {
-    const body = continueInput(run({ id: 12, permission_mode: "plan", effort: "high", model: "opus" }), tC);
-    expect(body).toMatchObject({ runner_id: 3, repo_id: 7, kind: "agent", permission_mode: "plan", effort: "high", model: "opus", interactive: true, task_id: 3, resume_run_id: 12 });
-    expect(body.prompt).toBe(refreshText(tC));
-    expect(refreshText(tC)).toContain("forge_update_task");
+  it("a Codex session keeps its engine: resumed, or continued on its own model", () => {
+    const codex = run({ id: 20, task_id: 1, status: "waiting", engine: "codex", model: "gpt-x", effort: "high" });
+    const [step] = planRefresh([tA], [codex], new Map(), DEFAULT_BUMP);
+    expect(step!.action).toBe("resume");
+    const body = continueInput(codex, tA, DEFAULT_BUMP);
+    expect(body).toMatchObject({ model: "gpt-x", effort: "high", resume_run_id: 20 });
+  });
+
+  it("builds follow-up and fresh runs on the chosen model", () => {
+    expect(continueInput(run({ id: 12 }), tC, DEFAULT_BUMP)).toMatchObject({
+      runner_id: 3,
+      repo_id: 7,
+      kind: "agent",
+      model: "claude-opus-5-5",
+      effort: "medium",
+      task_id: 3,
+      resume_run_id: 12,
+      prompt: refreshText(tC),
+    });
+    expect(startInput(tD, target, DEFAULT_BUMP)).toMatchObject({
+      runner_id: 3,
+      repo_id: 7,
+      engine: "claude",
+      model: "claude-opus-5-5",
+      effort: "medium",
+      permission_mode: "bypassPermissions",
+      interactive: true,
+      task_id: 4,
+    });
+    expect(modelLabel("claude-opus-5-5")).toBe("Opus 5.5");
+    expect(refreshText(null)).toContain("carry on");
   });
 });
 
 describe("Working on → Refresh", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("shows the plan, then messages and continues the sessions", async () => {
-    const posts: [string, unknown][] = [];
-    const fetch = vi.fn(async (url: string, init: RequestInit = {}) => {
+  const fetchFor = (posts: [string, unknown][], opts: { failResume?: boolean } = {}) =>
+    vi.fn(async (url: string, init: RequestInit = {}) => {
       const u = new URL(url, "http://forge.test");
       const path = u.pathname.replace(/^\/api/, "");
       const method = init.method ?? "GET";
@@ -96,19 +133,30 @@ describe("Working on → Refresh", () => {
         const task = Number(u.searchParams.get("task"));
         return jsonResponse(200, { runs: task === 3 ? [run({ id: 12, task_id: 3, status: "succeeded" })] : [] });
       }
+      if (method === "GET" && path === "/runners")
+        return jsonResponse(200, {
+          runners: [
+            { id: 3, name: "desk", online: true, role: "master", capabilities: { claude: true, interactive: true, permission_modes: ["plan", "acceptEdits", "bypassPermissions"] } },
+          ],
+        });
+      if (method === "GET" && path === "/engine")
+        return jsonResponse(200, { settings: { default: "claude" }, models: { claude: ["claude-fable-5-1", "claude-opus-5-5"] }, efforts: ["low", "medium", "high"] });
+      if (method === "GET" && path === "/projects/SHOP") return jsonResponse(200, { key: "SHOP", repos: [{ id: 7, name: "shop_api", path: "/home/demo/shop_api" }] });
       if (method === "POST") {
         posts.push([path, JSON.parse(String(init.body ?? "{}"))]);
+        if (opts.failResume && path.endsWith("/messages")) return jsonResponse(422, { error: { code: "validation", message: "cannot resume in place" } });
         return jsonResponse(path === "/runs" ? 201 : 200, run({ id: 99 }));
       }
       return jsonResponse(404, { error: { code: "not_found", message: path } });
     });
-    vi.stubGlobal("fetch", fetch);
+
+  it("shows the plan with Opus 5.5 · medium, then asks, continues and starts", async () => {
+    const posts: [string, unknown][] = [];
+    vi.stubGlobal("fetch", fetchFor(posts));
     const d = {
-      today: "2026-11-02",
-      endpoints_down: [],
-      endpoints_warning: [],
       in_progress: [tA, tB, tC, tD],
       active_runs: [run({ id: 10, task_id: 1, status: "running" }), run({ id: 11, task_id: 2, status: "waiting" })],
+      endpoints_down: [],
     } as unknown as Dashboard;
     renderWithProviders(
       <ShellProvider>
@@ -118,32 +166,45 @@ describe("Working on → Refresh", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
     const plan = await screen.findByRole("list", { name: "Refresh plan" });
-    expect(within(plan).getByText(/run #12 ended: continue its session/)).toBeInTheDocument();
-    expect(within(plan).getByText("no agent session")).toBeInTheDocument();
+    expect((screen.getByLabelText("Model") as HTMLSelectElement).value).toBe("claude-opus-5-5");
+    expect((screen.getByLabelText("Effort") as HTMLSelectElement).value).toBe("medium");
+    expect(within(plan).getByText(/no session yet: start one on Opus 5.5 · medium/)).toBeInTheDocument();
+    expect(within(plan).getByText(/parked: continue it on Opus 5.5 · medium/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh 3" }));
-    await waitFor(() => expect(posts).toHaveLength(3));
-    expect(posts.map(([p]) => p)).toEqual(["/runs/10/messages", "/runs/11/messages", "/runs"]);
-    expect((posts[0]![1] as { text: string }).text).toContain('SHOP-1 "Payouts"');
-    expect(posts[2]![1]).toMatchObject({ resume_run_id: 12, task_id: 3, runner_id: 3, repo_id: 7 });
-    await waitFor(() => expect(screen.queryByRole("list", { name: "Refresh plan" })).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Refresh 4" }));
+    await waitFor(() => expect(posts).toHaveLength(5));
+    expect(posts.map(([p]) => p)).toEqual(["/runs/10/messages", "/runs", "/runs/11/finish", "/runs", "/runs"]);
+    expect(posts[1]![1]).toMatchObject({ resume_run_id: 11, model: "claude-opus-5-5", effort: "medium", task_id: 2 });
+    expect(posts[3]![1]).toMatchObject({ resume_run_id: 12, model: "claude-opus-5-5", effort: "medium", task_id: 3 });
+    expect(posts[4]![1]).toMatchObject({ engine: "claude", model: "claude-opus-5-5", effort: "medium", task_id: 4, repo_id: 7, runner_id: 3, permission_mode: "bypassPermissions" });
+  });
+
+  it("another model can be picked for the bump", async () => {
+    const posts: [string, unknown][] = [];
+    vi.stubGlobal("fetch", fetchFor(posts));
+    const d = { in_progress: [tD], active_runs: [], endpoints_down: [] } as unknown as Dashboard;
+    renderWithProviders(
+      <ShellProvider>
+        <WorkingOnWidget d={d} />
+      </ShellProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
+    await screen.findByRole("list", { name: "Refresh plan" });
+    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "claude-fable-5-1" } });
+    fireEvent.change(screen.getByLabelText("Effort"), { target: { value: "high" } });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh 1" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]![1]).toMatchObject({ model: "claude-fable-5-1", effort: "high" });
   });
 
   it("continues a parked session whose machine cannot resume it in place", async () => {
-    const posts: string[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string, init: RequestInit = {}) => {
-        const path = new URL(url, "http://forge.test").pathname.replace(/^\/api/, "");
-        if ((init.method ?? "GET") === "POST") {
-          posts.push(path);
-          if (path === "/runs/11/messages") return jsonResponse(422, { error: { code: "validation", message: "this machine's agent cannot resume in place" } });
-          return jsonResponse(201, run({ id: 99 }));
-        }
-        return jsonResponse(200, { runs: [] });
-      }),
-    );
-    const d = { in_progress: [tB], active_runs: [run({ id: 11, task_id: 2, status: "waiting" })], endpoints_down: [] } as unknown as Dashboard;
+    const posts: [string, unknown][] = [];
+    vi.stubGlobal("fetch", fetchFor(posts, { failResume: true }));
+    const d = {
+      in_progress: [tB],
+      active_runs: [run({ id: 11, task_id: 2, status: "waiting", model: "claude-opus-5-5", effort: "medium" })],
+      endpoints_down: [],
+    } as unknown as Dashboard;
     renderWithProviders(
       <ShellProvider>
         <WorkingOnWidget d={d} />
@@ -151,6 +212,6 @@ describe("Working on → Refresh", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Refresh 1" }));
-    await waitFor(() => expect(posts).toEqual(["/runs/11/messages", "/runs"]));
+    await waitFor(() => expect(posts.map(([p]) => p)).toEqual(["/runs/11/messages", "/runs", "/runs/11/finish"]));
   });
 });

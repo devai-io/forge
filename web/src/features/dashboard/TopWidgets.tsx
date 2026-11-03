@@ -164,12 +164,12 @@ export function WorkingOnWidget({ d }: { d: Dashboard }) {
       id="dash-working"
       actions={
         <span className="flex items-center gap-2">
-          {tasks.length ? (
+          {tasks.length || d.active_runs.some((r) => r.status === "waiting") ? (
             <Button
               size="sm"
               variant="subtle"
               onClick={() => setRefreshing(true)}
-              title="Have each task's agent session update its status and keep going"
+              title="Bump every task in progress and every parked run: status update, then keep going (new runs on Opus 5.5 · medium)"
             >
               <RefreshCw className="size-3.5" aria-hidden />
               Refresh
