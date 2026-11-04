@@ -720,8 +720,8 @@ function MakeTaskDialog({ checkupId, item, onClose }: { checkupId: number; item:
   );
 }
 
-/** Dashboard panel: today's check-up at a glance. */
-export function CheckupPanel({ summary }: { summary: CheckupSummary | null }) {
+/** Dashboard panel: today's check-up at a glance, with its first open items. */
+export function CheckupPanel({ summary, open = [] }: { summary: CheckupSummary | null; open?: CheckItem[] }) {
   const run = useRunCheckup();
   const toast = useToast();
   if (!summary) {
@@ -736,48 +736,71 @@ export function CheckupPanel({ summary }: { summary: CheckupSummary | null }) {
     );
   }
   const pct = summary.actions_total ? summary.actions_done / summary.actions_total : 1;
+  const left = summary.actions_total - summary.actions_done;
   return (
-    <Link
-      to="/checkup"
-      className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-line bg-surface px-4 py-3 transition-colors hover:border-line-strong"
-    >
-      <span className="flex items-center gap-2">
-        <ClipboardCheck className="size-4 text-fg-3" aria-hidden />
-        <span className="text-[13.5px] font-semibold">Daily check-up</span>
-      </span>
-      <CheckupStatusBadge status={summary.status} />
-      <span className="flex items-center gap-3 text-[12.5px] text-fg-2">
-        <span className="inline-flex items-center gap-1">
-          <SeverityIcon severity="fail" className="size-3.5" /> {summary.counts.fail}
+    <section aria-label="Daily check-up" className="rounded-xl border border-line bg-surface transition-colors hover:border-line-strong">
+      <Link to="/checkup" className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+        <span className="flex items-center gap-2">
+          <ClipboardCheck className="size-4 text-fg-3" aria-hidden />
+          <span className="text-[13.5px] font-semibold">Daily check-up</span>
         </span>
-        <span className="inline-flex items-center gap-1">
-          <SeverityIcon severity="warn" className="size-3.5" /> {summary.counts.warn}
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <SeverityIcon severity="ok" className="size-3.5" /> {summary.counts.ok}
-        </span>
-        {summary.actions_new ? <Badge tone="accent">{summary.actions_new} new</Badge> : null}
-        {summary.fixed_total ? (
-          <span className="inline-flex items-center gap-1 text-fg-3">
-            <CircleCheck className="size-3.5 text-good" aria-hidden /> {summary.fixed_total} fixed
+        <CheckupStatusBadge status={summary.status} />
+        <span className="flex items-center gap-3 text-[12.5px] text-fg-2">
+          <span className="inline-flex items-center gap-1">
+            <SeverityIcon severity="fail" className="size-3.5" /> {summary.counts.fail}
           </span>
-        ) : null}
-      </span>
-      {summary.actions_total ? (
-        <span className="flex min-w-40 flex-1 items-center gap-2 text-[12px] text-fg-3">
-          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-track" aria-hidden>
-            <span className="block h-full rounded-full bg-series-1" style={{ width: `${pct * 100}%` }} />
+          <span className="inline-flex items-center gap-1">
+            <SeverityIcon severity="warn" className="size-3.5" /> {summary.counts.warn}
           </span>
-          <span className="tabular">
-            {summary.actions_done}/{summary.actions_total} done
+          <span className="inline-flex items-center gap-1">
+            <SeverityIcon severity="ok" className="size-3.5" /> {summary.counts.ok}
           </span>
+          {summary.actions_new ? <Badge tone="accent">{summary.actions_new} new</Badge> : null}
+          {summary.fixed_total ? (
+            <span className="inline-flex items-center gap-1 text-fg-3">
+              <CircleCheck className="size-3.5 text-good" aria-hidden /> {summary.fixed_total} fixed
+            </span>
+          ) : null}
         </span>
-      ) : (
-        <span className="flex-1 text-[12px] text-fg-3">nothing to act on</span>
-      )}
-      <span className="text-[11.5px] text-fg-3">
-        <RelativeTime iso={summary.finished_at ?? summary.started_at} /> →
-      </span>
-    </Link>
+        {summary.actions_total ? (
+          <span className="flex min-w-40 flex-1 items-center gap-2 text-[12px] text-fg-3">
+            <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-track" aria-hidden>
+              <span className="block h-full rounded-full bg-series-1" style={{ width: `${pct * 100}%` }} />
+            </span>
+            <span className="tabular">
+              {summary.actions_done}/{summary.actions_total} done
+            </span>
+          </span>
+        ) : (
+          <span className="flex-1 text-[12px] text-fg-3">nothing to act on</span>
+        )}
+        <span className="text-[11.5px] text-fg-3">
+          <RelativeTime iso={summary.finished_at ?? summary.started_at} /> →
+        </span>
+      </Link>
+      {open.length ? (
+        <ul aria-label="Open check-up items" className="border-t border-line px-2 py-1.5">
+          {open.map((it) => (
+            <li key={it.key}>
+              <Link to={`/checkup#checkup-${it.category}`} className="flex min-w-0 items-start gap-2 rounded-md px-2 py-1 text-[12.5px] hover:bg-surface-2">
+                <SeverityIcon severity={it.severity} className="mt-0.5 size-3.5" />
+                <span className="min-w-0 flex-1 truncate">
+                  {it.title}
+                  {it.action ? <span className="text-fg-3"> — {it.action}</span> : null}
+                </span>
+                {isNew(it, summary.date) ? <Badge tone="accent">new</Badge> : null}
+              </Link>
+            </li>
+          ))}
+          {left > open.length ? (
+            <li>
+              <Link to="/checkup" className="block px-2 py-1 text-[12px] text-fg-3 hover:text-fg">
+                +{left - open.length} more →
+              </Link>
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+    </section>
   );
 }

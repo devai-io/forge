@@ -85,6 +85,7 @@ export type Project = {
   infra_notes: string;
   target_date: string | null;
   links: Link[];
+  hide_on_dashboard: boolean; // kept off the dashboard (card, task lists, open counts); shown everywhere else
   created_at: string;
   updated_at: string;
   stats: ProjectStats;
@@ -423,7 +424,8 @@ export type Dashboard = {
   due_soon: Task[]; // not done, due today or within 3 days
   blocked: Task[]; // waiting longest first
   in_progress: Task[]; // every task being worked on, in any project
-  projects: Project[];
+  projects: Project[]; // without the ones hidden from the dashboard
+  hidden_projects: number; // how many are hidden
   endpoints_down: Endpoint[];
   endpoints_warning: Endpoint[];
   runners: Runner[];
@@ -431,6 +433,7 @@ export type Dashboard = {
   recent_runs: Run[];
   activity: Activity[];
   checkup: CheckupSummary | null;
+  checkup_open: CheckItem[]; // the latest check-up's first open items, failing first (max 5)
 };
 
 // ── Vault ───────────────────────────────────────────────────────────────────
@@ -583,7 +586,7 @@ export type CheckItem = {
   snoozed_until: string | null; // null while snoozed = until the item changes
   fixes: CheckFix[]; // one-click fixes; each re-checks the item after
 };
-/** "probe" (endpoints), a machine command like "git-pull" (repos). Check-ups before v0.1.42 also had "done" | "week" | "clear_due" | "unblock" | "backlog" on task items. */
+/** "probe" (endpoints), a machine command like "git-pull" (repos), "ack" (new-device sign-ins were you). Check-ups before v0.1.42 also had "done" | "week" | "clear_due" | "unblock" | "backlog" on task items. */
 export type CheckFix = { id: string; label: string };
 export type ResolvedItem = {
   key: string;
@@ -628,6 +631,7 @@ export type ProjectInput = Partial<
     | "infra_notes"
     | "target_date"
     | "links"
+    | "hide_on_dashboard"
   >
 >;
 
@@ -811,6 +815,7 @@ export type SecurityKind =
   | "session_revoked"
   | "sessions_revoked_others"
   | "devices_forgotten"
+  | "new_devices_acknowledged"
   | "vault_reveal"
   | "vault_download"
   | "vault_bundle"

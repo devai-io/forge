@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { CircleAlert, CircleCheck, CircleDashed, GitBranch, GitCommitHorizontal, Hourglass, Target, TriangleAlert } from "lucide-react";
+import { CircleAlert, CircleCheck, CircleDashed, EyeOff, GitBranch, GitCommitHorizontal, Hourglass, Target, TriangleAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { Project } from "@/api/types";
 import { Badge } from "@/components/ui/Badge";
@@ -73,6 +73,11 @@ export function ProjectCard({ project, today }: { project: Project; today: strin
           <span className="text-[11px] text-fg-3" title="Priority (1 = top focus)">
             P{project.priority} · {project.category}
           </span>
+          {project.hide_on_dashboard ? (
+            <span className="inline-flex items-center gap-1 text-[11px] text-fg-3" title="Hidden from the dashboard (Edit project to show it)">
+              <EyeOff className="size-3" aria-hidden /> not on dashboard
+            </span>
+          ) : null}
         </div>
       </div>
 

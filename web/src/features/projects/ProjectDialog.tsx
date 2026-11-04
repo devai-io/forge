@@ -5,7 +5,7 @@ import { useCreateProject, useDeleteProject, useUpdateProject } from "@/api/hook
 import type { Category, Link, Project, ProjectStatus } from "@/api/types";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog, Dialog } from "@/components/ui/Dialog";
-import { Field, Input, Select, Textarea } from "@/components/ui/Input";
+import { Field, Input, Select, Switch, Textarea } from "@/components/ui/Input";
 import { useToast } from "@/components/ui/Toast";
 import { PROJECT_COLORS } from "@/lib/projects";
 import { PROJECT_STATUSES } from "@/lib/tasks";
@@ -31,6 +31,7 @@ export function ProjectDialog({ project, onClose }: { project?: Project; onClose
   const [links, setLinks] = useState<Link[]>(project?.links ?? []);
   const [description, setDescription] = useState(project?.description ?? "");
   const [infraNotes, setInfraNotes] = useState(project?.infra_notes ?? "");
+  const [onDashboard, setOnDashboard] = useState(!project?.hide_on_dashboard);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [typedKey, setTypedKey] = useState("");
 
@@ -50,6 +51,7 @@ export function ProjectDialog({ project, onClose }: { project?: Project; onClose
       links: links.filter((l) => l.url.trim()).map((l) => ({ label: l.label.trim() || l.url.trim(), url: l.url.trim() })),
       description,
       infra_notes: infraNotes,
+      hide_on_dashboard: !onDashboard,
     };
     if (editing) {
       update.mutate(body, {
@@ -161,6 +163,12 @@ export function ProjectDialog({ project, onClose }: { project?: Project; onClose
           <Field label="Target date">
             {(id) => <Input id={id} type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />}
           </Field>
+        </div>
+        <div className="space-y-1">
+          <Switch id="project-on-dashboard" checked={onDashboard} onChange={setOnDashboard} label="Show on the dashboard" />
+          <p className="text-[12px] text-fg-3">
+            Off: no card and none of its tasks in the dashboard's lists and counts. It stays on Projects, Tasks, the check-up and the bots.
+          </p>
         </div>
         <fieldset>
           <legend className="mb-1.5 text-[13px] font-medium text-fg-2">Colour</legend>

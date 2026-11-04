@@ -84,11 +84,11 @@ func (s *Store) Dashboard(ctx context.Context, tz string) (*Dashboard, error) {
 		  count(*) FILTER (WHERE local_date(t.completed_at, $1) >= $3),
 		  count(*) FILTER (WHERE local_date(t.completed_at, $1) >= date($3, '-7 days')
 		                     AND local_date(t.completed_at, $1) < $3),
-		  count(*) FILTER (WHERE t.status <> 'done'),
-		  count(*) FILTER (WHERE t.status = 'in_progress'),
-		  count(*) FILTER (WHERE t.status = 'blocked'),
-		  count(*) FILTER (WHERE t.status <> 'done' AND t.due_date < $2),
-		  count(*) FILTER (WHERE t.status <> 'done' AND t.due_date >= $2 AND t.due_date <= date($2, '+3 days'))
+		  count(*) FILTER (WHERE t.status <> 'done' AND NOT p.hide_on_dashboard),
+		  count(*) FILTER (WHERE t.status = 'in_progress' AND NOT p.hide_on_dashboard),
+		  count(*) FILTER (WHERE t.status = 'blocked' AND NOT p.hide_on_dashboard),
+		  count(*) FILTER (WHERE t.status <> 'done' AND t.due_date < $2 AND NOT p.hide_on_dashboard),
+		  count(*) FILTER (WHERE t.status <> 'done' AND t.due_date >= $2 AND t.due_date <= date($2, '+3 days') AND NOT p.hide_on_dashboard)
 		FROM tasks t JOIN projects p ON p.id = t.project_id
 		WHERE p.status <> 'archived'`, tz, today, dateStr(weekStart)).Scan(
 		&st.DoneToday, &st.DoneWeek, &st.DonePrevWeek, &st.OpenTasks, &st.InProgress, &st.Blocked,
@@ -128,7 +128,9 @@ func (s *Store) Dashboard(ctx context.Context, tz string) (*Dashboard, error) {
 		return nil, err
 	}
 
-	notArchived := ` AND p.status <> 'archived'`
+	// Projects hidden from the dashboard keep their completions in the
+	// streak, goal and chart (that is work done), but not their open tasks.
+	notArchived := ` AND p.status <> 'archived' AND NOT p.hide_on_dashboard`
 	if d.Focus, err = s.queryTasks(ctx, taskSelect+` WHERE t.focus AND t.status <> 'done'`+notArchived+
 		` ORDER BY `+priorityOrder+`, t.due_date NULLS LAST, p.priority, t.id LIMIT 50`); err != nil {
 		return nil, err
@@ -149,8 +151,17 @@ func (s *Store) Dashboard(ctx context.Context, tz string) (*Dashboard, error) {
 		` ORDER BY t.updated_at DESC, t.id DESC LIMIT 50`); err != nil {
 		return nil, err
 	}
-	if d.Projects, err = s.ListProjects(ctx, today, false); err != nil {
+	all, err := s.ListProjects(ctx, today, false)
+	if err != nil {
 		return nil, err
+	}
+	d.Projects = []Project{}
+	for _, p := range all {
+		if p.HideOnDashboard {
+			d.HiddenProjects++
+		} else {
+			d.Projects = append(d.Projects, p)
+		}
 	}
 	if d.EndpointsDown, err = s.DownEndpoints(ctx); err != nil {
 		return nil, err
@@ -170,8 +181,15 @@ func (s *Store) Dashboard(ctx context.Context, tz string) (*Dashboard, error) {
 	if d.Activity, err = s.ListActivity(ctx, "", 30); err != nil {
 		return nil, err
 	}
+	d.CheckupOpen = []CheckItem{}
 	if c, err := s.LatestCheckup(ctx); err == nil {
 		d.Checkup = &c.CheckupSummary
+		// Items come failing first, then warnings.
+		for _, it := range c.Items {
+			if it.Open() && len(d.CheckupOpen) < 5 {
+				d.CheckupOpen = append(d.CheckupOpen, it)
+			}
+		}
 	}
 	return d, nil
 }

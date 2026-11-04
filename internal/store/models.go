@@ -66,21 +66,24 @@ type ProjectStats struct {
 }
 
 type Project struct {
-	ID          int64        `json:"id"`
-	Key         string       `json:"key"`
-	Name        string       `json:"name"`
-	Category    string       `json:"category"`
-	Status      string       `json:"status"`
-	Priority    int          `json:"priority"`
-	Color       string       `json:"color"`
-	Summary     string       `json:"summary"`
-	Description string       `json:"description"`
-	InfraNotes  string       `json:"infra_notes"`
-	TargetDate  *string      `json:"target_date"`
-	Links       []Link       `json:"links"`
-	CreatedAt   time.Time    `json:"created_at"`
-	UpdatedAt   time.Time    `json:"updated_at"`
-	Stats       ProjectStats `json:"stats"`
+	ID          int64   `json:"id"`
+	Key         string  `json:"key"`
+	Name        string  `json:"name"`
+	Category    string  `json:"category"`
+	Status      string  `json:"status"`
+	Priority    int     `json:"priority"`
+	Color       string  `json:"color"`
+	Summary     string  `json:"summary"`
+	Description string  `json:"description"`
+	InfraNotes  string  `json:"infra_notes"`
+	TargetDate  *string `json:"target_date"`
+	Links       []Link  `json:"links"`
+	// HideOnDashboard: kept off the dashboard (card, task lists, open
+	// counts); everywhere else as usual.
+	HideOnDashboard bool         `json:"hide_on_dashboard"`
+	CreatedAt       time.Time    `json:"created_at"`
+	UpdatedAt       time.Time    `json:"updated_at"`
+	Stats           ProjectStats `json:"stats"`
 }
 
 type ProjectDetail struct {
@@ -440,9 +443,11 @@ type Dashboard struct {
 	// Blocked: every blocked task, the one waiting longest first.
 	Blocked []Task `json:"blocked"`
 	// InProgress: every task being worked on, in any project.
-	InProgress    []Task     `json:"in_progress"`
-	Projects      []Project  `json:"projects"`
-	EndpointsDown []Endpoint `json:"endpoints_down"`
+	InProgress []Task    `json:"in_progress"`
+	Projects   []Project `json:"projects"`
+	// HiddenProjects counts the projects kept off the dashboard.
+	HiddenProjects int        `json:"hidden_projects"`
+	EndpointsDown  []Endpoint `json:"endpoints_down"`
 	// EndpointsWarning: failing, still being rechecked before "down".
 	EndpointsWarning []Endpoint      `json:"endpoints_warning"`
 	Runners          []Runner        `json:"runners"`
@@ -450,6 +455,8 @@ type Dashboard struct {
 	RecentRuns       []Run           `json:"recent_runs"`
 	Activity         []Activity      `json:"activity"`
 	Checkup          *CheckupSummary `json:"checkup"`
+	// CheckupOpen: the latest check-up's first open items (failing first, at most 5).
+	CheckupOpen []CheckItem `json:"checkup_open"`
 }
 
 // Enumerations, shared by validation and the seed loader.

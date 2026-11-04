@@ -44,7 +44,7 @@ WITH ts AS (
 	WHERE kind NOT LIKE 'endpoint.%' GROUP BY project_id
 )
 SELECT p.id, p.key, p.name, p.category, p.status, p.priority, p.color, p.summary, p.description,
-       p.infra_notes, p.target_date, p.links, p.created_at, p.updated_at,
+       p.infra_notes, p.target_date, p.links, p.hide_on_dashboard, p.created_at, p.updated_at,
        coalesce(ts.total, 0), coalesce(ts.backlog, 0), coalesce(ts.todo, 0), coalesce(ts.in_progress, 0),
        coalesce(ts.blocked, 0), coalesce(ts.done, 0), coalesce(ts.overdue, 0), coalesce(ts.done_7d, 0),
        coalesce(ts.created_7d, 0), coalesce(rs.commits_7d, 0), coalesce(rs.dirty, 0),
@@ -64,7 +64,7 @@ func scanProject(row interface{ Scan(...any) error }) (*Project, error) {
 	var links []byte
 	st := &p.Stats
 	if err := row.Scan(&p.ID, &p.Key, &p.Name, &p.Category, &p.Status, &p.Priority, &p.Color, &p.Summary,
-		&p.Description, &p.InfraNotes, &p.TargetDate, &links, &p.CreatedAt, &p.UpdatedAt,
+		&p.Description, &p.InfraNotes, &p.TargetDate, &links, &p.HideOnDashboard, &p.CreatedAt, &p.UpdatedAt,
 		&st.Total, &st.Backlog, &st.Todo, &st.InProgress, &st.Blocked, &st.Done, &st.Overdue, &st.Done7d,
 		&st.Created7d, &st.Commits7d, &st.DirtyRepos, &st.EndpointsTotal, &st.EndpointsUp, &st.EndpointsDown,
 		&st.EndpointsWarning, &st.ActiveRuns, &st.LastActivityAt); err != nil {
@@ -141,6 +141,8 @@ type ProjectInput struct {
 	InfraNotes  string  `json:"infra_notes"`
 	TargetDate  *string `json:"target_date"`
 	Links       []Link  `json:"links"`
+	// HideOnDashboard keeps the project off the dashboard (default shown).
+	HideOnDashboard bool `json:"hide_on_dashboard"`
 }
 
 func (in *ProjectInput) normalize() error {
@@ -196,11 +198,11 @@ func (s *Store) CreateProject(ctx context.Context, in ProjectInput) (string, err
 		var id int64
 		err := tx.QueryRow(ctx, `
 			INSERT INTO projects (key, name, category, status, priority, color, summary, description,
-			                      infra_notes, target_date, links)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			                      infra_notes, target_date, links, hide_on_dashboard)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 			RETURNING id`,
 			in.Key, in.Name, in.Category, in.Status, in.Priority, in.Color, in.Summary, in.Description,
-			in.InfraNotes, in.TargetDate, in.Links).Scan(&id)
+			in.InfraNotes, in.TargetDate, in.Links, in.HideOnDashboard).Scan(&id)
 		if err != nil {
 			return mapErr(err)
 		}
@@ -220,6 +222,8 @@ var projectFields = map[string]field{
 	"infra_notes": {"infra_notes", pString(50000, false)},
 	"target_date": {"target_date", pNullableDate},
 	"links":       {"links", pLinks},
+	// hide_on_dashboard keeps the project off the dashboard only.
+	"hide_on_dashboard": {"hide_on_dashboard", pBool},
 }
 
 var projectReadOnly = []string{"id", "key", "created_at", "updated_at", "stats", "repos", "servers", "endpoints"}
@@ -240,6 +244,13 @@ func (s *Store) UpdateProject(ctx context.Context, key string, p Patch) error {
 		summary := fmt.Sprintf("Updated %s", name)
 		if p.Has("status") {
 			summary = fmt.Sprintf("%s is now %s", name, status)
+		} else if p.Has("hide_on_dashboard") && len(p) == 1 {
+			var hidden bool
+			_ = json.Unmarshal(p["hide_on_dashboard"], &hidden)
+			summary = fmt.Sprintf("%s is now shown on the dashboard", name)
+			if hidden {
+				summary = fmt.Sprintf("%s is now hidden from the dashboard", name)
+			}
 		}
 		return logActivity(ctx, tx, ActivityInput{ProjectID: &id, Kind: "project.updated", Summary: summary})
 	})

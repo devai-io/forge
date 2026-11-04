@@ -500,6 +500,16 @@ func (s *Server) fixCheckupItem(w http.ResponseWriter, r *http.Request, u *store
 		if run.Status != "succeeded" {
 			note = fmt.Sprintf("%s %s on %s", in.Fix, run.Status, master.Name)
 		}
+	case "security":
+		if in.Fix != "ack" {
+			writeErr(w, r, &store.ValidationError{Field: "fix", Message: "nothing to do for this item"})
+			return
+		}
+		if err := s.store.AckNewDeviceLogins(ctx); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		_ = s.store.LogSecurity(ctx, "new_devices_acknowledged", "from the check-up", s.clientIP(r), r.UserAgent(), sessionID(r))
 	default:
 		writeErr(w, r, &store.ValidationError{Field: "fix", Message: "nothing to do for this item"})
 		return

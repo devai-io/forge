@@ -997,6 +997,93 @@ func TestCheckupFlagsSecurityPosture(t *testing.T) {
 	if !seen["security:initial-password"] || !seen["security:totp"] {
 		t.Fatalf("security items = %v", seen)
 	}
+
+	// A sign-in from a device Forge has not seen is a finding until it is
+	// acknowledged ("these were me"); only later ones count after that.
+	other := &harness{t: t, srv: h.srv, client: &http.Client{Jar: mustJar()}}
+	other.login()
+	expect(t, "run again", h.do("POST", "/api/checkups", nil, &c), 201)
+	var target *store.CheckItem
+	for i := range c.Items {
+		if c.Items[i].Key == "security:new-devices" {
+			target = &c.Items[i]
+		}
+	}
+	if target == nil || len(target.Fixes) != 1 || target.Fixes[0].ID != "ack" {
+		t.Fatalf("new-device item and its fix: %+v", target)
+	}
+	var res struct{ Checkup store.Checkup }
+	expect(t, "ack", h.do("POST", fmt.Sprintf("/api/checkups/%d/items/security:new-devices/fix", c.ID), map[string]string{"fix": "ack"}, &res), 200)
+	for _, it := range res.Checkup.Items {
+		if it.Key == "security:new-devices" && it.ResolvedAt == nil {
+			t.Fatalf("acknowledged, so resolved: %+v", it)
+		}
+	}
+	expect(t, "run after ack", h.do("POST", "/api/checkups", nil, &c), 201)
+	for _, it := range c.Items {
+		if it.Key == "security:new-devices" {
+			t.Fatalf("acknowledged sign-ins came back: %+v", it)
+		}
+	}
+}
+
+// A project hidden from the dashboard loses its card and its open tasks
+// there, keeps its completions in the stats, and stays on every other page.
+func TestHideProjectFromDashboard(t *testing.T) {
+	h := setup(t)
+	h.login()
+	expect(t, "late", h.do("POST", "/api/tasks", map[string]any{"project_key": "GAME", "title": "Late", "due_date": "2020-01-01"}, nil), 201)
+	expect(t, "blocked", h.do("POST", "/api/tasks", map[string]any{"project_key": "GAME", "title": "Stuck", "status": "blocked"}, nil), 201)
+	var soon store.Task
+	expect(t, "soon", h.do("POST", "/api/tasks", map[string]any{"project_key": "SHOP", "title": "Soon", "due_date": store.TodayFor("UTC")}, &soon), 201)
+
+	var d store.Dashboard
+	expect(t, "dashboard", h.do("GET", "/api/dashboard", nil, &d), 200)
+	has := func(list []store.Task, title string) bool {
+		for _, t := range list {
+			if t.Title == title {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(d.Overdue, "Late") || !has(d.Blocked, "Stuck") || !has(d.DueSoon, "Soon") || d.HiddenProjects != 0 {
+		t.Fatalf("before hiding: overdue %d blocked %d due soon %d hidden %d", len(d.Overdue), len(d.Blocked), len(d.DueSoon), d.HiddenProjects)
+	}
+	before := d.Stats
+
+	var p store.ProjectDetail
+	expect(t, "hide", h.do("PATCH", "/api/projects/GAME", map[string]any{"hide_on_dashboard": true}, &p), 200)
+	if !p.HideOnDashboard {
+		t.Fatalf("project = %+v", p.Project)
+	}
+	expect(t, "dashboard hidden", h.do("GET", "/api/dashboard", nil, &d), 200)
+	for _, pr := range d.Projects {
+		if pr.Key == "GAME" {
+			t.Fatal("hidden project still has a card")
+		}
+	}
+	if has(d.Overdue, "Late") || has(d.Blocked, "Stuck") || !has(d.DueSoon, "Soon") || d.HiddenProjects != 1 {
+		t.Fatalf("after hiding: overdue %+v blocked %+v hidden %d", d.Overdue, d.Blocked, d.HiddenProjects)
+	}
+	if d.Stats.Blocked != before.Blocked-1 || d.Stats.OpenTasks >= before.OpenTasks || d.Stats.DoneWeek != before.DoneWeek {
+		t.Fatalf("stats before %+v after %+v", before, d.Stats)
+	}
+	var ps struct{ Projects []store.Project }
+	expect(t, "projects", h.do("GET", "/api/projects", nil, &ps), 200)
+	found := false
+	for _, pr := range ps.Projects {
+		found = found || (pr.Key == "GAME" && pr.HideOnDashboard)
+	}
+	if !found {
+		t.Fatal("the Projects list must keep the hidden project, flagged")
+	}
+	expect(t, "bad value", h.do("PATCH", "/api/projects/GAME", map[string]any{"hide_on_dashboard": "yes"}, nil), 422)
+	expect(t, "show", h.do("PATCH", "/api/projects/GAME", map[string]any{"hide_on_dashboard": false}, &p), 200)
+	expect(t, "dashboard shown", h.do("GET", "/api/dashboard", nil, &d), 200)
+	if !has(d.Overdue, "Late") || d.HiddenProjects != 0 {
+		t.Fatal("shown again, so back on the dashboard")
+	}
 }
 
 // A check-up item's one-click fix applies and re-checks it: a failing

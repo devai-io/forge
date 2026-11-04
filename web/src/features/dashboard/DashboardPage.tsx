@@ -9,6 +9,7 @@ import {
   CalendarCheck,
   CircleCheck,
   Circle,
+  EyeOff,
   Rocket,
   X,
   Flame,
@@ -21,8 +22,8 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useDashboard, useUpdateTask } from "@/api/hooks";
-import type { Dashboard, Task } from "@/api/types";
+import { useDashboard, useUpdateProject, useUpdateTask } from "@/api/hooks";
+import type { Dashboard, Project, Task } from "@/api/types";
 import { Button } from "@/components/ui/Button";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Panel } from "@/components/ui/Panel";
@@ -65,7 +66,7 @@ export function DashboardPage() {
       <TopWidgets d={d} />
       {d.runners.length === 0 ? <GettingStarted d={d} /> : null}
       <Alerts d={d} />
-      <CheckupPanel summary={d.checkup ?? null} />
+      <CheckupPanel summary={d.checkup ?? null} open={d.checkup_open ?? []} />
       <Stats d={d} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -84,18 +85,25 @@ export function DashboardPage() {
           <h2 id="dash-projects" className="flex items-center gap-2 text-[13.5px] font-semibold">
             <FolderKanban className="size-4 text-fg-3" aria-hidden /> Projects
           </h2>
-          <Link to="/projects" className="text-[12.5px] text-fg-3 hover:text-fg">
-            All projects →
-          </Link>
+          <span className="flex items-center gap-3 text-[12.5px] text-fg-3">
+            {d.hidden_projects ? (
+              <Link to="/projects" className="inline-flex items-center gap-1 hover:text-fg" title="Edit a project to show it here again">
+                <EyeOff className="size-3.5" aria-hidden /> {d.hidden_projects} hidden
+              </Link>
+            ) : null}
+            <Link to="/projects" className="hover:text-fg">
+              All projects →
+            </Link>
+          </span>
         </div>
         {d.projects.length ? (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {d.projects.map((p) => (
-              <ProjectCard key={p.id} project={p} today={d.today} />
+              <DashboardProjectCard key={p.id} project={p} today={d.today} />
             ))}
           </div>
         ) : (
-          <EmptyState title="No projects yet" />
+          <EmptyState title={d.hidden_projects ? "Every project is hidden from the dashboard" : "No projects yet"} />
         )}
       </section>
 
@@ -108,6 +116,41 @@ export function DashboardPage() {
           <ActivityFeed items={d.activity} />
         </Panel>
       </div>
+    </div>
+  );
+}
+
+/** A project card with a quick "hide from the dashboard" (undo in the toast). */
+export function DashboardProjectCard({ project, today }: { project: Project; today: string }) {
+  const update = useUpdateProject(project.key);
+  const toast = useToast();
+  const set = (hide: boolean) => update.mutateAsync({ hide_on_dashboard: hide });
+  const hide = () =>
+    set(true).then(
+      () =>
+        toast.success(
+          <span>
+            {project.name} hidden from the dashboard{" "}
+            <button type="button" className="ml-1 font-medium text-accent hover:underline" onClick={() => void set(false).catch((e) => toast.error(e))}>
+              Undo
+            </button>
+          </span>,
+        ),
+      (e) => toast.error(e),
+    );
+  return (
+    <div className="group/card relative">
+      <ProjectCard project={project} today={today} />
+      <button
+        type="button"
+        onClick={hide}
+        disabled={update.isPending}
+        aria-label={`Hide ${project.name} from the dashboard`}
+        title="Hide from the dashboard"
+        className="absolute right-2 bottom-2 grid size-7 place-items-center rounded-md bg-surface text-fg-3 opacity-0 transition-opacity group-hover/card:opacity-100 hover:bg-surface-2 hover:text-fg focus-visible:opacity-100 max-md:opacity-60"
+      >
+        <EyeOff className="size-3.5" aria-hidden />
+      </button>
     </div>
   );
 }

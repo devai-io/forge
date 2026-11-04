@@ -72,6 +72,8 @@ type Project = {
   color: string;             // "#rrggbb"
   summary: string; description: string /* markdown */; infra_notes: string /* markdown */;
   target_date: string | null; links: Link[];
+  hide_on_dashboard: boolean; // kept off the dashboard: no card, its open tasks out of the dashboard's lists and open counts
+                              // (its completions still count in streak, goal and chart); shown everywhere else. PATCH-able, default false
   created_at: string; updated_at: string;
   stats: ProjectStats;
 };
@@ -217,7 +219,9 @@ type Dashboard = {
   due_soon: Task[];            // not done, due today or within 3 days, soonest first (max 20)
   blocked: Task[];             // status blocked, waiting longest first (max 20)
   in_progress: Task[];         // status in_progress, any project (not archived), latest change first (max 50)
-  projects: Project[];         // status != archived, ordered by priority, then name
+  projects: Project[];         // status != archived and not hide_on_dashboard, ordered by priority, then name
+  hidden_projects: number;     // how many non-archived projects are hidden from the dashboard
+                               // overdue / due_soon / blocked / focus / in_progress and the open-task stats skip hidden projects too
   endpoints_down: Endpoint[];
   endpoints_warning: Endpoint[]; // failing, being rechecked (not down yet)
   runners: Runner[];
@@ -485,7 +489,9 @@ type CIStatus = {
 type GitStatus = { /* … as above, plus */ ci: CIStatus | null;
   untracked: number };   // "??" files; `dirty` counts tracked changes only
 
-type Dashboard = { /* … as above, plus */ checkup: CheckupSummary | null };
+type Dashboard = { /* … as above, plus */ checkup: CheckupSummary | null;
+  checkup_open: CheckItem[];   // the latest check-up's first open items (CheckItem.Open), failing first, at most 5
+};
 ```
 
 ## Auth additions
@@ -675,7 +681,7 @@ type Checkup = CheckupSummary & { items: CheckItem[]; resolved: ResolvedItem[] }
 | POST | /api/checkups/{id}/items/{key}/task | `{project_key?}` | `{task: Task, checkup: Checkup}` (label `checkup`); `409` while the linked task is not done |
 | POST | /api/checkups/{id}/items/{key}/recheck | – | `Checkup`: the one check behind the item is run again now; the item gets `checked_at` and either the fresh severity/title/detail or `resolved_at` |
 | POST | /api/checkups/{id}/recheck | – | `Checkup`: the same for every open (non-ok, not snoozed) item; ~1–10 s |
-| POST | /api/checkups/{id}/items/{key}/fix | `{fix}` (one of the item's `fixes`) | `{checkup: Checkup, note: string, run?: Run}` — does it, then re-checks the item. Endpoints: `probe` (checks it now). Repos: the master machine's own `git-pull` / `git-fetch` command, offered only when its `agent.json` defines it; the request waits for that run and the repo scan after it (≤ ~2 min), `note` says if the command did not succeed. `422` for a fix the item does not offer |
+| POST | /api/checkups/{id}/items/{key}/fix | `{fix}` (one of the item's `fixes`) | `{checkup: Checkup, note: string, run?: Run}` — does it, then re-checks the item. Endpoints: `probe` (checks it now). Security (new-device sign-ins): `ack` — they were you; sign-ins up to now stop counting (security event `new_devices_acknowledged`). Repos: the master machine's own `git-pull` / `git-fetch` command, offered only when its `agent.json` defines it; the request waits for that run and the repo scan after it (≤ ~2 min), `note` says if the command did not succeed. `422` for a fix the item does not offer |
 
 Everything that reads "open actions" (project focus, the bots' events, the
 Telegram and e-mail summaries, the session context and `forge_checkup`) skips

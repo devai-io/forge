@@ -40,6 +40,7 @@ const project = (key: string, name: string, s: ProjectStats): Project => ({
   infra_notes: "",
   target_date: null,
   links: [],
+  hide_on_dashboard: false,
   created_at: "2026-09-01T00:00:00Z",
   updated_at: "2026-09-01T00:00:00Z",
   stats: s,

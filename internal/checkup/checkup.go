@@ -13,10 +13,12 @@ import (
 	"net"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/devai-io/forge/internal/backup"
 	"github.com/devai-io/forge/internal/mail"
 	"github.com/devai-io/forge/internal/monitoring"
 	"github.com/devai-io/forge/internal/store"
@@ -30,6 +32,13 @@ type Runner struct {
 
 	// Notify, when set, also delivers each scheduled check-up (Telegram).
 	Notify func(context.Context, *store.Checkup)
+
+	// Version is the server's own release ("v0.1.42"); machines on an
+	// older one are a finding. "dev" or "" turns that check off.
+	Version string
+	// BackupDir is where the server writes its nightly database snapshots;
+	// "" turns the check on Forge's own backups off.
+	BackupDir string
 
 	mu sync.Mutex // one check-up at a time
 }
@@ -193,7 +202,10 @@ func withFixes(it store.CheckItem, fixes ...store.CheckFix) store.CheckItem {
 	return it
 }
 
-var fixProbe = store.CheckFix{ID: "probe", Label: "Probe now"}
+var (
+	fixProbe = store.CheckFix{ID: "probe", Label: "Probe now"}
+	fixAck   = store.CheckFix{ID: "ack", Label: "These were me"}
+)
 
 func allClear(cat, title string) store.CheckItem {
 	return item("ok:"+cat, cat, "ok", title, "", "", "", "")
@@ -411,22 +423,58 @@ func alertChecks(s *monitoring.Snapshot) []store.CheckItem {
 	return out
 }
 
+// backups: Forge's own nightly snapshot, and the database backups the fleet
+// exports as metrics (only when the `pgbackup_*` series exist).
 func (r *Runner) backups(ctx context.Context) []store.CheckItem {
-	ages, err := r.mon.Scalar(ctx, `(time() - max by (host) (pgbackup_last_success_timestamp)) / 3600`)
-	if err != nil || len(ages) == 0 {
-		return nil // not exported on this fleet (yet): no item rather than a false alarm
-	}
 	var out []store.CheckItem
-	for host, hours := range ages {
-		if hours > 26 {
-			out = append(out, item("backup:"+host, "backups", "fail", fmt.Sprintf("Database backup on %s is %.0f h old", host, hours), "",
-				"Check the backup job and its destination on that host", "/monitoring", ""))
+	checked := 0
+	if r.BackupDir != "" {
+		checked++
+		if it := r.forgeBackup(); it != nil {
+			out = append(out, *it)
 		}
 	}
+	ages, err := r.mon.Scalar(ctx, `(time() - max by (host) (pgbackup_last_success_timestamp)) / 3600`)
+	if err == nil {
+		for host, hours := range ages {
+			checked++
+			if hours > 26 {
+				out = append(out, item("backup:"+host, "backups", "fail", fmt.Sprintf("Database backup on %s is %.0f h old", host, hours), "",
+					"Check the backup job and its destination on that host", "/monitoring", ""))
+			}
+		}
+	}
+	if checked == 0 {
+		return nil
+	}
 	if len(out) == 0 {
-		out = append(out, allClear("backups", fmt.Sprintf("Database backups fresh on %d hosts", len(ages))))
+		title := "Forge's own snapshot is fresh"
+		if len(ages) > 0 {
+			title = fmt.Sprintf("Database backups fresh on %d hosts", len(ages))
+			if r.BackupDir != "" {
+				title += ", Forge's own snapshot too"
+			}
+		}
+		out = append(out, allClear("backups", title))
 	}
 	return out
+}
+
+// forgeBackup is the finding about Forge's own nightly snapshot, or nil.
+func (r *Runner) forgeBackup() *store.CheckItem {
+	last := backup.Latest(r.BackupDir)
+	switch {
+	case last.IsZero():
+		it := item("backup:forge", "backups", "fail", "Forge has no database snapshot", r.BackupDir,
+			"Check the server log for \"backup failed\" and that backups/ is writable; `forge backup` takes one now", "/settings", "")
+		return &it
+	case time.Since(last) > 26*time.Hour:
+		it := item("backup:forge", "backups", "fail",
+			fmt.Sprintf("Forge's last database snapshot is %.0f h old", time.Since(last).Hours()), "last "+last.UTC().Format("2006-01-02 15:04")+" UTC",
+			"Check the server log for \"backup failed\" and the free space on its volume; `forge backup` takes one now", "/settings", "")
+		return &it
+	}
+	return nil
 }
 
 // ── Runners, repos, CI ────────────────────────────────────────────────────
@@ -438,6 +486,65 @@ func (r *Runner) runners(ctx context.Context) []store.CheckItem {
 	if err != nil || len(rs) == 0 {
 		return nil
 	}
+	return append(r.masterCheck(rs), r.versionChecks(rs)...)
+}
+
+// versionChecks: a machine on an older Forge than the server misses fixes
+// and may speak an older protocol. Machines that never reported a version
+// (still pairing) are skipped.
+func (r *Runner) versionChecks(rs []store.Runner) []store.CheckItem {
+	if r.Version == "" || r.Version == "dev" {
+		return nil
+	}
+	var out []store.CheckItem
+	for _, rn := range rs {
+		if rn.Version == "" || rn.Version == "dev" || !olderVersion(rn.Version, r.Version) {
+			continue
+		}
+		out = append(out, item("runner-version:"+rn.Name, "runners", "warn",
+			fmt.Sprintf("%s runs Forge %s, the server %s", rn.Name, rn.Version, r.Version), "",
+			"Run `forge update` on it (it switches once no run is in progress)", "/machines", ""))
+	}
+	return out
+}
+
+// olderVersion compares "v1.2.3"-style releases numerically; anything it
+// cannot parse counts as not older, so odd builds raise no alarm.
+func olderVersion(a, b string) bool {
+	pa, oka := parseVersion(a)
+	pb, okb := parseVersion(b)
+	if !oka || !okb {
+		return false
+	}
+	for i := range pa {
+		if pa[i] != pb[i] {
+			return pa[i] < pb[i]
+		}
+	}
+	return false
+}
+
+func parseVersion(v string) ([3]int, bool) {
+	var out [3]int
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if i := strings.IndexAny(v, "-+ "); i >= 0 {
+		v = v[:i]
+	}
+	parts := strings.Split(v, ".")
+	if len(parts) != 3 {
+		return out, false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return out, false
+		}
+		out[i] = n
+	}
+	return out, true
+}
+
+func (r *Runner) masterCheck(rs []store.Runner) []store.CheckItem {
 	online := 0
 	for _, rn := range rs {
 		if rn.Online {
@@ -583,9 +690,9 @@ func (r *Runner) security(ctx context.Context) []store.CheckItem {
 			"Enrol an authenticator app under Settings → Two-factor", "/settings", ""))
 	}
 	if n, err := r.store.NewDeviceLogins(ctx, 7*24*time.Hour); err == nil && n > 0 {
-		out = append(out, item("security:new-devices", "security", "warn",
+		out = append(out, withFixes(item("security:new-devices", "security", "warn",
 			fmt.Sprintf("%d sign-in(s) from new devices in the last 7 days", n), "",
-			"Check Settings → Security; if one is not yours, change the password (signs the others out)", "/settings", ""))
+			"Check Settings → Security; if one is not yours, change the password (signs the others out). If they were all you, say so: only later ones count then", "/settings", ""), fixAck))
 	}
 	if len(out) == 0 {
 		out = append(out, allClear("security", "Password changed, two-factor on, no new devices this week"))

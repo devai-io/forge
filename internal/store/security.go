@@ -94,11 +94,28 @@ func (s *Store) SeenDevice(ctx context.Context, ip, userAgent string) (known boo
 }
 
 // NewDeviceLogins counts sign-ins from previously unknown devices in a window.
+// Sign-ins up to the last acknowledgement ("these were me", from the
+// check-up) are not counted.
 func (s *Store) NewDeviceLogins(ctx context.Context, since time.Duration) (int, error) {
+	var ack string
+	if _, err := s.getSetting(ctx, newDevicesAckKey, &ack); err != nil {
+		return 0, err
+	}
 	var n int
 	err := s.DB.QueryRow(ctx, `SELECT count(*) FROM security_events
-		WHERE kind = 'login_new_device' AND at > ts_add(now(), -$1)`, since.Seconds()).Scan(&n)
+		WHERE kind = 'login_new_device' AND at > ts_add(now(), -$1) AND ($2 = '' OR at > $2)`, since.Seconds(), ack).Scan(&n)
 	return n, err
+}
+
+const newDevicesAckKey = "security.new_devices_ack"
+
+// AckNewDeviceLogins marks every new-device sign-in so far as the user's own.
+func (s *Store) AckNewDeviceLogins(ctx context.Context) error {
+	var now string
+	if err := s.DB.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
+		return err
+	}
+	return s.putSetting(ctx, newDevicesAckKey, now)
 }
 
 // RevokeOtherSessions ends every session but the current one.

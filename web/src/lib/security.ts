@@ -18,6 +18,7 @@ export const SECURITY_KINDS: Record<SecurityKind, KindMeta> = {
   session_revoked: { label: "Session signed out", tone: "neutral", group: "account" },
   sessions_revoked_others: { label: "Other sessions signed out", tone: "neutral", group: "account" },
   devices_forgotten: { label: "Trusted devices forgotten", tone: "neutral", group: "account" },
+  new_devices_acknowledged: { label: "New-device sign-ins confirmed as yours", tone: "neutral", group: "account" },
   vault_reveal: { label: "Vault secret revealed", tone: "warning", group: "sensitive" },
   vault_download: { label: "Vault file downloaded", tone: "warning", group: "sensitive" },
   vault_bundle: { label: "Repo files downloaded", tone: "warning", group: "sensitive" },

@@ -393,6 +393,10 @@ func serve(ctx context.Context, cfg config.Config, database *db.DB, st *store.St
 		GrafanaPublicURL:   cfg.GrafanaPublicURL,
 	}, api.MonitoringSources{Store: st, Box: box})
 	checkups := checkup.New(st, fleet, mailer, cfg.PublicURL)
+	checkups.Version = cfg.Version
+	if cfg.BackupKeep > 0 {
+		checkups.BackupDir = cfg.BackupDir()
+	}
 	app := api.New(cfg, st, mailer, mon, api.Deps{Box: box, Mon: fleet, Checkups: checkups})
 	checkups.Notify = app.NotifyCheckup
 	go checkups.Loop(ctx)
