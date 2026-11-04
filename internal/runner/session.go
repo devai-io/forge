@@ -28,7 +28,9 @@ import (
 // After a turn the session waits idle_minutes for a follow-up, then parks:
 // the process exits, the run stays open on Forge (waiting), and a reply
 // queues it again — resumed in place (Resumes > 0: no prompt is sent again,
-// only inbox items after InboxAfter are read). Only "end" (Finish) closes it.
+// only inbox items after InboxAfter are read). Only "end" (Finish) closes it
+// — or the end of the turn, for a one-turn run (OneTurn: a status check from
+// the dashboard's Refresh), which then finishes instead of parking.
 
 // interactiveArgs are what an interactive run adds to the claude command.
 var interactiveArgs = []string{"--input-format", "stream-json", "--permission-prompt-tool", "stdio", "--replay-user-messages"}
@@ -201,6 +203,11 @@ func (s *session) observe(line []byte) bool {
 // turnDone: Claude Code answered; wait for a follow-up, for a while, then
 // park the session (the run stays open).
 func (s *session) turnDone() {
+	if s.run.OneTurn {
+		s.ship.send(textEvent("system", "one turn: the answer is in, so the session ends and the run finishes (Continue starts a new run on this session)"))
+		s.closeInput()
+		return
+	}
 	s.idleWait()
 	s.setAwaiting("reply")
 }

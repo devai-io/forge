@@ -391,6 +391,10 @@ type Run struct {
 	Resumes    int   `json:"resumes"`
 	// FinishRequested: the user pressed Finish while the session was live.
 	FinishRequested bool `json:"finish_requested"`
+	// OneTurn: the run finishes once its session has answered (no idle wait,
+	// no parked run); a question left open when it parked still keeps it
+	// waiting. Continue starts a new run on the same session.
+	OneTurn bool `json:"one_turn"`
 	// Handoff says where the session continued outside Forge ("" = it did not).
 	Handoff string `json:"handoff"`
 	// ResumeHint is the shell line that opens this run's session in Claude

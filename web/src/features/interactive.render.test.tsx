@@ -53,6 +53,7 @@ const run = (over: Partial<Run> = {}): Run => ({
   inbox_after: 0,
   resumes: 0,
   finish_requested: false,
+  one_turn: false,
   handoff: "",
   resume_hint: "",
   ...over,

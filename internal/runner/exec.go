@@ -38,6 +38,9 @@ type claimedRun struct {
 	// already has the prompt; only inbox items after InboxAfter are new.
 	Resumes    int   `json:"resumes"`
 	InboxAfter int64 `json:"inbox_after"`
+	// OneTurn: the session answers (the prompt, or the message that resumed
+	// it) and closes; the run finishes instead of waiting for a reply.
+	OneTurn bool `json:"one_turn"`
 	// Setup and Assistant come alongside the run in the claim answer.
 	Setup     *engineSetup    `json:"-"`
 	Assistant *assistantSetup `json:"-"`

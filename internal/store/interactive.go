@@ -291,8 +291,10 @@ func answerText(p *RunPrompt, a PromptAnswer) string {
 
 // SendRunMessage queues a follow-up message for the session. A waiting run
 // (its session parked) is queued again to resume in place on its machine;
-// it reports whether that happened (the caller wakes the machine).
-func (s *Store) SendRunMessage(ctx context.Context, runID int64, text string) (requeued bool, err error) {
+// it reports whether that happened (the caller wakes the machine). oneTurn
+// makes a resumed run finish once it has answered (a live session is not
+// changed: it keeps its own lifecycle).
+func (s *Store) SendRunMessage(ctx context.Context, runID int64, text string, oneTurn bool) (requeued bool, err error) {
 	run, err := s.RunByID(ctx, runID)
 	if err != nil {
 		return false, err
@@ -333,6 +335,11 @@ func (s *Store) SendRunMessage(ctx context.Context, runID int64, text string) (r
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO run_inbox (run_id, kind, data) VALUES ($1, 'message', $2)`, runID, string(data)); err != nil {
 			return err
+		}
+		if oneTurn && (run.Status == "waiting" || (run.Status == "queued" && run.Resumes > 0)) {
+			if _, err := tx.Exec(ctx, `UPDATE runs SET one_turn = true WHERE id = $1`, runID); err != nil {
+				return err
+			}
 		}
 		_, err := tx.Exec(ctx, `UPDATE runs SET awaiting = '' WHERE id = $1`, runID)
 		return err

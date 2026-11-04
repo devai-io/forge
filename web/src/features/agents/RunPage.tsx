@@ -144,6 +144,11 @@ function RunView({
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <RunStatusBadge run={run} />
+            {run.one_turn && open ? (
+              <span className="text-[11.5px] text-fg-3" title="Finishes once the session has answered; Continue starts a new run on the session">
+                one turn
+              </span>
+            ) : null}
             {canHandoff ? (
               <Button
                 size="sm"

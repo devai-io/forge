@@ -12,6 +12,10 @@
 //   no session yet     → a new run on the default machine, in the task's repo
 //   left alone         → queued, ending, waiting for your answer, handed off to
 //                        a terminal, or nowhere to run (no machine, no repo)
+//
+// Every run Refresh starts or resumes is a one-turn run: once its session has
+// answered, the run finishes instead of parking, so a status check on a stale
+// session leaves no open run behind (Continue still works on the session).
 
 import type { Run, RunInput, Task } from "@/api/types";
 
@@ -68,12 +72,13 @@ export function planRefresh(
 
   const forOpen = (key: string, task: Task | null, run: Run): RefreshStep => {
     if (run.status === "queued") return { key, task, run, action: "skip", why: "about to start" };
-    if (run.cancel_requested || run.finish_requested) return { key, task, run, action: "skip", why: "ending" };
     if (run.status === "waiting") {
+      // Parked: Finish pressed earlier no longer means anything here (the session is gone).
       const same = run.model === settings.model && run.effort === settings.effort;
       if (same || !onClaude(run)) return { key, task, run, action: "resume", why: same ? "parked: resume it" : `parked: resume it (stays on ${run.engine})` };
       return { key, task, run, action: "continue", parked: true, why: `parked: continue it on ${label}` };
     }
+    if (run.cancel_requested || run.finish_requested) return { key, task, run, action: "skip", why: "ending" };
     if (run.awaiting === "answer") return { key, task, run, action: "skip", why: "waiting for your answer" };
     return { key, task, run, action: "ask", why: run.awaiting === "reply" ? "turn ended: ask for status" : "running: ask for status" };
   };
@@ -125,7 +130,12 @@ export function startText(task: Task): string {
   ].join("\n");
 }
 
-/** A follow-up run continuing `run`'s session (same machine and folder). */
+/** The message that bumps an open run: a parked one resumes for one turn, then finishes. */
+export function messageInput(run: Pick<Run, "status">, task: Task | null): { text: string; one_turn: boolean } {
+  return { text: refreshText(task), one_turn: run.status === "waiting" };
+}
+
+/** A follow-up run continuing `run`'s session (same machine and folder), for one turn. */
 export function continueInput(run: Run, task: Task | null, settings: BumpSettings): RunInput {
   const claude = onClaude(run);
   return {
@@ -138,12 +148,13 @@ export function continueInput(run: Run, task: Task | null, settings: BumpSetting
     effort: (claude ? settings.effort : run.effort) || undefined,
     interactive: run.interactive || undefined,
     worktree: false,
+    one_turn: true,
     task_id: task?.id ?? run.task_id,
     resume_run_id: run.id,
   };
 }
 
-/** A new Claude run for a task that had no session. */
+/** A new Claude run for a task that had no session, for one turn. */
 export function startInput(task: Task, t: StartTarget, settings: BumpSettings): RunInput {
   return {
     runner_id: t.runner_id,
@@ -156,6 +167,7 @@ export function startInput(task: Task, t: StartTarget, settings: BumpSettings): 
     permission_mode: t.permission_mode,
     interactive: t.interactive || undefined,
     worktree: false,
+    one_turn: true,
     task_id: task.id,
   };
 }

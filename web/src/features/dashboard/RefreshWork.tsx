@@ -18,9 +18,9 @@ import { defaultRunner } from "@/lib/agents";
 import {
   DEFAULT_BUMP,
   continueInput,
+  messageInput,
   modelLabel,
   planRefresh,
-  refreshText,
   startInput,
   summarize,
   type BumpSettings,
@@ -119,7 +119,7 @@ export function RefreshWorkDialog({ tasks, open, onClose }: { tasks: Task[]; ope
           if (s.parked) await api.post<Run>(`/runs/${s.run!.id}/finish`).catch(() => undefined);
         } else {
           try {
-            await api.post<Run>(`/runs/${s.run!.id}/messages`, { text: refreshText(s.task) });
+            await api.post<Run>(`/runs/${s.run!.id}/messages`, messageInput(s.run!, s.task));
           } catch (err) {
             // A parked session on a machine that cannot resume in place: continue it instead.
             if (s.action === "resume" && err instanceof ApiError && err.status === 422) {
@@ -147,7 +147,7 @@ export function RefreshWorkDialog({ tasks, open, onClose }: { tasks: Task[]; ope
       open
       onClose={busy ? () => {} : onClose}
       title="Refresh what is in progress"
-      description="Every task's agent session updates the task's status (done, blocked, or a one-line note) and keeps going; a task with no session gets one."
+      description="Every task's agent session updates the task's status (done, blocked, or a one-line note) and keeps going; a task with no session gets one. A run this starts or resumes finishes once it has answered — Continue it from its page to go on."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={busy}>

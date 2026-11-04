@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { Dashboard, Run } from "@/api/types";
 import { WorkingOnWidget } from "@/features/dashboard/TopWidgets";
 import { ShellProvider } from "@/features/shell/context";
-import { DEFAULT_BUMP, continueInput, modelLabel, planRefresh, refreshText, startInput, summarize, type StartTarget } from "@/lib/working";
+import { DEFAULT_BUMP, continueInput, messageInput, modelLabel, planRefresh, refreshText, startInput, summarize, type StartTarget } from "@/lib/working";
 import { makeTask } from "@/test/fixtures";
 import { jsonResponse, renderWithProviders } from "@/test/render";
 
@@ -29,6 +29,7 @@ const run = (o: Partial<Run>): Run =>
     status: "running",
     cancel_requested: false,
     finish_requested: false,
+  one_turn: false,
     session_id: "sess-1",
     handoff: "",
     ...o,
@@ -104,6 +105,7 @@ describe("planRefresh", () => {
       effort: "medium",
       task_id: 3,
       resume_run_id: 12,
+      one_turn: true,
       prompt: refreshText(tC),
     });
     expect(startInput(tD, target, DEFAULT_BUMP)).toMatchObject({
@@ -114,8 +116,12 @@ describe("planRefresh", () => {
       effort: "medium",
       permission_mode: "bypassPermissions",
       interactive: true,
+      one_turn: true,
       task_id: 4,
     });
+    // A parked session resumes for one turn, then finishes; a live one keeps its lifecycle.
+    expect(messageInput(run({ status: "waiting" }), tC)).toEqual({ text: refreshText(tC), one_turn: true });
+    expect(messageInput(run({ status: "running" }), null)).toEqual({ text: refreshText(null), one_turn: false });
     expect(modelLabel("claude-opus-5-5")).toBe("Opus 5.5");
     expect(refreshText(null)).toContain("carry on");
   });

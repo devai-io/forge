@@ -104,3 +104,42 @@ func TestAwaitingReplyAfterAQuickFollowUpIsReported(t *testing.T) {
 		t.Fatalf("awaiting reports = %q, want the second reply too", got)
 	}
 }
+
+// closeRecorder is a session input that remembers being closed.
+type closeRecorder struct{ closed chan struct{} }
+
+func (c *closeRecorder) Write(p []byte) (int, error) { return len(p), nil }
+func (c *closeRecorder) Close() error                { close(c.closed); return nil }
+
+// A one-turn session ends when its turn does; a plain one waits for a reply.
+func TestOneTurnSessionClosesAfterTheTurn(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := New(&Config{APIURL: srv.URL, Token: "frg_test", IdleMinutes: 15})
+	ship := newShipper(r.client, 7)
+	defer ship.close()
+
+	w := &closeRecorder{closed: make(chan struct{})}
+	s := newSession(ctx, r, claimedRun{ID: 7, OneTurn: true}, ship, w)
+	s.turnDone()
+	select {
+	case <-w.closed:
+	default:
+		t.Fatal("a one-turn session must close its input when the turn ends")
+	}
+	if s.isParked() {
+		t.Fatal("finished, not parked")
+	}
+
+	w2 := &closeRecorder{closed: make(chan struct{})}
+	s2 := newSession(ctx, r, claimedRun{ID: 8}, ship, w2)
+	s2.turnDone()
+	select {
+	case <-w2.closed:
+		t.Fatal("a plain session waits for a reply after its turn")
+	default:
+	}
+	s2.closeInput() // stops the idle timer
+}

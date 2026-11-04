@@ -362,6 +362,7 @@ export type Run = {
   inbox_after: number;
   resumes: number; // times a parked session was picked back up in this run
   finish_requested: boolean; // Finish pressed while the session was live
+  one_turn: boolean; // finishes once the session has answered (Refresh); a question left open still keeps it waiting
   handoff: string; // where the session continued outside Forge ("desk · tmux run-52"), "" if not
   resume_hint: string; // the shell line that opens the session in Claude Code / Codex on its machine
 };
@@ -683,6 +684,7 @@ export type RunInput = {
   engine?: Engine; // omitted = the server's default (Settings → Agent engine)
   effort?: string; // claude --effort, one of EngineStatus.efforts; omitted = default
   interactive?: boolean; // keep the session open (needs a runner with capabilities.interactive)
+  one_turn?: boolean; // the session answers, then the run finishes (no parked run); Continue still works
 };
 
 export type TaskFilters = {

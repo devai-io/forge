@@ -333,12 +333,12 @@ top = first − 1000).
 | POST | /api/runners/{id}/rotate | – | `{runner: Runner, token: string}` — the token is shown once (manual setup) |
 | DELETE | /api/runners/{id} | – | `204` |
 | GET | /api/runs | query `project` (key), `task` (id), `status`, `limit` (default 50) | `{runs: Run[]}` newest first |
-| POST | /api/runs | `{runner_id, repo_id, kind, prompt?, command?, permission_mode?, model?, engine?, effort?, interactive?, worktree?, task_id?, resume_run_id?}` | `201 Run` (queued). `resume_run_id` copies runner/repo from that run and requires it to have a `session_id` |
+| POST | /api/runs | `{runner_id, repo_id, kind, prompt?, command?, permission_mode?, model?, engine?, effort?, interactive?, worktree?, task_id?, resume_run_id?, one_turn?}` | `201 Run` (queued). `resume_run_id` copies runner/repo from that run and requires it to have a `session_id`; `one_turn` makes an agent run finish once its session has answered (see *One-turn runs*) |
 | GET | /api/runs/{id} | – | `Run` |
 | GET | /api/runs/{id}/events | query `after` (seq, default 0), `limit` (default 500) | `{events: RunEvent[], run: Run, prompts: RunPrompt[]}` — poll every ~1.5 s while the run is active; `prompts` is the whole list (empty unless interactive) |
 | POST | /api/runs/{id}/cancel | – | `Run` (queued → cancelled immediately; running → `cancel_requested`, the runner kills it) |
 | POST | /api/runs/{id}/prompts/{pid}/answer | `PromptAnswer` | `{prompt: RunPrompt}`; `409` if already answered, `422` for a decision the prompt's kind does not take or a run that is not a running interactive one |
-| POST | /api/runs/{id}/messages | `{text}` | `Run` — a follow-up for the session (read when it finishes what it is doing). On a `waiting` run: the same run is queued again to resume its session in place (`resumes` + 1); `422` if its machine's agent cannot (then use Continue) |
+| POST | /api/runs/{id}/messages | `{text, one_turn?}` | `Run` — a follow-up for the session (read when it finishes what it is doing). On a `waiting` run: the same run is queued again to resume its session in place (`resumes` + 1), and `one_turn: true` makes it finish once it has answered; `422` if its machine's agent cannot (then use Continue). `one_turn` is ignored for a live session |
 | POST | /api/runs/{id}/end | – | `Run` — same as `finish` |
 | POST | /api/runs/{id}/finish | – | `Run` — the work is done: a `waiting` (or resume-`queued`) run becomes `succeeded` at once; a running one gets `finish_requested` (an interactive session ends after its current turn) and then finishes as `succeeded`; `422` for a run that is already over |
 | POST | /api/runs/{id}/handoff | – | **elevation**. `{run: Run, runner_id, session}` — opens the run's session in Claude Code (Codex: `codex resume`) in a tmux session `run-<id>` on its machine, in the run's folder, with the run's skip-permissions setting where the machine allows it. A live interactive session is parked first (up to 45 s). The run then ends (`waiting` → `succeeded`) with `handoff` saying where it went. `409 terminal_disabled` / `runner_offline` / `agent_outdated`; `422` while the run is queued or a one-shot run is still working |
@@ -382,11 +382,23 @@ Claude Code's own `/resume` picker leaves out sessions started with
 `claude -p` — every run. To get into one: `handoff` (a terminal on the
 machine), `forge resume [RUN]` in a shell there, or the run's `resume_hint`.
 
+#### One-turn runs
+
+A run with `one_turn: true` (on `POST /api/runs`, or on a message to a
+`waiting` run) does not stay open: once its session has answered, the machine
+closes the session and the run finishes as `succeeded` — no idle wait, no
+parked run. A question or approval it left open when it parked keeps it
+`waiting` until answered; the turn the answer starts is the one that ends it.
+The dashboard's Refresh uses one-turn runs for every run it starts or resumes,
+so a status check on a stale session leaves no open run behind. The session
+is kept: Continue (`resume_run_id`) starts a new run on it.
+
 ```ts
 type Run = { /* … */ interactive: boolean;
              awaiting: "" | "answer" | "reply";     // running interactive runs: a pending prompt / the turn ended
              inbox_after: number; resumes: number;  // in-place resumes of a parked session
              finish_requested: boolean;             // Finish pressed while the session was live
+             one_turn: boolean;                     // finishes once the session has answered (see One-turn runs)
              handoff: string;                       // where the session continued outside Forge, "" if not
              resume_hint: string };                 // "cd '/path' && claude --resume <session>" ("" without a session)
 type RunnerCapabilities = { /* … */ interactive?: boolean; approvals?: boolean;

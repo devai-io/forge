@@ -47,12 +47,13 @@ func (s *Server) sendRunMessage(w http.ResponseWriter, r *http.Request, u *store
 		return
 	}
 	var in struct {
-		Text string `json:"text"`
+		Text    string `json:"text"`
+		OneTurn bool   `json:"one_turn"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	requeued, err := s.store.SendRunMessage(r.Context(), id, in.Text)
+	requeued, err := s.store.SendRunMessage(r.Context(), id, in.Text, in.OneTurn)
 	if err != nil {
 		writeErr(w, r, err)
 		return

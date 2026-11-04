@@ -243,7 +243,7 @@ SELECT r.id, coalesce(r.runner_id, 0), coalesce(rn.name, r.runner_name), coalesc
        CASE WHEN r.status <> 'running' THEN ''
             WHEN EXISTS (SELECT 1 FROM run_prompts pr WHERE pr.run_id = r.id AND pr.status = 'pending') THEN 'answer'
             ELSE r.awaiting END,
-       r.inbox_after, r.resumes, r.finish_requested, r.handoff
+       r.inbox_after, r.resumes, r.finish_requested, r.handoff, r.one_turn
 FROM runs r
 LEFT JOIN projects p ON p.id = r.project_id
 LEFT JOIN repos rp ON rp.id = r.repo_id
@@ -259,7 +259,7 @@ func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 		&r.Model, &r.Worktree, &r.ResumeRunID, &r.Status, &r.CancelRequested, &r.SessionID, &r.Result, &r.Error,
 		&r.ExitCode, &r.CostUSD, &r.NumTurns, &r.DurationMS, &r.CreatedAt, &r.StartedAt, &r.FinishedAt,
 		&r.RepoPath, &r.ResumeSession, &r.ModelNote, &r.Engine, &r.Effort, &r.ChatTurnID, &usage, &r.AppendSystem,
-		&r.Interactive, &r.Cwd, &r.Awaiting, &r.InboxAfter, &r.Resumes, &r.FinishRequested, &r.Handoff); err != nil {
+		&r.Interactive, &r.Cwd, &r.Awaiting, &r.InboxAfter, &r.Resumes, &r.FinishRequested, &r.Handoff, &r.OneTurn); err != nil {
 		return nil, mapErr(err)
 	}
 	r.Usage = json.RawMessage(usage)
@@ -409,6 +409,9 @@ type RunInput struct {
 	// Interactive keeps the session open for questions and follow-ups (an
 	// agent run on a machine that supports it).
 	Interactive bool `json:"interactive"`
+	// OneTurn: the session answers the prompt and the run finishes, instead
+	// of waiting for a reply (agent runs; the dashboard's Refresh uses it).
+	OneTurn bool `json:"one_turn"`
 }
 
 // CreateRun validates a run against what its runner says it can do, then
@@ -554,11 +557,12 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO runs (runner_id, runner_name, project_id, repo_id, task_id, kind, prompt, command,
 			                  permission_mode, model, worktree, resume_run_id, resume_session, model_note, engine, effort, chat_turn_id,
-			                  append_system, interactive, cwd)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING id`,
+			                  append_system, interactive, cwd, one_turn)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21) RETURNING id`,
 			runner.ID, runner.Name, projectID, repoID, in.TaskID, in.Kind, in.Prompt, in.Command,
 			in.PermissionMode, in.Model, in.Worktree, in.ResumeRunID, resumeSession, in.ModelNote, in.Engine,
-			in.Effort, in.ChatTurnID, in.AppendSystem, in.Interactive, in.Cwd).Scan(&id); err != nil {
+			in.Effort, in.ChatTurnID, in.AppendSystem, in.Interactive, in.Cwd,
+			in.OneTurn && in.Kind == "agent" && in.ChatTurnID == nil).Scan(&id); err != nil {
 			return mapErr(err)
 		}
 		if home {
@@ -714,8 +718,14 @@ func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishI
 	status := in.Status
 	if status == "succeeded" || status == "waiting" {
 		status = "succeeded"
-		if cur.KeepsOpen() && !cur.FinishRequested && cur.Handoff == "" {
-			status = "waiting"
+		if cur.KeepsOpen() && cur.Handoff == "" {
+			if !cur.FinishRequested && !cur.OneTurn {
+				status = "waiting"
+			} else if in.Status == "waiting" && s.hasPendingPrompt(ctx, runID) {
+				// Parked on an open question: it stays answerable, and the
+				// turn the answer starts is the one that ends the run.
+				status = "waiting"
+			}
 		}
 	}
 	inboxAfter := cur.InboxAfter
@@ -788,6 +798,13 @@ func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishI
 		s.runBotEvent(ctx, *dirtyProject, runID, repoName, in)
 	}
 	return requeued, err
+}
+
+// hasPendingPrompt: the run's session has a question or approval open.
+func (s *Store) hasPendingPrompt(ctx context.Context, runID int64) bool {
+	var pending bool
+	err := s.DB.QueryRow(ctx, `SELECT exists(SELECT 1 FROM run_prompts WHERE run_id = $1 AND status = 'pending')`, runID).Scan(&pending)
+	return err == nil && pending
 }
 
 // resumesInPlace: the runner's agent can resume a parked run in place.

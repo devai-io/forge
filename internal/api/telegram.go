@@ -604,7 +604,7 @@ func (s *Server) tgReply(ctx context.Context, set store.TelegramSettings, l *sto
 		if l.RunID == nil {
 			return
 		}
-		requeued, err := s.store.SendRunMessage(ctx, *l.RunID, text)
+		requeued, err := s.store.SendRunMessage(ctx, *l.RunID, text, false)
 		if err != nil {
 			say("Not sent: " + tgErrText(err))
 			return
