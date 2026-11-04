@@ -435,6 +435,10 @@ type Dashboard struct {
 	Daily   []DayCount     `json:"daily"`
 	Focus   []Task         `json:"focus"`
 	Overdue []Task         `json:"overdue"`
+	// DueSoon: not done, due today or within the next 3 days.
+	DueSoon []Task `json:"due_soon"`
+	// Blocked: every blocked task, the one waiting longest first.
+	Blocked []Task `json:"blocked"`
 	// InProgress: every task being worked on, in any project.
 	InProgress    []Task     `json:"in_progress"`
 	Projects      []Project  `json:"projects"`

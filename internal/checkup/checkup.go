@@ -1,6 +1,8 @@
 // Package checkup runs the daily check-up: one pass over everything Forge
 // can see (endpoints, TLS, hosts, Nomad, Grafana alerts, backups, runners,
-// repos and CI, tasks, vault expiries) that turns into the day's action list.
+// repos and CI, vault expiries, the account's security posture) that turns
+// into the day's action list. Tasks are not in it: what is overdue, due soon
+// or blocked is the dashboard's job (store.Dashboard), not an infra finding.
 package checkup
 
 import (
@@ -112,7 +114,7 @@ func (r *Runner) Run(ctx context.Context, trigger, date string) (*store.Checkup,
 
 // categories, in the order the action list shows them. "repos" also yields
 // the "ci" items.
-var categories = []string{"endpoints", "tls", "hosts", "nomad", "alerts", "backups", "runners", "repos", "tasks", "vault", "security"}
+var categories = []string{"endpoints", "tls", "hosts", "nomad", "alerts", "backups", "runners", "repos", "vault", "security"}
 
 // evaluate runs the checks for `only` (every category when nil) against the
 // fleet as it is right now, with a fresh monitoring snapshot when a check
@@ -146,8 +148,6 @@ func (r *Runner) evaluate(ctx context.Context, date string, only map[string]bool
 			add(r.runners(ctx))
 		case "repos":
 			add(r.repos(ctx))
-		case "tasks":
-			add(r.tasks(ctx, date))
 		case "vault":
 			add(r.vault(ctx, date))
 		case "security":
@@ -193,14 +193,7 @@ func withFixes(it store.CheckItem, fixes ...store.CheckFix) store.CheckItem {
 	return it
 }
 
-var (
-	fixDone     = store.CheckFix{ID: "done", Label: "Done"}
-	fixWeek     = store.CheckFix{ID: "week", Label: "Due in a week"}
-	fixClearDue = store.CheckFix{ID: "clear_due", Label: "No due date"}
-	fixUnblock  = store.CheckFix{ID: "unblock", Label: "Back to to-do"}
-	fixBacklog  = store.CheckFix{ID: "backlog", Label: "Backlog"}
-	fixProbe    = store.CheckFix{ID: "probe", Label: "Probe now"}
-)
+var fixProbe = store.CheckFix{ID: "probe", Label: "Probe now"}
 
 func allClear(cat, title string) store.CheckItem {
 	return item("ok:"+cat, cat, "ok", title, "", "", "", "")
@@ -543,39 +536,7 @@ func (r *Runner) repos(ctx context.Context) []store.CheckItem {
 	return append(out, ci...)
 }
 
-// ── Tasks & vault ─────────────────────────────────────────────────────────
-
-func (r *Runner) tasks(ctx context.Context, today string) []store.CheckItem {
-	var out []store.CheckItem
-	// Every overdue task is its own item (each can be snoozed or fixed in
-	// one click); the e-mail and Telegram summaries cut the list short.
-	overdue, _ := r.store.OverdueTasks(ctx, today)
-	for _, t := range overdue {
-		out = append(out, withFixes(item("task:"+t.Ref, "tasks", "warn", fmt.Sprintf("%s overdue since %s: %s", t.Ref, deref(t.DueDate), t.Title), "",
-			"Do it today, move the date, or drop it", fmt.Sprintf("/p/%s?task=%d", t.ProjectKey, t.ID), t.ProjectKey), fixDone, fixWeek, fixClearDue))
-	}
-	due, _ := r.store.DueOn(ctx, today)
-	for _, t := range due {
-		out = append(out, withFixes(item("due:"+t.Ref, "tasks", "warn", fmt.Sprintf("%s due today: %s", t.Ref, t.Title), "",
-			"Get it done or move it", fmt.Sprintf("/p/%s?task=%d", t.ProjectKey, t.ID), t.ProjectKey), fixDone, fixWeek))
-	}
-	blocked, _ := r.store.StaleBlocked(ctx, 3)
-	for _, t := range blocked {
-		out = append(out, withFixes(item("blocked:"+t.Ref, "tasks", "warn", fmt.Sprintf("%s blocked for 3+ days: %s", t.Ref, t.Title), "",
-			"Unblock it (who/what is it waiting on?) or park it in the backlog", fmt.Sprintf("/p/%s?task=%d", t.ProjectKey, t.ID), t.ProjectKey), fixUnblock, fixBacklog))
-	}
-	if len(out) == 0 {
-		out = append(out, allClear("tasks", "Nothing overdue, due today or stuck"))
-	}
-	return out
-}
-
-func deref(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
+// ── Vault ─────────────────────────────────────────────────────────────────
 
 func (r *Runner) vault(ctx context.Context, today string) []store.CheckItem {
 	t, _ := time.Parse("2006-01-02", today)

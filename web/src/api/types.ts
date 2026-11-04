@@ -420,6 +420,8 @@ export type Dashboard = {
   daily: DayCount[];
   focus: Task[];
   overdue: Task[];
+  due_soon: Task[]; // not done, due today or within 3 days
+  blocked: Task[]; // waiting longest first
   in_progress: Task[]; // every task being worked on, in any project
   projects: Project[];
   endpoints_down: Endpoint[];
@@ -581,7 +583,7 @@ export type CheckItem = {
   snoozed_until: string | null; // null while snoozed = until the item changes
   fixes: CheckFix[]; // one-click fixes; each re-checks the item after
 };
-/** "done" | "week" | "clear_due" | "unblock" | "backlog" (tasks), "probe" (endpoints), a machine command like "git-pull" (repos). */
+/** "probe" (endpoints), a machine command like "git-pull" (repos). Check-ups before v0.1.42 also had "done" | "week" | "clear_due" | "unblock" | "backlog" on task items. */
 export type CheckFix = { id: string; label: string };
 export type ResolvedItem = {
   key: string;

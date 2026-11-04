@@ -14,7 +14,7 @@ export const CATEGORIES: { value: CheckCategory; label: string }[] = [
   { value: "repos", label: "Repositories" },
   { value: "ci", label: "CI" },
   { value: "vault", label: "Vault" },
-  { value: "tasks", label: "Tasks" },
+  { value: "tasks", label: "Tasks" }, // check-ups before v0.1.42 only; tasks live on the dashboard now
   { value: "security", label: "Security" },
 ];
 

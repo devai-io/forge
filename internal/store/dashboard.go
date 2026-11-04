@@ -137,6 +137,14 @@ func (s *Store) Dashboard(ctx context.Context, tz string) (*Dashboard, error) {
 		` ORDER BY t.due_date, `+priorityOrder+` LIMIT 20`, today); err != nil {
 		return nil, err
 	}
+	if d.DueSoon, err = s.queryTasks(ctx, taskSelect+` WHERE t.status <> 'done' AND t.due_date >= $1 AND t.due_date <= date($1, '+3 days')`+notArchived+
+		` ORDER BY t.due_date, `+priorityOrder+` LIMIT 20`, today); err != nil {
+		return nil, err
+	}
+	if d.Blocked, err = s.queryTasks(ctx, taskSelect+` WHERE t.status = 'blocked'`+notArchived+
+		` ORDER BY t.updated_at, t.id LIMIT 20`); err != nil {
+		return nil, err
+	}
 	if d.InProgress, err = s.queryTasks(ctx, taskSelect+` WHERE t.status = 'in_progress'`+notArchived+
 		` ORDER BY t.updated_at DESC, t.id DESC LIMIT 50`); err != nil {
 		return nil, err

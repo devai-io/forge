@@ -214,6 +214,8 @@ type Dashboard = {
   daily: DayCount[];           // last 28 days, oldest first, includes today
   focus: Task[];               // focus = true and not done, ordered by priority then due date
   overdue: Task[];             // not done, due before today (max 20)
+  due_soon: Task[];            // not done, due today or within 3 days, soonest first (max 20)
+  blocked: Task[];             // status blocked, waiting longest first (max 20)
   in_progress: Task[];         // status in_progress, any project (not archived), latest change first (max 50)
   projects: Project[];         // status != archived, ordered by priority, then name
   endpoints_down: Endpoint[];
@@ -626,7 +628,8 @@ by `key`, and items that were open yesterday and are gone today are the
 type CheckSeverity = "ok" | "warn" | "fail";
 type CheckItem = {
   key: string;               // stable across days, e.g. "endpoint:12", "disk:web-1", "task:ALPHA-3"
-  category: "endpoints" | "tls" | "hosts" | "nomad" | "alerts" | "runners" | "repos" | "ci" | "tasks" | "vault" | "backups" | "security";
+  category: "endpoints" | "tls" | "hosts" | "nomad" | "alerts" | "runners" | "repos" | "ci" | "vault" | "backups" | "security";
+                             // ("tasks" only in check-ups before v0.1.42: overdue / due / blocked tasks are the dashboard's `overdue`, `due_soon`, `blocked` now)
   severity: CheckSeverity;
   title: string; detail: string;
   action: string;            // what to do about it ("" for ok items)
@@ -672,7 +675,7 @@ type Checkup = CheckupSummary & { items: CheckItem[]; resolved: ResolvedItem[] }
 | POST | /api/checkups/{id}/items/{key}/task | `{project_key?}` | `{task: Task, checkup: Checkup}` (label `checkup`); `409` while the linked task is not done |
 | POST | /api/checkups/{id}/items/{key}/recheck | – | `Checkup`: the one check behind the item is run again now; the item gets `checked_at` and either the fresh severity/title/detail or `resolved_at` |
 | POST | /api/checkups/{id}/recheck | – | `Checkup`: the same for every open (non-ok, not snoozed) item; ~1–10 s |
-| POST | /api/checkups/{id}/items/{key}/fix | `{fix}` (one of the item's `fixes`) | `{checkup: Checkup, note: string, run?: Run}` — does it, then re-checks the item. Tasks (overdue / due today / blocked): `done`, `week` (due in 7 days), `clear_due`, `unblock` (to-do), `backlog`. Endpoints: `probe` (checks it now). Repos: the master machine's own `git-pull` / `git-fetch` command, offered only when its `agent.json` defines it; the request waits for that run and the repo scan after it (≤ ~2 min), `note` says if the command did not succeed. `422` for a fix the item does not offer |
+| POST | /api/checkups/{id}/items/{key}/fix | `{fix}` (one of the item's `fixes`) | `{checkup: Checkup, note: string, run?: Run}` — does it, then re-checks the item. Endpoints: `probe` (checks it now). Repos: the master machine's own `git-pull` / `git-fetch` command, offered only when its `agent.json` defines it; the request waits for that run and the repo scan after it (≤ ~2 min), `note` says if the command did not succeed. `422` for a fix the item does not offer |
 
 Everything that reads "open actions" (project focus, the bots' events, the
 Telegram and e-mail summaries, the session context and `forge_checkup`) skips

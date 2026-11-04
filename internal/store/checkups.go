@@ -36,8 +36,8 @@ type CheckItem struct {
 	Snoozed      bool    `json:"snoozed"`
 	SnoozedUntil *string `json:"snoozed_until"`
 	// Fixes are what Forge can do about the item in one click (then it
-	// re-checks it): "done", "week", "clear_due", "unblock", "backlog" on
-	// tasks, "probe" on endpoints, a machine command ("git-pull") on repos.
+	// re-checks it): "probe" on endpoints, a machine command ("git-pull")
+	// on repos.
 	Fixes []CheckFix `json:"fixes"`
 }
 
@@ -491,22 +491,6 @@ func (s *Store) AllRepos(ctx context.Context) ([]RepoWithProject, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
-}
-
-// StaleBlocked lists tasks blocked for more than `days` days.
-func (s *Store) StaleBlocked(ctx context.Context, days int) ([]Task, error) {
-	return s.queryTasks(ctx, taskSelect+fmt.Sprintf(` WHERE t.status = 'blocked' AND t.updated_at < ts_add(now(), -%d * 86400)
-		AND p.status <> 'archived' ORDER BY t.updated_at`, days))
-}
-
-func (s *Store) DueOn(ctx context.Context, date string) ([]Task, error) {
-	return s.queryTasks(ctx, taskSelect+` WHERE t.status <> 'done' AND t.due_date = $1 AND p.status <> 'archived'
-		ORDER BY `+priorityOrder, date)
-}
-
-func (s *Store) OverdueTasks(ctx context.Context, today string) ([]Task, error) {
-	return s.queryTasks(ctx, taskSelect+` WHERE t.status <> 'done' AND t.due_date < $1 AND p.status <> 'archived'
-		ORDER BY t.due_date, `+priorityOrder, today)
 }
 
 // ServersForMonitoring returns name/ip/tags for the monitoring client.

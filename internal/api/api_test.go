@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -541,22 +542,28 @@ func TestTwoFactorLogin(t *testing.T) {
 func TestCheckupAndItemTask(t *testing.T) {
 	h := setup(t)
 	h.login()
-	// An overdue task guarantees at least one action.
-	expect(t, "task", h.do("POST", "/api/tasks", map[string]any{"project_key": "GAME", "title": "Late thing", "due_date": "2020-01-01"}, nil), 201)
+	// An expired vault credential guarantees at least one action.
+	var cred store.VaultItem
+	expect(t, "vault item", h.do("POST", "/api/vault", map[string]any{
+		"name": "Old API key", "kind": "api_key", "project_key": "GAME", "expires_at": "2020-01-01"}, &cred), 201)
+	itemKey := fmt.Sprintf("vault:%d", cred.ID)
 
 	var c store.Checkup
 	expect(t, "run", h.do("POST", "/api/checkups", nil, &c), 201)
-	if c.FinishedAt == nil || c.ActionsTotal == 0 || c.Status == "ok" {
+	if c.FinishedAt == nil || c.ActionsTotal == 0 || c.Status != "fail" {
 		t.Fatalf("checkup = %+v", c.CheckupSummary)
 	}
 	var target *store.CheckItem
 	for i := range c.Items {
-		if strings.HasPrefix(c.Items[i].Key, "task:") {
+		if c.Items[i].Key == itemKey {
 			target = &c.Items[i]
 		}
+		if c.Items[i].Category == "tasks" {
+			t.Fatalf("tasks are the dashboard's business, not a check-up item: %+v", c.Items[i])
+		}
 	}
-	if target == nil {
-		t.Fatalf("no overdue item in %+v", c.Items)
+	if target == nil || target.Severity != "fail" {
+		t.Fatalf("no expired-credential item in %+v", c.Items)
 	}
 	expect(t, "tick", h.do("PATCH", fmt.Sprintf("/api/checkups/%d/items/%s", c.ID, target.Key), map[string]bool{"done": true}, &c), 200)
 	if c.ActionsDone != 1 {
@@ -576,27 +583,20 @@ func TestCheckupAndItemTask(t *testing.T) {
 		t.Fatalf("dashboard checkup = %+v", d.Checkup)
 	}
 
-	// Re-checking the overdue item finds it still overdue; after the task is
-	// done, a re-check resolves it and the whole-list re-check is a no-op.
+	// Re-checking the item finds the credential still expired; once it is
+	// renewed, a re-check resolves it and the whole-list re-check is a no-op.
 	expect(t, "recheck item", h.do("POST", fmt.Sprintf("/api/checkups/%d/items/%s/recheck", c.ID, target.Key), nil, &c), 200)
 	for _, it := range c.Items {
 		if it.Key == target.Key && (it.CheckedAt == nil || it.ResolvedAt != nil) {
-			t.Fatalf("still overdue, so not resolved: %+v", it)
+			t.Fatalf("still expired, so not resolved: %+v", it)
 		}
 	}
 	expect(t, "finish task", h.do("PATCH", fmt.Sprintf("/api/tasks/%d", made.Task.ID), map[string]string{"status": "done"}, nil), 200)
-	// The overdue task itself (not the one made from the item) must be done too.
-	var tasks struct{ Tasks []store.Task }
-	expect(t, "tasks", h.do("GET", "/api/tasks?project=GAME", nil, &tasks), 200)
-	for _, tk := range tasks.Tasks {
-		if tk.Title == "Late thing" {
-			expect(t, "finish late", h.do("PATCH", fmt.Sprintf("/api/tasks/%d", tk.ID), map[string]string{"status": "done"}, nil), 200)
-		}
-	}
+	expect(t, "renew", h.do("PATCH", fmt.Sprintf("/api/vault/%d", cred.ID), map[string]any{"expires_at": "2099-01-01"}, nil), 200)
 	expect(t, "recheck all", h.do("POST", fmt.Sprintf("/api/checkups/%d/recheck", c.ID), nil, &c), 200)
 	for _, it := range c.Items {
 		if it.Key == target.Key && it.ResolvedAt == nil {
-			t.Fatalf("task done, so resolved: %+v", it)
+			t.Fatalf("renewed, so resolved: %+v", it)
 		}
 	}
 
@@ -999,33 +999,60 @@ func TestCheckupFlagsSecurityPosture(t *testing.T) {
 	}
 }
 
-// A check-up item's one-click fix applies and re-checks it: an overdue task
-// moved a week out is no longer overdue, so the item comes back resolved.
+// A check-up item's one-click fix applies and re-checks it: a failing
+// endpoint probed again once it answers is up, so the re-check swaps the
+// "failing" finding for what is true now (it flapped within 24 h).
 func TestCheckupFix(t *testing.T) {
 	h := setup(t)
 	h.login()
-	expect(t, "task", h.do("POST", "/api/tasks", map[string]any{"project_key": "GAME", "title": "Late fix", "due_date": "2020-01-01"}, nil), 201)
+	var code atomic.Int32
+	code.Store(http.StatusInternalServerError)
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(int(code.Load()))
+	}))
+	defer site.Close()
+	var ep store.Endpoint
+	expect(t, "endpoint", h.do("POST", "/api/projects/GAME/endpoints", map[string]any{
+		"name": "Shaky site", "url": site.URL, "kind": "web", "expect_status": 200}, &ep), 201)
+	if ep.LastStatus != "warning" {
+		t.Fatalf("a first failure is a warning, got %+v", ep)
+	}
 	var c store.Checkup
 	expect(t, "run", h.do("POST", "/api/checkups", nil, &c), 201)
 	var target *store.CheckItem
 	for i := range c.Items {
-		if strings.HasPrefix(c.Items[i].Key, "task:") && strings.Contains(c.Items[i].Title, "Late fix") {
+		if c.Items[i].Key == fmt.Sprintf("endpoint:%d", ep.ID) {
 			target = &c.Items[i]
 		}
 	}
-	if target == nil || len(target.Fixes) != 3 || target.Fixes[1].ID != "week" {
-		t.Fatalf("overdue item and its fixes: %+v", target)
+	if target == nil || len(target.Fixes) != 1 || target.Fixes[0].ID != "probe" {
+		t.Fatalf("failing endpoint item and its fix: %+v", target)
 	}
 	path := fmt.Sprintf("/api/checkups/%d/items/%s/fix", c.ID, target.Key)
-	expect(t, "unknown fix", h.do("POST", path, map[string]string{"fix": "probe"}, nil), 422)
+	expect(t, "unknown fix", h.do("POST", path, map[string]string{"fix": "done"}, nil), 422)
+	code.Store(http.StatusOK)
 	var res struct {
 		Checkup store.Checkup
 		Note    string
 	}
-	expect(t, "fix", h.do("POST", path, map[string]string{"fix": "week"}, &res), 200)
-	for _, it := range res.Checkup.Items {
-		if it.Key == target.Key && (it.ResolvedAt == nil || it.CheckedAt == nil) {
-			t.Fatalf("moved a week out, so resolved: %+v", it)
+	expect(t, "fix", h.do("POST", path, map[string]string{"fix": "probe"}, &res), 200)
+	if res.Note != "" {
+		t.Fatalf("note = %q", res.Note)
+	}
+	var fresh *store.CheckItem
+	for i := range res.Checkup.Items {
+		if res.Checkup.Items[i].Key == target.Key {
+			fresh = &res.Checkup.Items[i]
+		}
+	}
+	if fresh == nil || fresh.CheckedAt == nil || fresh.ResolvedAt != nil || !strings.Contains(fresh.Title, "flapped") {
+		t.Fatalf("probed and re-checked, so now the flapping finding: %+v", fresh)
+	}
+	var list struct{ Endpoints []store.Endpoint }
+	expect(t, "endpoints", h.do("GET", "/api/endpoints", nil, &list), 200)
+	for _, e := range list.Endpoints {
+		if e.ID == ep.ID && e.LastStatus != "up" {
+			t.Fatalf("the probe should have found it up: %+v", e)
 		}
 	}
 }

@@ -71,7 +71,7 @@ export function DashboardPage() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
           <FocusPanel d={d} />
-          {d.overdue.length ? <OverduePanel d={d} /> : null}
+          <AttentionPanel d={d} />
         </div>
         <Panel title="Completions" icon={<TrendingUp />} id="dash-completions" bodyClassName="p-3">
           <p className="mb-2 text-[12px] text-fg-3">Tasks done per day, last {d.daily.length} days</p>
@@ -191,18 +191,7 @@ function Alerts({ d }: { d: Dashboard }) {
       to: "/machines",
     });
   }
-  if (d.stats.blocked > 0) {
-    items.push({
-      key: "blocked",
-      icon: <Ban className="size-4 text-warning" aria-hidden />,
-      text: (
-        <>
-          <strong className="font-semibold">{d.stats.blocked}</strong> blocked task{d.stats.blocked > 1 ? "s" : ""}
-        </>
-      ),
-      to: "/tasks?status=blocked",
-    });
-  }
+  // Overdue, due-soon and blocked tasks have their own panel below.
   if (!items.length) return null;
   return (
     <ul aria-label="Alerts" className="flex flex-wrap gap-2">
@@ -323,13 +312,50 @@ function FocusPanel({ d }: { d: Dashboard }) {
   );
 }
 
-function OverduePanel({ d }: { d: Dashboard }) {
+/**
+ * Tasks that need a decision today — overdue, due within 3 days, blocked —
+ * in one place. (They used to be check-up items too; the check-up is for
+ * infra now, this is the task side.)
+ */
+export function AttentionPanel({ d }: { d: Dashboard }) {
   const { openTask } = useShell();
   const complete = useCompleteWithUndo();
+  const dueSoon = d.due_soon ?? [];
+  const blocked = d.blocked ?? [];
+  const total = d.overdue.length + dueSoon.length + blocked.length;
+  if (!total) return null;
+  const sections: { key: string; label: string; icon: React.ReactNode; hint: string; to: string; tasks: Task[] }[] = [
+    { key: "overdue", label: "Overdue", icon: <AlarmClock className="size-3.5 text-critical" aria-hidden />, hint: "do it, move the date, or drop it", to: "/tasks?overdue=1", tasks: d.overdue },
+    { key: "due-soon", label: "Due soon", icon: <CalendarCheck className="size-3.5 text-warning" aria-hidden />, hint: "today and the next 3 days", to: "/tasks", tasks: dueSoon },
+    { key: "blocked", label: "Blocked", icon: <Ban className="size-3.5 text-warning" aria-hidden />, hint: "waiting on something — unblock it or park it in the backlog", to: "/tasks?status=blocked", tasks: blocked },
+  ].filter((s) => s.tasks.length);
   return (
-    <Panel title={`Overdue · ${d.overdue.length}`} icon={<AlarmClock />} id="dash-overdue">
-      {d.overdue.map((t) => (
-        <FocusRow key={t.id} task={t} today={d.today} onOpen={openTask} onComplete={complete} />
+    <Panel
+      title={
+        <>
+          Needs attention <span className="font-normal text-fg-3">· {total}</span>
+        </>
+      }
+      icon={<AlarmClock />}
+      id="dash-attention"
+      bodyClassName="space-y-3"
+    >
+      {sections.map((s) => (
+        <section key={s.key} aria-labelledby={`dash-attention-${s.key}`}>
+          <div className="flex items-center gap-1.5 px-2 pb-1 text-[11.5px]">
+            {s.icon}
+            <h3 id={`dash-attention-${s.key}`} className="font-semibold text-fg-2">
+              {s.label} <span className="font-normal text-fg-3">· {s.tasks.length}</span>
+            </h3>
+            <span className="text-fg-3">— {s.hint}</span>
+            <Link to={s.to} className="ml-auto text-fg-3 hover:text-fg">
+              All →
+            </Link>
+          </div>
+          {s.tasks.map((t) => (
+            <FocusRow key={t.id} task={t} today={d.today} onOpen={openTask} onComplete={complete} />
+          ))}
+        </section>
       ))}
     </Panel>
   );

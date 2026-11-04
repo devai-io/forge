@@ -456,31 +456,6 @@ func (s *Server) fixCheckupItem(w http.ResponseWriter, r *http.Request, u *store
 	var run *store.Run
 	note := ""
 	switch it.Category {
-	case "tasks":
-		ref := key[strings.Index(key, ":")+1:]
-		t, err := s.store.TaskByRef(ctx, ref)
-		if err != nil {
-			writeErr(w, r, err)
-			return
-		}
-		patch := store.Patch{}
-		switch in.Fix {
-		case "done":
-			patch["status"] = json.RawMessage(`"done"`)
-		case "week":
-			d, _ := time.Parse("2006-01-02", today)
-			patch["due_date"] = json.RawMessage(`"` + d.AddDate(0, 0, 7).Format("2006-01-02") + `"`)
-		case "clear_due":
-			patch["due_date"] = json.RawMessage(`null`)
-		case "unblock":
-			patch["status"] = json.RawMessage(`"todo"`)
-		case "backlog":
-			patch["status"] = json.RawMessage(`"backlog"`)
-		}
-		if _, err := s.store.UpdateTask(ctx, t.ID, patch); err != nil {
-			writeErr(w, r, err)
-			return
-		}
 	case "endpoints":
 		eid, err := strconv.ParseInt(strings.TrimPrefix(key, "endpoint:"), 10, 64)
 		if err != nil {

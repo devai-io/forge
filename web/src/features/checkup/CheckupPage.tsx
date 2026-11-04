@@ -1,4 +1,6 @@
-// The daily check-up as an action list: what failed or warned today, grouped
+// The daily check-up as an action list: what failed or warned today across
+// the infra (endpoints, TLS, hosts, jobs, alerts, backups, runners, repos, CI,
+// vault, account security — tasks are the dashboard's business), grouped
 // by area, each with what to do about it — and, since items recur day after
 // day, since when it has been there, whether it is still there (Re-check),
 // the task it already became, and a way to put it aside (snooze). Items that
@@ -71,7 +73,7 @@ export function CheckupStatusBadge({ status }: { status: CheckSeverity }) {
 function ScheduleLine() {
   const facts = useSystemFacts();
   const user = useUser();
-  if (!facts.data) return <>Every day Forge checks endpoints, certificates, hosts, jobs, alerts, backups, runners, repos, CI and the vault.</>;
+  if (!facts.data) return <>Every day Forge checks endpoints, certificates, hosts, jobs, alerts, backups, runners, repos, CI, the vault and your account. Tasks are on the dashboard.</>;
   const emailOn = facts.data.features.smtp && user.checkup_email;
   return (
     <>

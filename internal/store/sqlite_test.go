@@ -152,7 +152,6 @@ func TestQueriesRunOnSQLite(t *testing.T) {
 	if x := must(st.TaskByRef(ctx, task.Ref)); x.ID != task.ID {
 		t.Fatal("TaskByRef")
 	}
-	must(st.StaleBlocked(ctx, 7))
 
 	// The dashboard counts the completion in the viewer's calendar.
 	d := must(st.Dashboard(ctx, "Europe/Lisbon"))
