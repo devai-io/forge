@@ -213,3 +213,95 @@ describe("Assistant engines", () => {
     }
   });
 });
+
+describe("Assistant chat list and composer guards", () => {
+  it("starts a chat from the list's one-line Ask, on the default engine", async () => {
+    let created: unknown = null;
+    vi.stubGlobal(
+      "fetch",
+      routeFetch({
+        "GET /assistant": () => jsonResponse(200, status),
+        "GET /chats": () => jsonResponse(200, { chats: [] }),
+        "POST /chats": (init) => {
+          created = JSON.parse(String(init.body));
+          return jsonResponse(201, { chat: chat({ busy: true }), messages: [msg({ content: "Anything failing?" })], turns: [] });
+        },
+        "GET /chats/7": () => jsonResponse(200, { chat: chat({ busy: true }), messages: [], turns: [] }),
+      }),
+    );
+    renderChat("/assistant");
+    await userEvent.setup().type(await screen.findByRole("textbox", { name: "Ask the assistant" }), "Anything failing?{Enter}");
+    await waitFor(() =>
+      expect(created).toEqual({ content: "Anything failing?", engine: "deepseek", model: "", effort: "", edits: false, skip_permissions: false }),
+    );
+  });
+
+  it("filters a long chat list and deletes a chat from its row", async () => {
+    let chats = Array.from({ length: 12 }, (_, i) => chat({ id: i + 1, title: i === 4 ? "Kart release notes" : `Chat ${i + 1}` }));
+    const deleted: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      routeFetch({
+        "GET /assistant": () => jsonResponse(200, status),
+        "GET /chats": () => jsonResponse(200, { chats }),
+        "DELETE /chats/5": () => {
+          deleted.push("5");
+          chats = chats.filter((c) => c.id !== 5);
+          return new Response(null, { status: 204 });
+        },
+      }),
+    );
+    renderChat("/assistant");
+    const user = userEvent.setup();
+    await user.type(await screen.findByRole("textbox", { name: "Filter chats" }), "kart");
+    expect(screen.queryAllByRole("link", { name: /Chat \d+/ })).toHaveLength(0);
+    expect(screen.getByRole("link", { name: /Kart release notes/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Delete chat Kart release notes" }));
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(deleted).toEqual(["5"]));
+    await waitFor(() => expect(screen.queryByRole("link", { name: /Kart release notes/ })).not.toBeInTheDocument());
+  });
+
+  it("offers Skip permissions only once the chat can make changes, and turns it off with them", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routeFetch({
+        "GET /assistant": () =>
+          jsonResponse(200, { ...status, engines: { ...status.engines, claude: { ...status.engines.claude, skip_permissions: true } } }),
+        "GET /chats": () => jsonResponse(200, { chats: [] }),
+      }),
+    );
+    renderChat("/assistant/new");
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Engine" }), "claude");
+    expect(screen.queryByRole("switch", { name: /Skip permissions/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("switch", { name: "Can make changes" }));
+    const skip = screen.getByRole("switch", { name: /Skip permissions/ });
+    expect(skip).toHaveAttribute("aria-checked", "false");
+    await user.click(skip);
+    expect(screen.getByRole("switch", { name: /Skip permissions — no prompts at all/ })).toHaveAttribute("aria-checked", "true");
+    await user.click(screen.getByRole("switch", { name: "Can make changes" }));
+    expect(screen.queryByRole("switch", { name: /Skip permissions/ })).not.toBeInTheDocument();
+  });
+
+  it("prefers an engine whose machine is online, and says when the chosen one's machine is offline", async () => {
+    const offline = {
+      ...status,
+      settings: { ...status.settings, engine: "claude" as const },
+      engines: { ...status.engines, claude: { ...status.engines.claude, machine: "box1", online: false } },
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeFetch({
+        "GET /assistant": () => jsonResponse(200, offline),
+        "GET /chats": () => jsonResponse(200, { chats: [] }),
+      }),
+    );
+    renderChat("/assistant/new");
+    const engine = await screen.findByRole("combobox", { name: "Engine" });
+    await waitFor(() => expect(engine).toHaveValue("deepseek"));
+    expect(screen.queryByText(/is offline/)).not.toBeInTheDocument();
+    await userEvent.setup().selectOptions(engine, "claude");
+    expect(screen.getByText("box1 is offline — pick another engine")).toBeInTheDocument();
+  });
+});

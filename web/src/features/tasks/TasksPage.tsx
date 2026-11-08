@@ -30,13 +30,21 @@ export function TasksPage() {
           : "all"
   ) as Scope;
   const initialStatus = params.get("status");
+  // ?q= (a task ref linked from markdown that no loaded task matched) seeds the search box.
+  const qParam = params.get("q") ?? "";
   const [filters, setFilters] = useState<ListFilters>(() => ({
     ...defaultListFilters,
+    q: qParam,
     statuses:
       initialStatus && STATUSES.some((s) => s.value === initialStatus)
         ? [initialStatus as TaskStatus]
         : defaultListFilters.statuses,
   }));
+  const [seenQ, setSeenQ] = useState(qParam);
+  if (qParam !== seenQ) {
+    setSeenQ(qParam);
+    setFilters((f) => ({ ...f, q: qParam }));
+  }
 
   const projects = useProjects();
   const user = useUser();
@@ -78,7 +86,8 @@ export function TasksPage() {
                 { value: "overdue", label: "Overdue" },
               ]}
             />
-            <Select aria-label="Project" className="w-auto" value={project} onChange={(e) => setParam("project", e.target.value)}>
+            {/* w-28 on a phone keeps scope and project on one row. */}
+            <Select aria-label="Project" className="w-28 sm:w-auto" value={project} onChange={(e) => setParam("project", e.target.value)}>
               <option value="">All projects</option>
               {projects.data?.map((p) => (
                 <option key={p.key} value={p.key}>

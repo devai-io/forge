@@ -49,15 +49,20 @@ export function EndpointHealth({ up, total, down, warning = 0 }: { up: number; t
   );
 }
 
-export function ProjectCard({ project, today }: { project: Project; today: string }) {
+/** `compact` (the dashboard): on a phone the card drops the summary, so thirteen projects fit in a few screens. */
+export function ProjectCard({ project, today, compact = false }: { project: Project; today: string; compact?: boolean }) {
   const s = project.stats;
-  const open = s.total - s.done;
+  // Backlog + to do: in progress and blocked get their own counts, so "open" would count them twice.
+  const toDo = s.total - s.done - s.in_progress - s.blocked;
   const stale = isStale(project);
   const targetDays = project.target_date ? daysBetween(today, project.target_date) : null;
   return (
     <Link
       to={`/p/${project.key}`}
-      className="group relative flex flex-col gap-3 overflow-hidden rounded-xl border border-line bg-surface p-4 pl-5 transition-colors hover:border-line-strong"
+      className={clsx(
+        "group relative flex flex-col gap-3 overflow-hidden rounded-xl border border-line bg-surface p-4 pl-5 transition-colors hover:border-line-strong",
+        compact && "max-sm:gap-2 max-sm:p-3 max-sm:pl-4",
+      )}
     >
       <span aria-hidden className="absolute inset-y-0 left-0 w-1" style={{ background: project.color }} />
       <div className="flex items-start gap-2">
@@ -66,7 +71,7 @@ export function ProjectCard({ project, today }: { project: Project; today: strin
             <h3 className="truncate text-[15px] font-semibold">{project.name}</h3>
             <span className="font-mono text-[11px] text-fg-3">{project.key}</span>
           </div>
-          {project.summary ? <p className="mt-0.5 line-clamp-2 text-[12.5px] text-fg-2">{project.summary}</p> : null}
+          {project.summary ? <p className={clsx("mt-0.5 line-clamp-2 text-[12.5px] text-fg-2", compact && "max-sm:hidden")}>{project.summary}</p> : null}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <ProjectStatusBadge status={project.status} />
@@ -91,21 +96,32 @@ export function ProjectCard({ project, today }: { project: Project; today: strin
         <ProgressMeter value={s.progress} color={project.color} label={`${project.name} progress`} />
       </div>
 
-      <dl className="grid grid-cols-3 gap-2 text-center">
-        {[
-          { label: "Open", value: open },
-          { label: "In progress", value: s.in_progress },
-          { label: "Blocked", value: s.blocked, alert: s.blocked > 0 },
-        ].map((x) => (
-          <div key={x.label} className="flex flex-col-reverse rounded-md bg-surface-2/70 px-1 py-1.5">
-            <dt className="text-[10.5px] text-fg-3">{x.label}</dt>
-            <dd className="text-[15px] font-semibold">
-              {x.alert ? <CircleAlert className="mr-1 inline size-3.5 -translate-y-px text-critical" aria-hidden /> : null}
-              {x.value}
-            </dd>
-          </div>
-        ))}
-      </dl>
+      <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12.5px] text-fg-2">
+        <span>
+          <span className="font-semibold text-fg tabular">{toDo}</span> to do
+        </span>
+        {s.in_progress ? (
+          <span>
+            <span className="font-semibold text-fg tabular">{s.in_progress}</span> in progress
+          </span>
+        ) : null}
+        {s.blocked ? (
+          <span className="text-critical-ink">
+            <CircleAlert className="mr-0.5 inline size-3.5 -translate-y-px" aria-hidden />
+            <span className="font-semibold tabular">{s.blocked}</span> blocked
+          </span>
+        ) : null}
+        {s.overdue ? (
+          <span className="text-critical-ink">
+            <span className="font-semibold tabular">{s.overdue}</span> overdue
+          </span>
+        ) : null}
+        {s.ci_failing ? (
+          <Badge tone="critical" title="The latest CI run of a repo in this project did not succeed">
+            CI failing{s.ci_failing > 1 ? ` · ${s.ci_failing}` : ""}
+          </Badge>
+        ) : null}
+      </p>
 
       <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11.5px] text-fg-2">
         <span className="inline-flex items-center gap-1" title="Tasks completed in the last 7 days">

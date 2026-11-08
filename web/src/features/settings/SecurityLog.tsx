@@ -4,6 +4,7 @@
 import clsx from "clsx";
 import { CircleX, Cpu, KeyRound, LogIn, LogOut, ShieldAlert, TriangleAlert } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useRevokeOtherSessions, useSecurityLog } from "@/api/hooks";
 import type { SecurityEvent } from "@/api/types";
 import { Badge } from "@/components/ui/Badge";
@@ -107,9 +108,17 @@ export function SecurityLogPanel() {
   );
 }
 
+/** The vault item a reveal/download event is about ("item 21 (name)"), for a link to it. */
+function vaultItemOf(e: Pick<SecurityEvent, "kind" | "detail">): number | null {
+  if (e.kind !== "vault_reveal" && e.kind !== "vault_download") return null;
+  const m = /^item (\d+)\b/.exec(e.detail);
+  return m ? Number(m[1]) : null;
+}
+
 function SecurityRow({ event: e }: { event: SecurityEvent }) {
   const alarming = isAlarming(e.kind);
   const meta = SECURITY_KINDS[e.kind as keyof typeof SECURITY_KINDS];
+  const vaultItem = vaultItemOf(e);
   return (
     <li className={clsx("flex items-start gap-3 px-4 py-2.5", alarming && "bg-warning/8")}>
       <span className="mt-0.5">
@@ -119,7 +128,18 @@ function SecurityRow({ event: e }: { event: SecurityEvent }) {
         <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px]">
           <span className={clsx("font-medium", alarming && "text-fg")}>{kindLabel(e.kind)}</span>
           {meta && e.kind === "login_new_device" ? <Badge tone={meta.tone}>new device</Badge> : null}
-          {e.detail ? <span className="text-fg-2">{e.detail}</span> : null}
+          {e.detail ? (
+            // A long path or name must wrap, not widen the page on a phone.
+            <span className="min-w-0 text-fg-2 [overflow-wrap:anywhere]">
+              {vaultItem !== null ? (
+                <Link to={`/vault?item=${vaultItem}`} className="hover:text-accent hover:underline">
+                  {e.detail}
+                </Link>
+              ) : (
+                e.detail
+              )}
+            </span>
+          ) : null}
         </p>
         <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11.5px] text-fg-3">
           <span className="font-mono">{e.ip || "unknown IP"}</span>

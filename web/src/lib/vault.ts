@@ -40,6 +40,14 @@ export function formatBytes(n: number): string {
 /** Holds nothing Forge can reveal — it only says where the original lives. */
 export const isReference = (item: Pick<VaultItem, "secret_keys" | "has_file">) => item.secret_keys.length === 0 && !item.has_file;
 
+/**
+ * Real secrets first, references (nothing stored, only where the original
+ * lives) after them — stable, so each half keeps its order.
+ */
+export function referencesLast<T extends Pick<VaultItem, "secret_keys" | "has_file">>(items: T[]): T[] {
+  return [...items].sort((a, b) => Number(isReference(a)) - Number(isReference(b)));
+}
+
 export type ExpiryState = { state: "expired" | "soon" | "ok"; days: number; label: string };
 
 /** Expired → red; under 30 days → amber (the check-up warns at the same line). */

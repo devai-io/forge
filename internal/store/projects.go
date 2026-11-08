@@ -27,6 +27,8 @@ WITH ts AS (
 	SELECT project_id,
 	       coalesce(sum(CAST(git->>'commits_7d' AS INTEGER)), 0)          AS commits_7d,
 	       count(*) FILTER (WHERE CAST(git->>'dirty' AS INTEGER) > 0)      AS dirty,
+	       count(*) FILTER (WHERE git->'ci'->>'status' = 'completed'
+	                          AND coalesce(git->'ci'->>'conclusion', '') NOT IN ('', 'success', 'skipped')) AS ci_failing,
 	       max(ts_norm(git->>'last_commit_at'))                            AS last_commit
 	FROM repos GROUP BY project_id
 ), es AS (
@@ -47,7 +49,7 @@ SELECT p.id, p.key, p.name, p.category, p.status, p.priority, p.color, p.summary
        p.infra_notes, p.target_date, p.links, p.hide_on_dashboard, p.created_at, p.updated_at,
        coalesce(ts.total, 0), coalesce(ts.backlog, 0), coalesce(ts.todo, 0), coalesce(ts.in_progress, 0),
        coalesce(ts.blocked, 0), coalesce(ts.done, 0), coalesce(ts.overdue, 0), coalesce(ts.done_7d, 0),
-       coalesce(ts.created_7d, 0), coalesce(rs.commits_7d, 0), coalesce(rs.dirty, 0),
+       coalesce(ts.created_7d, 0), coalesce(rs.commits_7d, 0), coalesce(rs.dirty, 0), coalesce(rs.ci_failing, 0),
        coalesce(es.total, 0), coalesce(es.up, 0), coalesce(es.down, 0), coalesce(es.warning, 0), coalesce(ru.active, 0),
        CASE WHEN ac.last IS NULL THEN rs.last_commit WHEN rs.last_commit IS NULL THEN ac.last
             ELSE max(ac.last, rs.last_commit) END
@@ -66,7 +68,7 @@ func scanProject(row interface{ Scan(...any) error }) (*Project, error) {
 	if err := row.Scan(&p.ID, &p.Key, &p.Name, &p.Category, &p.Status, &p.Priority, &p.Color, &p.Summary,
 		&p.Description, &p.InfraNotes, &p.TargetDate, &links, &p.HideOnDashboard, &p.CreatedAt, &p.UpdatedAt,
 		&st.Total, &st.Backlog, &st.Todo, &st.InProgress, &st.Blocked, &st.Done, &st.Overdue, &st.Done7d,
-		&st.Created7d, &st.Commits7d, &st.DirtyRepos, &st.EndpointsTotal, &st.EndpointsUp, &st.EndpointsDown,
+		&st.Created7d, &st.Commits7d, &st.DirtyRepos, &st.CIFailing, &st.EndpointsTotal, &st.EndpointsUp, &st.EndpointsDown,
 		&st.EndpointsWarning, &st.ActiveRuns, &st.LastActivityAt); err != nil {
 		return nil, mapErr(err)
 	}

@@ -1,3 +1,4 @@
+import clsx from "clsx";
 import { Copy, Laptop, LogOut, ShieldCheck, ShieldOff } from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useMemo, useState } from "react";
@@ -38,34 +39,180 @@ import { TelegramPanel } from "./TelegramPanel";
 import { MemoryPanel } from "@/features/memory/MemoryPanel";
 import { RevokeOthersButton, SecurityLogPanel } from "./SecurityLog";
 
+// The page's groups, in page order, for the "On this page" nav. Ids are the
+// panels' own heading ids (Panel puts `id` on its <h2>), so old deep links
+// like /settings#settings-2fa keep working.
+const GROUPS: { id: string; title: string; panels: { id: string; title: string }[] }[] = [
+  {
+    id: "account",
+    title: "Account",
+    panels: [
+      { id: "settings-account", title: "Account" },
+      { id: "settings-password", title: "Password" },
+      { id: "settings-2fa", title: "Two-factor" },
+    ],
+  },
+  {
+    id: "operations",
+    title: "Operations",
+    panels: [
+      { id: "settings-checkup", title: "Daily check-up" },
+      { id: "settings-endpoints", title: "Endpoint checks" },
+      { id: "settings-telegram", title: "Telegram" },
+    ],
+  },
+  {
+    id: "ai",
+    title: "AI",
+    panels: [
+      { id: "settings-provider", title: "AI provider" },
+      { id: "settings-engine", title: "Agent engine" },
+      { id: "settings-jev", title: "Token saving" },
+      { id: "settings-assistant", title: "Assistant" },
+      { id: "settings-memory", title: "Memory" },
+    ],
+  },
+  { id: "appearance", title: "Appearance", panels: [{ id: "settings-appearance", title: "Appearance" }] },
+  {
+    id: "security",
+    title: "Security",
+    panels: [
+      { id: "settings-sessions", title: "Sessions" },
+      { id: "settings-security-log", title: "Security log" },
+    ],
+  },
+];
+
+/** Which panel heading is at the top of the viewport (the DocsPage pattern). */
+function useActivePanel(): string {
+  const [active, setActive] = useState<string>(GROUPS[0].panels[0].id);
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible[0]) setActive(visible[0].target.id);
+      },
+      { rootMargin: "-80px 0px -70% 0px" },
+    );
+    for (const g of GROUPS) {
+      for (const p of g.panels) {
+        const el = document.getElementById(p.id);
+        if (el) io.observe(el);
+      }
+    }
+    return () => io.disconnect();
+  }, []);
+  return active;
+}
+
+function SettingsNav() {
+  const active = useActivePanel();
+  const activeGroup = GROUPS.find((g) => g.panels.some((p) => p.id === active))?.id;
+  return (
+    <nav aria-label="On this page" className="mb-4 lg:sticky lg:top-16 lg:mb-0">
+      <p className="mb-2 hidden text-[11px] font-semibold tracking-wide text-fg-3 uppercase lg:block">On this page</p>
+      {/* Phones and tablets: the groups on one row that scrolls sideways. */}
+      <ol className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 lg:hidden">
+        {GROUPS.map((g) => (
+          <li key={g.id} className="shrink-0">
+            <a
+              href={`#${g.id === "security" ? "security" : g.id === "appearance" ? "settings-appearance" : `settings-group-${g.id}`}`}
+              aria-current={activeGroup === g.id ? "location" : undefined}
+              className={clsx(
+                "block rounded-full border px-3 py-1 text-[12.5px] whitespace-nowrap",
+                activeGroup === g.id ? "border-accent/40 bg-accent/10 font-medium text-fg" : "border-line text-fg-2 hover:text-fg",
+              )}
+            >
+              {g.title}
+            </a>
+          </li>
+        ))}
+      </ol>
+      <div className="hidden space-y-3 lg:block">
+        {GROUPS.map((g) => (
+          <div key={g.id}>
+            <p className="px-2 text-[11.5px] font-semibold text-fg-2">{g.title}</p>
+            <ol className="mt-0.5 space-y-0.5">
+              {g.panels.map((p) => (
+                <li key={p.id}>
+                  <a
+                    href={`#${p.id}`}
+                    aria-current={active === p.id ? "location" : undefined}
+                    className={clsx(
+                      "block rounded-md px-2 py-1 text-[13px]",
+                      active === p.id ? "bg-surface-2 font-medium text-fg" : "text-fg-3 hover:text-fg-2",
+                    )}
+                  >
+                    {p.title}
+                  </a>
+                </li>
+              ))}
+            </ol>
+          </div>
+        ))}
+      </div>
+    </nav>
+  );
+}
+
+function GroupHeading({ id, children }: { id: string; children: string }) {
+  return (
+    <h2 id={id} className="scroll-mt-20 pt-2 text-[15px] font-semibold tracking-tight">
+      {children}
+    </h2>
+  );
+}
+
 export function SettingsPage() {
   useHashScroll();
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
-      <PageHeader title="Settings" />
-      <AccountPanel />
-      <PasswordPanel />
-      <TwoFactorPanel />
-      <CheckupPanel />
-      <EndpointsPanel />
-      <ProviderPanel />
-      <EnginePanel />
-      <TokenSavingPanel />
-      <AssistantPanel />
-      <TelegramPanel />
-      <MemoryPanel
-        project="global"
-        title="Memory about you"
-        intro="What Forge remembers about you in every project — preferences, how you like things done. Claude sessions and the Assistant start with these; each project's own memory is on its page."
-      />
-      <AppearancePanel />
-      <section id="security" aria-labelledby="settings-security-h" className="scroll-mt-16 space-y-4 pt-2">
-        <h2 id="settings-security-h" className="text-[15px] font-semibold tracking-tight">
-          Security
-        </h2>
-        <SessionsPanel />
-        <SecurityLogPanel />
-      </section>
+    <div className="mx-auto max-w-[1000px] lg:grid lg:grid-cols-[180px_minmax(0,1fr)] lg:gap-8">
+      <div className="lg:col-start-2 lg:row-start-1">
+        <PageHeader title="Settings" />
+      </div>
+      <div className="lg:col-start-1 lg:row-start-2">
+        <SettingsNav />
+      </div>
+      {/* Panel headings carry the ids; keep them clear of the sticky top bar when jumped to. */}
+      <div className="max-w-3xl min-w-0 space-y-4 lg:col-start-2 lg:row-start-2 [&_h2[id]]:scroll-mt-20">
+        <section aria-labelledby="settings-group-account" className="space-y-4">
+          <GroupHeading id="settings-group-account">Account</GroupHeading>
+          <AccountPanel />
+          <PasswordPanel />
+          <TwoFactorPanel />
+        </section>
+        <section aria-labelledby="settings-group-operations" className="space-y-4">
+          <GroupHeading id="settings-group-operations">Operations</GroupHeading>
+          <CheckupPanel />
+          <EndpointsPanel />
+          <TelegramPanel />
+        </section>
+        <section aria-labelledby="settings-group-ai" className="space-y-4">
+          <GroupHeading id="settings-group-ai">AI</GroupHeading>
+          <ProviderPanel />
+          <EnginePanel />
+          <TokenSavingPanel />
+          <AssistantPanel />
+          {/* MemoryPanel has no id of its own; this is the nav's anchor for it. */}
+          <div id="settings-memory" className="scroll-mt-20">
+            <MemoryPanel
+              project="global"
+              title="Memory about you"
+              intro="What Forge remembers about you in every project — preferences, how you like things done. Claude sessions and the Assistant start with these; each project's own memory is on its page."
+            />
+          </div>
+        </section>
+        {/* One panel: its own title is the group heading. */}
+        <div className="pt-2">
+          <AppearancePanel />
+        </div>
+        <section id="security" aria-labelledby="settings-security-h" className="scroll-mt-16 space-y-4">
+          <GroupHeading id="settings-security-h">Security</GroupHeading>
+          <SessionsPanel />
+          <SecurityLogPanel />
+        </section>
+      </div>
     </div>
   );
 }
@@ -336,7 +483,9 @@ function TwoFactorPanel() {
               on
             </Badge>
           ) : (
-            <Badge tone="outline">off</Badge>
+            <Badge tone="warning" dot title="Without it the password alone unlocks sign-in, vault reveals and terminals">
+              off — recommended
+            </Badge>
           )}
         </span>
       }

@@ -21,6 +21,7 @@ import { useToast } from "@/components/ui/Toast";
 import { buildChatItems, EXAMPLE_PROMPTS, usageLabel } from "@/lib/assistant";
 import { BotSettingsButton } from "./BotSettings";
 import { ChatSettingsBar } from "./ChatSettingsBar";
+import { newChatSettings } from "./engines";
 import { ToolActivity } from "./ToolActivity";
 import { TurnSpend } from "./TurnSpend";
 
@@ -45,16 +46,7 @@ export function NewChat({ bot }: { bot?: { key: string; name: string } } = {}) {
   const [draft, setDraft] = useState("");
   const status = useAssistant();
   const [picked, setSettings] = useState<ChatSettings | null>(null);
-  // The configured engine (Claude by default; always Claude for a bot), unless it cannot answer and the other can.
-  const configured = bot ? "claude" : (status.data?.settings.engine ?? "claude");
-  const fallback = ([configured, "claude", "codex", "deepseek"] as const).find((engine) => status.data?.engines?.[engine]?.available) ?? configured;
-  const settings: ChatSettings = picked ?? {
-    engine: fallback,
-    model: "",
-    effort: "",
-    edits: false,
-    skip_permissions: !!status.data?.engines?.claude.skip_permissions,
-  };
+  const settings: ChatSettings = picked ?? newChatSettings(status.data, !!bot);
   const input = useRef<HTMLTextAreaElement>(null);
   const end = useRef<HTMLDivElement>(null);
 

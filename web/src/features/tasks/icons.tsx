@@ -61,7 +61,7 @@ export function PriorityIcon({ priority, className }: { priority: Priority; clas
   }
   const bars = priority === "high" ? 3 : priority === "medium" ? 2 : 1;
   return (
-    <svg viewBox="0 0 16 16" className={clsx(cls, "text-fg-2")} role="img" aria-label={label}>
+    <svg viewBox="0 0 16 16" className={clsx(cls, priority === "high" ? "text-warning" : "text-fg-2")} role="img" aria-label={label}>
       {[0, 1, 2].map((i) => (
         <rect
           key={i}

@@ -12,6 +12,21 @@ import { Panel } from "@/components/ui/Panel";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { useToast } from "@/components/ui/Toast";
 
+/**
+ * What the other AI panels show instead of repeating the "no key" warning:
+ * the consequence for that panel, and a jump to the one warning here.
+ */
+export function NeedsProviderKey({ children }: { children: string }) {
+  return (
+    <span className="text-[12px] text-fg-3">
+      {children} ·{" "}
+      <a href="#settings-provider" className="text-accent hover:underline">
+        add the key in AI provider
+      </a>
+    </span>
+  );
+}
+
 export function ProviderPanel() {
   const provider = useProvider();
   const update = useUpdateProvider();

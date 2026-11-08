@@ -577,12 +577,23 @@ func addDays(date string, n int) string {
 
 // ── Validation ────────────────────────────────────────────────────────────
 
+// clip shortens s to at most n runes without cutting a word: at the last
+// sentence end in the back half when there is one (no ellipsis needed), else
+// at the last space, else (one long word) mid-word.
 func clip(s string, n int) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if r := []rune(s); len(r) > n {
-		return string(r[:n-1]) + "…"
+	r := []rune(s)
+	if len(r) <= n {
+		return s
 	}
-	return s
+	cut := string(r[:n-1])
+	if i := strings.LastIndexAny(cut, ".!?"); i > len(cut)/2 && (i+1 == len(cut) || cut[i+1] == ' ') {
+		return cut[:i+1]
+	}
+	if i := strings.LastIndexByte(cut, ' '); i > len(cut)/2 {
+		cut = strings.TrimRight(cut[:i], ",;:—-")
+	}
+	return cut + "…"
 }
 
 func (f Focus) normalized() Focus {

@@ -91,4 +91,19 @@ describe("SecurityLogPanel", () => {
     await userEvent.setup().selectOptions(screen.getByLabelText("Filter by kind"), "vault_reveal");
     expect(seen.length).toBeGreaterThanOrEqual(2);
   });
+
+  it("links a vault reveal to the item it names", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routeFetch({
+        "GET /auth/security": () =>
+          jsonResponse(200, {
+            events: [{ id: 4, kind: "vault_reveal", detail: "item 21 (Play upload keystore)", ip: "198.51.100.9", user_agent: "", session_id: 1, at: "2026-09-28T08:00:00Z" }],
+          }),
+      }),
+    );
+    renderWithProviders(<SecurityLogPanel />);
+    expect(await screen.findByRole("link", { name: "item 21 (Play upload keystore)" })).toHaveAttribute("href", "/vault?item=21");
+  });
 });
+

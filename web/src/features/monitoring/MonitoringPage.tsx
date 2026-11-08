@@ -6,7 +6,7 @@
 
 import clsx from "clsx";
 import { BellRing, CircleCheck, Gauge, LayoutDashboard, RefreshCw, ServerCog, ShieldCheck } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useEndpoints, useMonitoring, useProjects, useRefreshMonitoring, useServers } from "@/api/hooks";
 import { HelpLink } from "@/features/docs/HelpLink";
@@ -19,8 +19,8 @@ import { PageHeader, Panel } from "@/components/ui/Panel";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { useToast } from "@/components/ui/Toast";
-import { projectScope, scopeMonitoring, sortAlerts } from "@/lib/monitoring";
-import { AlertRow, ConnectGrafana, DashboardLink, HostCard, NomadJobList, ProbeList } from "./parts";
+import { nomadHostLevel, problemJobs, projectScope, scopeMonitoring, sortAlerts, sortNomadHosts } from "@/lib/monitoring";
+import { AlertRow, ConnectGrafanaDisclosure, DashboardLink, HostsGrid, NomadJobList, ProbeList } from "./parts";
 
 export { DashboardLink, UsageBar } from "./parts";
 
@@ -122,6 +122,8 @@ function MonitoringBody({
   stale: boolean;
 }) {
   const down = m.hosts.filter((h) => !h.up).length;
+  const [params] = useSearchParams();
+  const connectOpen = params.get("connect") === "grafana";
   const nothing = project && !m.hosts.length && !m.nomad.length && !m.probes.length && !m.grafana.alerts.length && !m.grafana.dashboards.length;
   return (
     <div className={clsx("space-y-5 transition-opacity", stale && "opacity-80")}>
@@ -151,11 +153,7 @@ function MonitoringBody({
           </span>
         </h2>
         {m.hosts.length ? (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {m.hosts.map((h) => (
-              <HostCard key={h.name} host={h} />
-            ))}
-          </div>
+          <HostsGrid hosts={m.hosts} />
         ) : project ? (
           <EmptyState compact title="No hosts for this project">None of its linked servers report host metrics.</EmptyState>
         ) : (
@@ -164,7 +162,7 @@ function MonitoringBody({
       </section>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <AlertsPanel m={m} total={all ? all.grafana.alerts.length : null} />
+        <AlertsPanel m={m} total={all ? all.grafana.alerts.length : null} connectOpen={connectOpen} />
         <DashboardsPanel m={m} total={all ? all.grafana.dashboards.length : null} />
       </div>
 
@@ -180,7 +178,7 @@ function MonitoringBody({
   );
 }
 
-function AlertsPanel({ m, total }: { m: Monitoring; total: number | null }) {
+function AlertsPanel({ m, total, connectOpen }: { m: Monitoring; total: number | null; connectOpen: boolean }) {
   const g = m.grafana;
   const alerts = sortAlerts(g.alerts);
   const firing = alerts.filter((a) => a.state === "firing").length;
@@ -202,7 +200,7 @@ function AlertsPanel({ m, total }: { m: Monitoring; total: number | null }) {
       bodyClassName="p-0"
     >
       {!g.connected ? (
-        <ConnectGrafana url={g.url} error={g.error} />
+        <ConnectGrafanaDisclosure url={g.url} error={g.error} open={connectOpen} />
       ) : alerts.length ? (
         <ul className="divide-y divide-line">
           {alerts.map((a, i) => (
@@ -241,8 +239,16 @@ function DashboardsPanel({ m, total }: { m: Monitoring; total: number | null }) 
       icon={<LayoutDashboard />}
       id="mon-dashboards"
     >
-      <p className="px-2 pb-1 text-[11.5px] text-fg-3">Open in Grafana — reachable over Tailscale only.</p>
-      {m.grafana.dashboards.length ? (
+      {m.grafana.connected ? <p className="px-2 pb-1 text-[11.5px] text-fg-3">Open in Grafana — reachable over Tailscale only.</p> : null}
+      {!m.grafana.connected ? (
+        <p className="px-2 py-3 text-[13px] text-fg-3">
+          Grafana isn't connected, so there are no dashboards to list —{" "}
+          <a href="#mon-alerts" className="text-accent hover:underline">
+            connect it under Grafana alerts
+          </a>
+          .
+        </p>
+      ) : m.grafana.dashboards.length ? (
         Array.from(byFolder.entries()).map(([folder, list]) => (
           <div key={folder} className="mb-1">
             <div className="px-2 pt-1.5 pb-0.5 text-[11px] font-semibold tracking-wide text-fg-3 uppercase">{folder}</div>
@@ -259,25 +265,45 @@ function DashboardsPanel({ m, total }: { m: Monitoring; total: number | null }) 
 }
 
 function NomadPanel({ hosts, total }: { hosts: NomadHost[]; total: number | null }) {
+  const [onlyProblems, setOnlyProblems] = useState(false);
+  const sorted = sortNomadHosts(hosts);
+  const troubled = sorted.filter((h) => nomadHostLevel(h) !== "ok");
+  const shown = onlyProblems ? troubled : sorted;
+  const jobsInTrouble = hosts.reduce((n, h) => n + problemJobs(h).length, 0);
   return (
     <Panel
       title={
         <>
           Nomad jobs{" "}
-          {total !== null ? (
-            <span className="font-normal text-fg-3">
-              · <OfTotal n={hosts.length} total={total} /> hosts
-            </span>
-          ) : null}
+          <span className="font-normal text-fg-3">
+            {total !== null ? (
+              <>
+                · <OfTotal n={hosts.length} total={total} /> hosts
+              </>
+            ) : null}
+            {hosts.length ? (
+              <span className={troubled.length ? "text-critical-ink" : undefined}>
+                {" "}
+                · {troubled.length ? `${troubled.length} host${troubled.length === 1 ? "" : "s"} with problems${jobsInTrouble ? `, ${jobsInTrouble} job${jobsInTrouble === 1 ? "" : "s"}` : ""}` : "all healthy"}
+              </span>
+            ) : null}
+          </span>
         </>
       }
       icon={<ServerCog />}
       id="mon-nomad"
       bodyClassName="p-0"
+      actions={
+        hosts.length ? (
+          <Button size="sm" variant={onlyProblems ? "secondary" : "ghost"} aria-pressed={onlyProblems} onClick={() => setOnlyProblems((v) => !v)}>
+            Only problems
+          </Button>
+        ) : null
+      }
     >
-      {hosts.length ? (
+      {shown.length ? (
         <div className="divide-y divide-line">
-          {hosts.map((h) => (
+          {shown.map((h) => (
             <div key={h.host} className="px-3.5 py-2.5">
               <div className="mb-1.5 flex items-center gap-2">
                 <span className="font-mono text-[13px] font-semibold">{h.host}</span>
@@ -289,10 +315,14 @@ function NomadPanel({ hosts, total }: { hosts: NomadHost[]; total: number | null
                   </Badge>
                 )}
               </div>
-              <NomadJobList host={h} />
+              <NomadJobList host={h} onlyProblems={onlyProblems} />
             </div>
           ))}
         </div>
+      ) : hosts.length ? (
+        <p className="flex items-center gap-2 p-4 text-[13px] text-fg-2">
+          <CircleCheck className="size-4 text-good" aria-hidden /> No Nomad problems — every service job is running.
+        </p>
       ) : (
         <p className="p-4 text-[13px] text-fg-3">{total !== null ? "None of this project's servers run Nomad." : "No Nomad hosts configured."}</p>
       )}

@@ -12,6 +12,7 @@ import { Panel } from "@/components/ui/Panel";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { useToast } from "@/components/ui/Toast";
+import { NeedsProviderKey } from "./ProviderPanel";
 
 const USES: { key: "routing" | "context" | "match"; label: string; hint: string }[] = [
   {
@@ -61,7 +62,7 @@ export function TokenSavingPanel() {
             {jev.data.key_configured ? (
               <Badge tone="good">OpenRouter key in the vault</Badge>
             ) : (
-              <Badge tone="warning">no OpenRouter key yet (AI provider, above)</Badge>
+              <NeedsProviderKey>Jev needs the OpenRouter key</NeedsProviderKey>
             )}
             {jev.data.key_configured ? (
               <Button

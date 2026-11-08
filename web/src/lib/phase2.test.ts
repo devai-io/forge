@@ -115,7 +115,7 @@ describe("check-up grouping", () => {
     fixes: [],
     ...extra,
   });
-  it("groups non-ok items by category in a fixed order; open before settled, new before chronic, fails first; snoozed apart", () => {
+  it("groups non-ok items by category, worst first; open before settled, fails first, new before chronic; snoozed apart", () => {
     const { groups, ok, snoozed } = groupCheckItems(
       [
         item("disk:a", "hosts", "warn"),
@@ -130,7 +130,7 @@ describe("check-up grouping", () => {
       "2026-10-22",
     );
     expect(groups.map((g) => g.category)).toEqual(["endpoints", "hosts"]);
-    expect(groups[0].items.map((i) => i.key)).toEqual(["ep:4", "ep:2", "ep:1", "ep:3", "ep:5"]);
+    expect(groups[0].items.map((i) => i.key)).toEqual(["ep:2", "ep:4", "ep:1", "ep:3", "ep:5"]);
     expect(groups[0].label).toBe("Endpoints");
     expect(ok.map((i) => i.key)).toEqual(["ci:x"]);
     expect(snoozed.map((i) => i.key)).toEqual(["ep:6"]);

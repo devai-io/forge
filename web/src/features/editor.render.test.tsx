@@ -100,5 +100,30 @@ describe("EditorPage", () => {
     renderWithProviders(routes, { route: "/editor?folder=/home/ada/dev/forge" });
     expect(await screen.findByText("The master (desk) is offline.")).toBeInTheDocument();
     expect(screen.queryByTitle(/VS Code — /)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Check again/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Machines →" })).toHaveAttribute("href", "/machines");
+  });
+
+  it("checks again from the unavailable card and opens once VS Code is back", async () => {
+    let available = false;
+    let opens = 0;
+    vi.stubGlobal(
+      "fetch",
+      routeFetch({
+        "GET /code/status": () => jsonResponse(200, available ? status : { available: false, runner_name: "desk", reason: "The master (desk) is offline." }),
+        "GET /projects": () => jsonResponse(200, { projects: [] }),
+        "GET /runners": () => jsonResponse(200, { runners: [{ id: 1, name: "desk", role: "master", online: false, last_seen_at: "2026-09-27T10:00:00Z" }] }),
+        "POST /code/open": () => {
+          opens++;
+          return jsonResponse(200, { url: "/code/?folder=x", workspace: "", expires_at: "2099-01-01T00:00:00Z" });
+        },
+      }),
+    );
+    renderWithProviders(routes, { route: "/editor?folder=/home/ada/dev/forge" });
+    expect(await screen.findByText(/desk last seen/)).toBeInTheDocument();
+    available = true;
+    await userEvent.setup().click(screen.getByRole("button", { name: /Check again/ }));
+    expect(await screen.findByTitle(/VS Code — /)).toBeInTheDocument();
+    expect(opens).toBe(1);
   });
 });

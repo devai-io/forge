@@ -58,4 +58,53 @@ describe("SessionCard", () => {
     expect(screen.queryByRole("list", { name: /Windows of/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Kill/ })).not.toBeInTheDocument();
   });
+
+  it("shows a one-window session as one compact row: badge once, ~ for home, no redundant claude prefix", async () => {
+    const onAttach = vi.fn();
+    const onPeek = vi.fn();
+    const session = makeSession({
+      name: "SHOP-shop_api",
+      claude: true,
+      window_list: [makeWindow({ claude: true, command: "claude", project_key: "SHOP", repo_name: "shop_api", path: "/home/ada/dev/shop/shop_api" })],
+    });
+    render(
+      <MemoryRouter>
+        <SessionCard session={session} onAttach={onAttach} onPeek={onPeek} />
+      </MemoryRouter>,
+    );
+    const card = screen.getByRole("article", { name: "Session SHOP-shop_api" });
+    expect(within(card).getAllByText("Claude")).toHaveLength(1);
+    expect(within(card).queryByRole("list", { name: /Windows of/ })).not.toBeInTheDocument();
+    expect(within(card).getByText(/~\/dev\/shop\/shop_api/)).toBeInTheDocument();
+    expect(card).not.toHaveTextContent("/home/ada");
+    expect(card).not.toHaveTextContent("claude ·");
+    expect(within(card).getAllByRole("button", { name: /Attach/ })).toHaveLength(1);
+    expect(within(card).getAllByRole("button", { name: /Peek/ })).toHaveLength(1);
+
+    const user = userEvent.setup();
+    await user.click(within(card).getByRole("button", { name: "Attach to SHOP-shop_api" }));
+    expect(onAttach).toHaveBeenCalledWith(expect.objectContaining({ index: 0 }));
+    await user.click(within(card).getByRole("button", { name: "Peek at SHOP-shop_api" }));
+    expect(onPeek).toHaveBeenCalled();
+  });
+
+  it("disables attach, peek and edit when the machine is offline, and says why", () => {
+    const session = makeSession({
+      name: "Work",
+      windows: 2,
+      window_list: [makeWindow({ index: 0, path: "/Users/ada/dev/a" }), makeWindow({ index: 1, name: "b", active: false, path: "/Users/ada/dev/b" })],
+    });
+    render(
+      <MemoryRouter>
+        <SessionCard session={session} onAttach={() => {}} onPeek={() => {}} edit={{ onEdit: () => {} }} offline="box1 is offline" />
+      </MemoryRouter>,
+    );
+    const card = screen.getByRole("article", { name: "Session Work" });
+    expect(within(card).getByRole("button", { name: /^Attach$/ })).toBeDisabled();
+    expect(within(card).getByRole("button", { name: /^Peek$/ })).toBeDisabled();
+    expect(within(card).getByRole("button", { name: "Attach to window 1 (b)" })).toBeDisabled();
+    expect(within(card).getByRole("button", { name: /Edit here: open window 0/ })).toBeDisabled();
+    expect(within(card).getAllByTitle("box1 is offline").length).toBeGreaterThan(0);
+    expect(within(card).getByText(/· ~\/dev\/b$/)).toBeInTheDocument();
+  });
 });

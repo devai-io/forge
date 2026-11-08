@@ -119,7 +119,7 @@ func (s *Server) computeFocus(ctx context.Context, projectID int64, today, trigg
 
 const focusPrompt = `You keep a software project's focus for its single owner: what to do right now, what comes next, the roadmap and what blocks it. You read the project's state as JSON (open tasks, tasks done in the last two weeks, recent agent runs, the daily check-up's open actions, repo status, endpoints down, key memories) and answer with ONE JSON object and nothing else:
 
-{"headline": "one sentence: where the project stands and the single most important next move",
+{"headline": "one sentence of at most 160 characters: where the project stands and the single most important next move",
  "now": [{"title": "imperative action", "why": "short reason grounded in the data", "ref": "KEY-12 or null", "kind": "task|checkup|repo|endpoint|run|other"}],
  "next": [same shape],
  "roadmap": [{"title": "milestone or phase", "status": "done|active|planned", "refs": ["KEY-3"]}],

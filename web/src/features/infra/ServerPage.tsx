@@ -3,6 +3,7 @@
 // dashboards), and a shell on it — a tmux session on one of your machines
 // that runs ssh to the server.
 
+import clsx from "clsx";
 import {
   ArrowLeft,
   BellRing,
@@ -30,10 +31,11 @@ import { Markdown } from "@/components/ui/Markdown";
 import { PageHeader, Panel } from "@/components/ui/Panel";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
-import { AlertRow, ConnectGrafana, DashboardLink, NomadJobList, UsageBar } from "@/features/monitoring/parts";
+import { AlertRow, DashboardLink, GrafanaUnavailable, NomadJobList, UsageBar } from "@/features/monitoring/parts";
 import { environmentTone } from "@/lib/infra";
-import { alertMentions, dashboardsMentioning, formatUptime, hostAliases, serverAliases, sortAlerts } from "@/lib/monitoring";
+import { alertMentions, dashboardsMentioning, formatUptime, metricsOutage, problemJobs, serverLive, sortAlerts } from "@/lib/monitoring";
 import { EndpointsTable } from "./endpoints";
+import { sortEndpoints } from "./live";
 import { ServerDialog } from "./ServerDialog";
 import { ShellButton } from "./shell";
 
@@ -70,7 +72,10 @@ function ServerBody({ server: s }: { server: Server }) {
   const endpoints = useEndpoints();
   const [editing, setEditing] = useState(false);
   const keys = new Set(s.projects.map((p) => p.key));
-  const eps = (endpoints.data ?? []).filter((e) => keys.has(e.project_key));
+  const eps = sortEndpoints((endpoints.data ?? []).filter((e) => keys.has(e.project_key)));
+  // A critical server's notes hold its change-control rules: on a phone they
+  // come right after the live state instead of at the very end.
+  const notesEarly = s.critical && !!s.notes.trim();
 
   return (
     <>
@@ -104,16 +109,19 @@ function ServerBody({ server: s }: { server: Server }) {
         </p>
       ) : null}
 
+      {/* Below lg the two columns dissolve (display: contents) into one, ordered for a phone. */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="space-y-4 lg:col-span-2">
-          {mon.isPending ? (
-            <SkeletonRows rows={4} />
-          ) : mon.error ? (
-            <ErrorState error={mon.error} onRetry={() => mon.refetch()} />
-          ) : (
-            <LiveState server={s} m={mon.data} />
-          )}
-          <Panel title="Endpoints of its projects" icon={<Globe />} id="server-endpoints" bodyClassName="p-0">
+        <div className="contents lg:col-span-2 lg:block lg:space-y-4">
+          <div className="order-1 space-y-4 lg:order-none">
+            {mon.isPending ? (
+              <SkeletonRows rows={4} />
+            ) : mon.error ? (
+              <ErrorState error={mon.error} onRetry={() => mon.refetch()} />
+            ) : (
+              <LiveState server={s} m={mon.data} />
+            )}
+          </div>
+          <Panel title="Endpoints of its projects" icon={<Globe />} id="server-endpoints" className="order-3 lg:order-none" bodyClassName="p-0">
             {endpoints.isPending ? (
               <SkeletonRows rows={3} className="p-3" />
             ) : eps.length ? (
@@ -124,17 +132,23 @@ function ServerBody({ server: s }: { server: Server }) {
           </Panel>
         </div>
 
-        <div className="space-y-4">
-          <DetailsPanel server={s} />
-          <Panel title="Projects" icon={<FolderKanban />} id="server-projects">
+        <div className="contents lg:block lg:space-y-4">
+          <div className="order-4 lg:order-none">
+            <DetailsPanel server={s} />
+          </div>
+          <Panel title="Projects" icon={<FolderKanban />} id="server-projects" className="order-4 lg:order-none">
             {s.projects.length ? (
               <ul className="space-y-0.5">
                 {s.projects.map((p) => (
                   <li key={p.key}>
-                    <Link to={`/p/${p.key}`} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] hover:bg-surface-2">
+                    <Link to={`/p/${p.key}`} className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-[13px] hover:bg-surface-2">
                       <ColorDot color={p.color} className="size-2.5" />
-                      <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                      {p.role ? <span className="truncate text-[12px] text-fg-3">{p.role}</span> : null}
+                      <span className="shrink-0">{p.name}</span>
+                      {p.role ? (
+                        <span className="min-w-0 flex-1 truncate text-right text-[12px] text-fg-3" title={p.role}>
+                          {p.role}
+                        </span>
+                      ) : null}
                     </Link>
                   </li>
                 ))}
@@ -143,8 +157,12 @@ function ServerBody({ server: s }: { server: Server }) {
               <p className="px-2 py-1.5 text-[13px] text-fg-3">Not linked to a project. Link it from a project's overview.</p>
             )}
           </Panel>
-          {mon.data ? <ServerDashboards server={s} m={mon.data} /> : null}
-          <Panel title="Notes" icon={<StickyNote />} id="server-notes" bodyClassName="px-4 py-3">
+          {mon.data ? (
+            <div className="order-4 empty:hidden lg:order-none">
+              <ServerDashboards server={s} m={mon.data} />
+            </div>
+          ) : null}
+          <Panel title="Notes" icon={<StickyNote />} id="server-notes" className={clsx(notesEarly ? "order-2" : "order-5", "lg:order-none")} bodyClassName="px-4 py-3">
             {s.notes.trim() ? <Markdown className="text-[13px]">{s.notes}</Markdown> : <p className="text-[13px] text-fg-3">No notes.</p>}
           </Panel>
         </div>
@@ -192,11 +210,11 @@ function DetailsPanel({ server: s }: { server: Server }) {
 
 /** Metrics, Nomad jobs and alerts for this one host. */
 function LiveState({ server: s, m }: { server: Server; m: Monitoring }) {
-  const aliases = serverAliases(s);
-  const host = m.hosts.find((h) => h.server_id === s.id) ?? m.hosts.find((h) => hostAliases(h.name).some((a) => aliases.has(a)));
-  const nomad = m.nomad.find((n) => hostAliases(n.host).some((a) => aliases.has(a)));
+  const { host, nomad, aliases } = serverLive(m, s);
   const alerts = sortAlerts(m.grafana.alerts.filter((a) => alertMentions(a, aliases)));
   const firing = alerts.filter((a) => a.state === "firing").length;
+  const silent = m.hosts.filter((h) => !h.up).length;
+  const troubled = nomad ? problemJobs(nomad).length : 0;
   return (
     <>
       <Panel
@@ -212,12 +230,35 @@ function LiveState({ server: s, m }: { server: Server; m: Monitoring }) {
         id="server-metrics"
         bodyClassName="px-4 py-3"
       >
-        {host ? (
+        {host && !host.up ? (
+          <div className="space-y-2">
+            <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12.5px]">
+              <span className="size-2 shrink-0 rounded-full bg-critical" aria-hidden />
+              <span className="font-medium text-critical-ink">not reporting</span>
+              {host.last_seen ? (
+                <span className="text-fg-3">
+                  · last seen <RelativeTime iso={host.last_seen} />
+                </span>
+              ) : (
+                <span className="text-fg-3">· no metrics received</span>
+              )}
+            </p>
+            {metricsOutage(silent, m.hosts.length) ? (
+              <p className="text-[12px] text-fg-3">
+                {silent} of {m.hosts.length} hosts are silent right now — the metrics source (vmagent → VictoriaMetrics) is the likely cause, not this
+                host.{" "}
+                <Link to="/monitoring" className="text-accent hover:underline">
+                  Monitoring →
+                </Link>
+              </p>
+            ) : null}
+          </div>
+        ) : host ? (
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px]">
               <span className="inline-flex items-center gap-1.5">
-                <span className={host.up ? "size-2 rounded-full bg-good" : "size-2 rounded-full bg-critical"} aria-hidden />
-                <span className={host.up ? "text-fg-2" : "font-medium text-critical-ink"}>{host.up ? "up" : "not reporting"}</span>
+                <span className="size-2 rounded-full bg-good" aria-hidden />
+                <span className="text-fg-2">up</span>
               </span>
               <span className="text-fg-3">
                 uptime <span className="tabular text-fg-2">{formatUptime(host.uptime_seconds)}</span>
@@ -225,11 +266,6 @@ function LiveState({ server: s, m }: { server: Server; m: Monitoring }) {
               <span className="text-fg-3">
                 load <span className="tabular text-fg-2">{host.load1 === null ? "—" : host.load1.toFixed(2)}</span>
               </span>
-              {!host.up && host.last_seen ? (
-                <span className="text-fg-3">
-                  last seen <RelativeTime iso={host.last_seen} />
-                </span>
-              ) : null}
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <UsageBar label="CPU" pct={host.cpu_pct} />
@@ -246,14 +282,20 @@ function LiveState({ server: s, m }: { server: Server; m: Monitoring }) {
         <Panel
           title={
             <>
-              Nomad jobs {nomad?.reachable ? <span className="font-normal text-fg-3">· {nomad.jobs.length}</span> : null}
+              Nomad jobs{" "}
+              {nomad?.reachable ? (
+                <span className="font-normal text-fg-3">
+                  · {nomad.jobs.length}
+                  {troubled ? <span className="text-critical-ink"> · {troubled} in trouble</span> : null}
+                </span>
+              ) : null}
             </>
           }
           icon={<ServerCog />}
           id="server-nomad"
           bodyClassName="px-3.5 py-2.5"
         >
-          {nomad ? <NomadJobList host={nomad} /> : <p className="text-[13px] text-fg-3">No Nomad here (or no tailnet IP to reach it on).</p>}
+          {nomad ? <NomadJobList host={nomad} columns={1} /> : <p className="text-[13px] text-fg-3">No Nomad here (or no tailnet IP to reach it on).</p>}
         </Panel>
         <Panel
           title={
@@ -267,7 +309,7 @@ function LiveState({ server: s, m }: { server: Server; m: Monitoring }) {
           bodyClassName="p-0"
         >
           {!m.grafana.connected ? (
-            <ConnectGrafana url={m.grafana.url} error={m.grafana.error} />
+            <GrafanaUnavailable />
           ) : alerts.length ? (
             <ul className="divide-y divide-line">
               {alerts.map((a, i) => (

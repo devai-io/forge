@@ -5,8 +5,12 @@
 // An agent run you started stays open after it answers — "Waiting for you" —
 // until you Finish it: reply in the composer and the same run picks its
 // session back up, or open the session in Claude Code on its machine.
+//
+// A finished run leads with its Result and a Continue bar; the transcript
+// folds into one line (its last message is the Result, so it is left out).
 
-import { ArrowDown, ArrowLeft, Ban, CircleCheck, CornerDownRight, Copy, SquareTerminal } from "lucide-react";
+import clsx from "clsx";
+import { ArrowDown, ArrowLeft, Ban, ChevronRight, CircleCheck, CornerDownRight, Copy, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError } from "@/api/client";
@@ -22,9 +26,9 @@ import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import { useToast } from "@/components/ui/Toast";
 import { useShell } from "@/features/shell/context";
 import { formatCost, formatDuration } from "@/lib/format";
-import { mapRunEvents } from "@/lib/runlog";
+import { mapRunEvents, toolCallCount, withoutEchoedResult } from "@/lib/runlog";
 import { ENGINE_LABEL, runTitle } from "@/lib/agents";
-import { RunKindIcon, RunStatusBadge } from "./RunBits";
+import { RunKindIcon, RunStatusBadge, RunTagBadge } from "./RunBits";
 import { RunInteraction } from "./RunInteraction";
 import { RunLog } from "./RunLog";
 
@@ -80,7 +84,11 @@ function RunView({
       },
       onError: (e) => toast.error(e),
     });
-  const items = useMemo(() => mapRunEvents(events ?? []), [events]);
+  const finished = run.status === "succeeded" || run.status === "failed" || run.status === "cancelled";
+  const items = useMemo(() => withoutEchoedResult(mapRunEvents(events ?? []), run.result), [events, run.result]);
+  const [showTranscript, setShowTranscript] = useState(!finished);
+  const transcriptOpen = !finished || showTranscript;
+  const canContinue = !open && run.kind === "agent" && !!run.session_id && !run.handoff;
   const bottom = useRef<HTMLDivElement>(null);
   const [follow, setFollow] = useState(true);
   const active = isActiveRun(run);
@@ -114,7 +122,10 @@ function RunView({
         <div className="flex flex-wrap items-start gap-3">
           <RunKindIcon kind={run.kind} className="mt-1 size-5" />
           <div className="min-w-0 flex-1">
-            <h1 className="text-lg leading-snug font-semibold break-words">{runTitle(run)}</h1>
+            <h1 className="flex flex-wrap items-center gap-x-2 text-lg leading-snug font-semibold break-words">
+              {runTitle(run)} <RunTagBadge run={run} />
+            </h1>
+            {run.kind === "agent" && run.prompt.trim() && run.prompt.trim() !== runTitle(run) ? <PromptText prompt={run.prompt} /> : null}
             <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[12.5px] text-fg-3">
               <span className="font-mono">#{run.id}</span>
               {run.project_key ? (
@@ -181,10 +192,6 @@ function RunView({
                 onClick={() => cancel.mutate(run.id, { onError: (e) => toast.error(e) })}
               >
                 <Ban className="size-3.5" aria-hidden /> {run.cancel_requested ? "Cancelling…" : "Cancel"}
-              </Button>
-            ) : run.kind === "agent" && run.session_id && !run.handoff ? (
-              <Button size="sm" variant="primary" onClick={() => newRun({ resume: run })}>
-                <CornerDownRight className="size-3.5" aria-hidden /> Continue
               </Button>
             ) : null}
           </div>
@@ -300,18 +307,40 @@ function RunView({
         </section>
       ) : null}
 
-      {run.kind === "agent" && run.prompt ? (
-        <details className="mb-4 rounded-lg border border-line bg-surface px-3 py-2">
-          <summary className="cursor-pointer text-[13px] font-medium text-fg-2">Prompt</summary>
-          <pre className="mt-2 font-mono text-[12.5px] whitespace-pre-wrap">{run.prompt}</pre>
-        </details>
+      {canContinue ? (
+        // Right after the Result; pinned above the tab bar on a phone so the next step is always in reach.
+        <div className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-10 -mx-1 mb-5 bg-bg px-1 py-2 md:static md:py-0">
+          <div className="flex items-center gap-3 rounded-lg border border-line bg-surface px-3 py-2 shadow-pop md:shadow-none">
+            <p className="min-w-0 flex-1 text-[12.5px] text-fg-3">Follow up in the same session: a new run picks up where this one stopped.</p>
+            <Button size="sm" variant="primary" onClick={() => newRun({ resume: run })}>
+              <CornerDownRight className="size-3.5" aria-hidden /> Continue
+            </Button>
+          </div>
+        </div>
       ) : null}
 
       <section aria-labelledby="run-transcript" aria-live="off">
         <h2 id="run-transcript" className="mb-2 text-[13px] font-semibold text-fg-2">
-          Transcript {events ? <span className="font-normal text-fg-3">· {events.length} events</span> : null}
+          {finished ? (
+            <button
+              type="button"
+              onClick={() => setShowTranscript((v) => !v)}
+              aria-expanded={transcriptOpen}
+              className="inline-flex items-center gap-1 hover:text-fg"
+            >
+              <ChevronRight className={clsx("size-3.5 transition-transform", transcriptOpen && "rotate-90")} aria-hidden />
+              Transcript
+              {events ? (
+                <span className="font-normal text-fg-3">
+                  · {events.length} events · {toolCallCount(items)} tool call{toolCallCount(items) === 1 ? "" : "s"}
+                </span>
+              ) : null}
+            </button>
+          ) : (
+            <>Transcript {events ? <span className="font-normal text-fg-3">· {events.length} events</span> : null}</>
+          )}
         </h2>
-        {loadingEvents ? (
+        {!transcriptOpen ? null : loadingEvents ? (
           <SkeletonRows rows={5} />
         ) : items.length ? (
           <RunLog items={items} />
@@ -351,6 +380,23 @@ function RunView({
           className="fixed right-4 bottom-20 z-20 inline-flex items-center gap-1.5 rounded-full border border-line-strong bg-surface px-3 py-1.5 text-[12.5px] shadow-pop md:bottom-6"
         >
           <ArrowDown className="size-3.5" aria-hidden /> Follow
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** The prompt under the title: muted, two lines until opened. */
+function PromptText({ prompt }: { prompt: string }) {
+  const [open, setOpen] = useState(false);
+  const text = prompt.trim();
+  const long = text.split("\n").length > 2 || text.length > 180;
+  return (
+    <div className="mt-1">
+      <p className={clsx("text-[12.5px] break-words whitespace-pre-wrap text-fg-3", !open && "line-clamp-2")}>{text}</p>
+      {long ? (
+        <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="text-[11.5px] text-accent hover:underline">
+          {open ? "Show less" : "Show the whole prompt"}
         </button>
       ) : null}
     </div>

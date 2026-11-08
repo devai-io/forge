@@ -26,6 +26,7 @@ import { RelativeTime } from "@/components/ui/RelativeTime";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { useToast } from "@/components/ui/Toast";
 import { useShell } from "@/features/shell/context";
+import { StatusIcon } from "@/features/tasks/icons";
 import { formatSpend, usageCost } from "@/lib/assistant";
 
 const KIND_ICON: Record<FocusKind, typeof ListTodo> = {
@@ -142,6 +143,18 @@ function FocusBody({ f }: { f: ProjectFocus }) {
   );
 }
 
+/** A model's title often repeats the ref the chip already shows: "Fix X (SHOP-4)", "SHOP-4: Fix X". */
+function stripRef(title: string, ref: string | null): string {
+  if (!ref) return title;
+  const r = ref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const out = title
+    .replace(new RegExp(`\\s*[([]${r}[)\\]]`, "gi"), "")
+    .replace(new RegExp(`^\\s*${r}\\s*[:—–-]\\s*`, "i"), "")
+    .replace(new RegExp(`\\s*[—–-]\\s*${r}\\s*$`, "i"), "")
+    .trim();
+  return out || title;
+}
+
 function RefChip({ refName, f }: { refName: string; f: ProjectFocus }) {
   const { openTask } = useShell();
   const t = f.tasks[refName];
@@ -152,10 +165,13 @@ function RefChip({ refName, f }: { refName: string; f: ProjectFocus }) {
       onClick={() => openTask(t.id)}
       title={`${t.title} (${t.status.replace("_", " ")})`}
       className={clsx(
-        "rounded border border-line px-1 font-mono text-[11px] hover:border-accent hover:text-fg",
+        "inline-flex items-center gap-1 rounded border border-line px-1 align-[1px] font-mono text-[11px] whitespace-nowrap hover:border-accent hover:text-fg",
         t.status === "done" ? "text-fg-3 line-through" : "text-fg-2",
       )}
     >
+      <span aria-hidden className="contents">
+        <StatusIcon status={t.status} className="size-3" />
+      </span>
       {refName}
     </button>
   );
@@ -180,11 +196,18 @@ function ItemRow({ item, f, index, compact }: { item: FocusItem; f: ProjectFocus
         <Icon className="mt-0.5 size-3.5 shrink-0 text-fg-3" aria-label={item.kind} />
       )}
       <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className={clsx("text-[13px]", !compact && "font-medium", done && "text-fg-3 line-through")}>{item.title}</span>
-          {item.ref ? <RefChip refName={item.ref} f={f} /> : null}
-          {index !== undefined && item.kind !== "task" ? <Icon className="size-3 text-fg-3" aria-label={item.kind} /> : null}
-        </div>
+        {/* The ref leads, inline, so a long title wraps as text instead of pushing the chip onto its own line. */}
+        <p className="text-[13px]">
+          {item.ref ? (
+            <>
+              <RefChip refName={item.ref} f={f} />{" "}
+            </>
+          ) : null}
+          <span className={clsx(!compact && "font-medium", done && "text-fg-3 line-through")}>{stripRef(item.title, item.ref)}</span>
+          {index !== undefined && item.kind !== "task" ? (
+            <Icon className="ml-1.5 inline size-3 align-[-1px] text-fg-3" aria-label={item.kind} />
+          ) : null}
+        </p>
         {item.why && !compact ? <p className="text-[12px] text-fg-2">{item.why}</p> : null}
       </div>
     </li>

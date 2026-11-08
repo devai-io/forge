@@ -355,3 +355,50 @@ func TestProviderSettingsAndLegacyModels(t *testing.T) {
 		t.Fatal("ModelID changed an unknown model")
 	}
 }
+
+// A task-linked run carries the task's ref and current title; one without a task has neither.
+func TestRunTaskTitle(t *testing.T) {
+	cur = t
+	st := open(t)
+	ctx := context.Background()
+	rn := must(st.CreateRunner(ctx, "desk", []byte("tok")))
+	var repoID int64
+	for _, r := range must(st.AllRepos(ctx)) {
+		if r.ProjectKey == "SHOP" {
+			repoID = r.ID
+			break
+		}
+	}
+	task := must(st.CreateTask(ctx, store.TaskInput{ProjectKey: "SHOP", Title: "Fix the payout rounding"}))
+	linked := must(st.CreateRun(ctx, store.RunInput{RunnerID: rn.ID, RepoID: repoID, Kind: "agent", Prompt: "SHOP: fix it", TaskID: &task.ID}))
+	got := must(st.RunByID(ctx, linked.ID))
+	if got.TaskRef == nil || *got.TaskRef != task.Ref || got.TaskTitle == nil || *got.TaskTitle != "Fix the payout rounding" {
+		t.Fatalf("task-linked run = ref %v title %v", got.TaskRef, got.TaskTitle)
+	}
+	plain := must(st.CreateRun(ctx, store.RunInput{RunnerID: rn.ID, RepoID: repoID, Kind: "agent", Prompt: "Look around"}))
+	list := must(st.ListRuns(ctx, store.RunFilter{Limit: 10}))
+	for _, r := range list {
+		if r.ID == plain.ID && (r.TaskRef != nil || r.TaskTitle != nil) {
+			t.Fatalf("plain run = ref %v title %v", r.TaskRef, r.TaskTitle)
+		}
+	}
+}
+
+// A long headline is cut at a sentence end or a word boundary, never mid-word.
+func TestFocusClipAtWordBoundary(t *testing.T) {
+	repeat := func(s string, n int) (out string) {
+		for i := 0; i < n; i++ {
+			out += s
+		}
+		return out
+	}
+	suffix := func(s, end string) bool { return len(s) >= len(end) && s[len(s)-len(end):] == end }
+	f := store.CleanFocus(store.Focus{Headline: repeat("Ship the payout dashboard first. ", 10)}, nil)
+	if !suffix(f.Headline, "first.") || len([]rune(f.Headline)) > 200 {
+		t.Fatalf("sentence cut: %q", f.Headline)
+	}
+	f = store.CleanFocus(store.Focus{Headline: repeat("payout dashboard ", 20)}, nil)
+	if !suffix(f.Headline, "dashboard…") && !suffix(f.Headline, "payout…") {
+		t.Fatalf("word cut: %q", f.Headline)
+	}
+}

@@ -235,7 +235,7 @@ func (s *Store) FailOrphanedRuns(ctx context.Context) error {
 const runSelect = `
 SELECT r.id, coalesce(r.runner_id, 0), coalesce(rn.name, r.runner_name), coalesce(r.project_id, 0),
        coalesce(p.key, ''), coalesce(p.color, ''), coalesce(r.repo_id, 0), coalesce(rp.name, ''), r.task_id,
-       CASE WHEN t.id IS NULL THEN NULL ELSE tp.key || '-' || t.number END,
+       CASE WHEN t.id IS NULL THEN NULL ELSE tp.key || '-' || t.number END, t.title,
        r.kind, r.prompt, r.command, r.permission_mode, r.model, r.worktree, r.resume_run_id, r.status,
        r.cancel_requested, r.session_id, r.result, r.error, r.exit_code, r.cost_usd, r.num_turns, r.duration_ms,
        r.created_at, r.started_at, r.finished_at, coalesce(rp.path, ''), r.resume_session, r.model_note, r.engine,
@@ -255,7 +255,7 @@ func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 	var r Run
 	var usage string
 	if err := row.Scan(&r.ID, &r.RunnerID, &r.RunnerName, &r.ProjectID, &r.ProjectKey, &r.ProjectColor,
-		&r.RepoID, &r.RepoName, &r.TaskID, &r.TaskRef, &r.Kind, &r.Prompt, &r.Command, &r.PermissionMode,
+		&r.RepoID, &r.RepoName, &r.TaskID, &r.TaskRef, &r.TaskTitle, &r.Kind, &r.Prompt, &r.Command, &r.PermissionMode,
 		&r.Model, &r.Worktree, &r.ResumeRunID, &r.Status, &r.CancelRequested, &r.SessionID, &r.Result, &r.Error,
 		&r.ExitCode, &r.CostUSD, &r.NumTurns, &r.DurationMS, &r.CreatedAt, &r.StartedAt, &r.FinishedAt,
 		&r.RepoPath, &r.ResumeSession, &r.ModelNote, &r.Engine, &r.Effort, &r.ChatTurnID, &usage, &r.AppendSystem,

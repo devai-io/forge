@@ -1,9 +1,10 @@
-// Pieces shared by the Monitoring page and a server's page: host meters,
-// alert rows, Nomad job lists, probes, dashboard links and the Grafana
-// connect form.
+// Pieces shared by the Monitoring page and a server's page: host meters (and
+// the one-line rows for hosts that are not reporting), alert rows, Nomad job
+// lists, probes, dashboard links and the Grafana connect form (full, behind
+// a banner, or as a one-line pointer).
 
 import clsx from "clsx";
-import { CircleAlert, CircleDashed, CircleCheck, ExternalLink, LayoutDashboard, Plug } from "lucide-react";
+import { ChevronRight, CircleAlert, CircleDashed, CircleCheck, ExternalLink, LayoutDashboard, Plug } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useRefreshMonitoring, useSaveVaultItem } from "@/api/hooks";
@@ -14,7 +15,7 @@ import { Field, Input } from "@/components/ui/Input";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { useToast } from "@/components/ui/Toast";
 import { serverPath } from "@/lib/infra";
-import { formatUptime, sslLevel, usageLevel, type Level } from "@/lib/monitoring";
+import { formatUptime, jobLevel, metricsOutage, sortNomadJobs, splitHosts, sslLevel, usageLevel, type Level } from "@/lib/monitoring";
 
 const LEVEL_FILL: Record<Level, string> = { ok: "bg-series-1", warn: "bg-warning", fail: "bg-critical" };
 
@@ -118,6 +119,40 @@ export function AlertRow({ alert: a }: { alert: Alert }) {
 
 export const GRAFANA_ITEM_NAME = "Grafana service account (Forge)";
 
+/** Where the full connect form lives: the Monitoring page opens it from this link. */
+export const CONNECT_GRAFANA_PATH = "/monitoring?connect=grafana#mon-alerts";
+
+/** One line where alerts would be, for pages that are not the place to set Grafana up (a server's page). */
+export function GrafanaUnavailable({ what = "Alerts" }: { what?: string }) {
+  return (
+    <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 p-3.5 text-[12.5px] text-fg-3">
+      <Plug className="size-3.5 shrink-0" aria-hidden />
+      {what} unavailable — Grafana not connected ·{" "}
+      <Link to={CONNECT_GRAFANA_PATH} className="font-medium text-accent hover:underline">
+        Connect →
+      </Link>
+    </p>
+  );
+}
+
+/** The connect form behind a one-line banner; open from the start when `open` (a "Connect →" link landed here). */
+export function ConnectGrafanaDisclosure({ url, error, open = false }: { url: string; error: string; open?: boolean }) {
+  return (
+    <details className="group" open={open || undefined}>
+      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-1.5 gap-y-0.5 p-3.5 text-[12.5px] text-fg-2">
+        <Plug className="size-3.5 shrink-0 text-fg-3" aria-hidden />
+        Grafana not connected — alerts and dashboards unavailable.
+        <span className="inline-flex items-center gap-0.5 font-medium text-accent">
+          Connect Grafana <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" aria-hidden />
+        </span>
+      </summary>
+      <div className="border-t border-line">
+        <ConnectGrafana url={url} error={error} />
+      </div>
+    </details>
+  );
+}
+
 export function ConnectGrafana({ url, error }: { url: string; error: string }) {
   const save = useSaveVaultItem();
   const refresh = useRefreshMonitoring();
@@ -207,31 +242,105 @@ const JOB_TONE: Record<string, "good" | "warning" | "outline" | "critical"> = {
   dead: "outline",
 };
 
-/** One host's Nomad jobs as a compact two-column list. */
-export function NomadJobList({ host: h }: { host: NomadHost }) {
+/**
+ * One host's Nomad jobs, the ones in trouble first. Red means broken now
+ * (dead, nothing running), amber allocations waiting; Nomad's lifetime count
+ * of failed allocations is shown muted — a healthy job collects those over
+ * months of deploys. Two columns from `sm` unless `columns={1}` (narrow
+ * panels); `onlyProblems` hides the healthy ones.
+ */
+export function NomadJobList({ host: h, columns = 2, onlyProblems = false }: { host: NomadHost; columns?: 1 | 2; onlyProblems?: boolean }) {
   if (!h.reachable) return <p className="text-[12px] text-critical-ink">{h.error || "Nomad API did not answer."}</p>;
   if (!h.jobs.length) return <p className="text-[12px] text-fg-3">No jobs.</p>;
+  const jobs = sortNomadJobs(h.jobs).filter((j) => !onlyProblems || jobLevel(j) !== "ok");
+  if (!jobs.length) return <p className="text-[12px] text-fg-3">All {h.jobs.length} jobs healthy.</p>;
   return (
-    <ul className="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2">
-      {h.jobs.map((j) => {
-        const failing = j.failed > 0 || (j.status === "running" && j.running === 0);
+    <ul className={clsx("grid grid-cols-1 gap-x-4 gap-y-1", columns === 2 && "sm:grid-cols-2")}>
+      {jobs.map((j) => {
+        const level = jobLevel(j);
         return (
-          <li key={j.id} className="flex min-w-0 items-center gap-2 text-[12.5px]">
-            <Badge tone={failing ? "critical" : (JOB_TONE[j.status] ?? "neutral")} dot>
+          <li key={j.id} className="flex min-w-0 items-center gap-2 text-[12.5px]" data-level={level}>
+            <Badge tone={level === "fail" ? "critical" : level === "warn" ? "warning" : (JOB_TONE[j.status] ?? "neutral")} dot>
               {j.status}
             </Badge>
             <span className="min-w-0 flex-1 truncate font-mono" title={`${j.id} (${j.type})`}>
               {j.id}
             </span>
-            <span className="tabular shrink-0 text-[11.5px] text-fg-3" title="running / failed / queued">
-              {j.running}
-              {j.failed ? <span className="text-critical-ink"> · {j.failed} failed</span> : null}
-              {j.queued ? <span> · {j.queued} queued</span> : null}
+            <span className="tabular shrink-0 text-[11.5px] text-fg-3">
+              <span title="Allocations running" className={level === "fail" ? "font-medium text-critical-ink" : undefined}>
+                {j.running} running
+              </span>
+              {j.queued ? <span className={level === "warn" ? "font-medium text-fg" : undefined}> · {j.queued} queued</span> : null}
+              {j.failed ? <span title={`${j.failed} failed allocation${j.failed === 1 ? "" : "s"} (all time)`}> · {j.failed} failed</span> : null}
             </span>
           </li>
         );
       })}
     </ul>
+  );
+}
+
+/** A host that is not reporting, as one line: no point drawing empty meters. */
+export function HostDownRow({ host: h }: { host: HostMetrics }) {
+  return (
+    <li className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 px-3.5 py-2 text-[12.5px]">
+      <span className="size-2 shrink-0 rounded-full bg-critical" aria-hidden />
+      <span className="min-w-0 truncate font-mono font-semibold">
+        {h.server_id !== null ? (
+          <Link to={serverPath(h.server_id)} className="hover:text-accent hover:underline">
+            {h.name}
+          </Link>
+        ) : (
+          h.name
+        )}
+      </span>
+      <span className="font-medium text-critical-ink">not reporting</span>
+      {h.last_seen ? (
+        <span className="text-fg-3">
+          · last seen <RelativeTime iso={h.last_seen} />
+        </span>
+      ) : null}
+    </li>
+  );
+}
+
+/** Most hosts silent at once: say where to look instead of listing them as broken. */
+export function MetricsOutageBanner({ down, total }: { down: number; total: number }) {
+  return (
+    <p role="status" className="flex items-start gap-2 rounded-lg border border-critical/40 bg-critical/8 px-3 py-2 text-[12.5px] text-fg-2">
+      <CircleAlert className="mt-0.5 size-4 shrink-0 text-critical" aria-hidden />
+      <span>
+        <strong className="font-semibold text-fg">
+          {down === total ? `None of the ${total} hosts are` : `${down} of ${total} hosts are`} reporting{down === total ? "" : " nothing"}.
+        </strong>{" "}
+        When most go quiet together, the metrics source (vmagent on the hosts → VictoriaMetrics, and Forge's link to it) is the likely
+        cause — check it before the hosts.
+      </span>
+    </p>
+  );
+}
+
+/** Hosts for a grid: silent ones as one-line rows first, then a meter card per reporting host, heaviest use first. */
+export function HostsGrid({ hosts }: { hosts: HostMetrics[] }) {
+  const { down, up } = splitHosts(hosts);
+  return (
+    <div className="space-y-3">
+      {metricsOutage(down.length, hosts.length) ? <MetricsOutageBanner down={down.length} total={hosts.length} /> : null}
+      {down.length ? (
+        <ul aria-label="Hosts not reporting" className="divide-y divide-line rounded-xl border border-critical/35 bg-surface">
+          {down.map((h) => (
+            <HostDownRow key={h.name} host={h} />
+          ))}
+        </ul>
+      ) : null}
+      {up.length ? (
+        <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {up.map((h) => (
+            <HostCard key={h.name} host={h} />
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

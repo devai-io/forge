@@ -1,6 +1,7 @@
 // Agents: the Claude Code sessions and named commands on your machines —
 // what is running now (and waiting on you) first, then the history. The
-// machines themselves live on their own page (MachinesPage).
+// machines themselves live on their own page (MachinesPage). Nothing open is
+// one line, so the history (by day, with what each day cost) starts high.
 
 import clsx from "clsx";
 import { Activity, Bot, Cpu, Plus } from "lucide-react";
@@ -14,13 +15,16 @@ import { Select } from "@/components/ui/Input";
 import { PageHeader, Panel } from "@/components/ui/Panel";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { useShell } from "@/features/shell/context";
+import { groupRunsByDay } from "@/lib/agents";
+import { useUser } from "@/lib/auth";
+import { formatCost } from "@/lib/format";
 import { RunRow } from "./RunBits";
 
 export function AgentsPage() {
   const { newRun } = useShell();
   const navigate = useNavigate();
   return (
-    <div className="mx-auto max-w-5xl space-y-4">
+    <div className="mx-auto max-w-[1200px] space-y-4">
       <PageHeader
         title="Agents"
         subtitle="Claude Code, Codex sessions and commands on your machines — queue them, answer them, follow them from anywhere."
@@ -57,13 +61,26 @@ function ActivePanel() {
   );
   const error = running.error ?? queued.error ?? waiting.error;
   const yours = runs.filter((r) => r.status === "waiting" || (r.status === "running" && r.awaiting)).length;
+  const { newRun } = useShell();
+  const loading = running.isPending || queued.isPending || waiting.isPending;
+  if (!loading && !error && !runs.length) {
+    return (
+      <p id="agents-active" className="flex items-center gap-2 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[13px] text-fg-3">
+        <Activity className="size-4" aria-hidden />
+        Nothing open ·
+        <button type="button" onClick={() => newRun()} className="font-medium text-accent hover:underline">
+          New run
+        </button>
+      </p>
+    );
+  }
   return (
     <Panel
       title={runs.length ? `Open · ${runs.length}${yours ? ` · ${yours} waiting for you` : ""}` : "Open"}
       icon={<Activity />}
       id="agents-active"
     >
-      {running.isPending || queued.isPending || waiting.isPending ? (
+      {loading ? (
         <SkeletonRows rows={2} />
       ) : error ? (
         <ErrorState
@@ -74,16 +91,12 @@ function ActivePanel() {
             void waiting.refetch();
           }}
         />
-      ) : runs.length ? (
+      ) : (
         <div>
           {runs.map((r) => (
             <RunRow key={r.id} run={r} />
           ))}
         </div>
-      ) : (
-        <EmptyState compact icon={<Bot />} title="Nothing open">
-          Start one with New run, from a task, or from the Assistant. A run stays open after it answers until you finish it.
-        </EmptyState>
       )}
     </Panel>
   );
@@ -96,6 +109,8 @@ function RunsPanel() {
   const runs = useRuns({ project: project || undefined, status: status || undefined, limit: 100 }, 6000);
   // What is still open is in "Open"; here it only shows when asked for.
   const shown = (runs.data ?? []).filter((r) => status || (r.status !== "running" && r.status !== "queued" && r.status !== "waiting"));
+  const user = useUser();
+  const days = groupRunsByDay(shown, user.timezone);
   return (
     <Panel
       title="History"
@@ -134,9 +149,20 @@ function RunsPanel() {
       ) : runs.error ? (
         <ErrorState error={runs.error} onRetry={() => runs.refetch()} />
       ) : shown.length ? (
-        <div className={clsx(runs.isPlaceholderData && "opacity-60")}>
-          {shown.map((r) => (
-            <RunRow key={r.id} run={r} />
+        <div className={clsx("space-y-2", runs.isPlaceholderData && "opacity-60")}>
+          {days.map((d) => (
+            <section key={d.label} aria-label={d.label}>
+              <h3 className="flex items-baseline gap-2 px-2 pt-1 pb-0.5 text-[11px] font-semibold tracking-wide text-fg-3 uppercase">
+                {d.label}
+                <span className="tabular font-normal tracking-normal normal-case">
+                  {d.runs.length} run{d.runs.length === 1 ? "" : "s"}
+                  {d.costUsd !== null ? ` · ${formatCost(d.costUsd)}` : ""}
+                </span>
+              </h3>
+              {d.runs.map((r) => (
+                <RunRow key={r.id} run={r} />
+              ))}
+            </section>
           ))}
         </div>
       ) : (

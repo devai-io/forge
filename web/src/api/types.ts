@@ -61,6 +61,7 @@ export type ProjectStats = {
   created_7d: number;
   commits_7d: number;
   dirty_repos: number;
+  ci_failing: number;
   endpoints_total: number;
   endpoints_up: number;
   endpoints_down: number;
@@ -336,6 +337,7 @@ export type Run = {
   repo_name: string;
   task_id: number | null;
   task_ref: string | null;
+  task_title?: string | null; // the linked task's current title
   kind: RunKind;
   prompt: string;
   command: string;

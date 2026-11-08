@@ -9,11 +9,12 @@
 // remembered URL is probed first, and the frame's own document is checked on
 // load for the 401/403 JSON an expired cookie gets.
 
-import { Code, FolderOpen, History, KeyRound, TriangleAlert } from "lucide-react";
+import clsx from "clsx";
+import { Code, FolderOpen, History, KeyRound, RefreshCw, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { errorMessage, isElevationError } from "@/api/client";
-import { useCodeStatus, useOpenCode, useProject, useProjects } from "@/api/hooks";
+import { useCodeStatus, useOpenCode, useProject, useProjects, useRunners } from "@/api/hooks";
 import { ColorDot } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -192,7 +193,12 @@ function EditorFrame({ target }: { target: EditorTarget }) {
             <EditorState state={state} runnerName={status.data?.runner_name ?? null} onReopen={() => {
               forgetOpen(target);
               reopen();
-            }} onClose={close} />
+            }} onClose={close} onCheckAgain={() =>
+              void status.refetch().then((r) => {
+                if (r.data?.available) reopen();
+                else setState({ kind: "unavailable", reason: r.data?.reason || "VS Code is not available right now." });
+              })
+            } checking={status.isFetching} />
           </div>
         )}
       </div>
@@ -205,11 +211,15 @@ function EditorState({
   runnerName,
   onReopen,
   onClose,
+  onCheckAgain,
+  checking,
 }: {
   state: Exclude<State, { kind: "ready" }>;
   runnerName: string | null;
   onReopen: () => void;
   onClose: () => void;
+  onCheckAgain: () => void;
+  checking: boolean;
 }) {
   if (state.kind === "opening" || state.kind === "probing") {
     return (
@@ -251,7 +261,15 @@ function EditorState({
         </Button>,
       );
     case "unavailable":
-      return card(<TriangleAlert className="size-5 text-warning" aria-hidden />, "VS Code is unavailable", state.reason);
+      return card(
+        <TriangleAlert className="size-5 text-warning" aria-hidden />,
+        "VS Code is unavailable",
+        <>
+          {state.reason}
+          <MasterLastSeen runnerName={runnerName} className="mt-1 block" />
+        </>,
+        <CheckAgain onClick={onCheckAgain} loading={checking} />,
+      );
     case "error":
       return card(
         <TriangleAlert className="size-5 text-critical" aria-hidden />,
@@ -264,10 +282,39 @@ function EditorState({
   }
 }
 
+function CheckAgain({ onClick, loading }: { onClick: () => void; loading: boolean }) {
+  return (
+    <Button size="sm" variant="primary" onClick={onClick} loading={loading}>
+      {loading ? null : <RefreshCw className="size-3.5" aria-hidden />} Check again
+    </Button>
+  );
+}
+
+/** "desk last seen 3h ago · Machines →": where to look when the master is why VS Code is off. */
+function MasterLastSeen({ runnerName, className }: { runnerName: string | null; className?: string }) {
+  const runners = useRunners(false);
+  const runner = runners.data?.find((r) => (runnerName ? r.name === runnerName : r.role === "master"));
+  return (
+    <span className={clsx("text-[12px] text-fg-3", className)}>
+      {runner ? (
+        <>
+          {runner.name} {runner.online ? "is online" : "last seen"}{" "}
+          {runner.online ? null : <RelativeTime iso={runner.last_seen_at} fallback="never" />}
+          {" · "}
+        </>
+      ) : null}
+      <Link to="/machines" className="font-medium text-accent hover:underline">
+        Machines →
+      </Link>
+    </span>
+  );
+}
+
 function EditorLanding() {
   const status = useCodeStatus();
   const projects = useProjects();
   const code = useEditorLauncher();
+  const [rechecked, setRechecked] = useState(false);
   const [recent] = useState(recentOpens);
   const available = status.data?.available ?? false;
 
@@ -284,13 +331,18 @@ function EditorLanding() {
       {status.data && !status.data.available ? (
         <div role="status" className="flex items-start gap-3 rounded-xl border border-warning/50 bg-warning/10 px-4 py-3">
           <TriangleAlert className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden />
-          <div>
+          <div className="min-w-0 flex-1">
             <p className="text-[14px] font-semibold">VS Code is unavailable right now</p>
             <p className="mt-0.5 text-[13px] text-fg-2">{status.data.reason || "The master machine is not serving it."}</p>
             <p className="mt-1 text-[12px] text-fg-3">
               It runs on the master ({status.data.runner_name ?? "desk"}) and needs that machine online with{" "}
               VS Code enabled (<code className="font-mono">"code"</code>) in its <code className="font-mono">~/.config/forge/agent.json</code>.
             </p>
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <CheckAgain onClick={() => void status.refetch().then(() => setRechecked(true))} loading={status.isFetching} />
+              <MasterLastSeen runnerName={status.data.runner_name} />
+              {rechecked && !status.isFetching ? <span className="text-[12px] text-fg-3">Still unavailable.</span> : null}
+            </div>
           </div>
         </div>
       ) : null}
@@ -325,10 +377,11 @@ function EditorLanding() {
                   disabled={!available}
                   title={code.reason}
                   onClick={() => code.open({ kind: "project", projectKey: p.key, repoIds: [] })}
-                  className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  // Disabled stays readable (ink, not half-transparent): it is still the list you'll come back to.
+                  className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] enabled:hover:bg-surface-2 disabled:cursor-not-allowed disabled:text-fg-2"
                 >
-                  <ColorDot color={p.color} />
-                  <span className="min-w-0 flex-1 truncate font-medium">{p.name}</span>
+                  <ColorDot color={p.color} className={available ? undefined : "opacity-60"} />
+                  <span className={clsx("min-w-0 flex-1 truncate", available && "font-medium")}>{p.name}</span>
                   <span className="font-mono text-[11px] text-fg-3">{p.key}</span>
                 </button>
               </li>

@@ -6,6 +6,7 @@ import clsx from "clsx";
 import {
   AlertTriangle,
   Bot,
+  Code,
   ExternalLink,
   FolderGit2,
   GitBranch,
@@ -19,11 +20,11 @@ import {
   Trash2,
 } from "lucide-react";
 import { useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { botPath } from "@/lib/chats";
 import { ApiError } from "@/api/client";
-import { useDeleteRepo, useProject, useProjectActivity, useRuns, useTasks } from "@/api/hooks";
-import type { ProjectDetail, Repo, SyncStatus } from "@/api/types";
+import { useDeleteRepo, useMonitoring, useProject, useProjectActivity, useRuns, useServers, useTasks } from "@/api/hooks";
+import type { ProjectDetail, ProjectServer, Repo, SyncStatus } from "@/api/types";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/Dialog";
@@ -37,9 +38,11 @@ import { Tabs } from "@/components/ui/Tabs";
 import { useToast } from "@/components/ui/Toast";
 import { RunRow } from "@/features/agents/RunBits";
 import { syncLabel } from "@/lib/projects";
+import { alertMentions, serverAliases } from "@/lib/monitoring";
 import { ActivityFeed } from "@/features/dashboard/ActivityFeed";
 import { EndpointsTable } from "@/features/infra/endpoints";
 import { OpenInCodeButton } from "@/features/editor/OpenInCode";
+import { useEditorLauncher } from "@/features/editor/launcher";
 import { ProjectDashboards } from "@/features/monitoring/ProjectDashboards";
 import { ProjectSessions } from "@/features/terminal/SessionStrips";
 import { useShell } from "@/features/shell/context";
@@ -134,6 +137,13 @@ function ProjectHeader({ project: p }: { project: ProjectDetail }) {
   const today = todayInTz(user.timezone);
   const [editing, setEditing] = useState(false);
   const navigate = useNavigate();
+  const code = useEditorLauncher();
+  const codeTarget = { kind: "project" as const, projectKey: p.key, repoIds: [] };
+  // A red CI is the first thing to fix: name the repos, jump to their rows. Same rule as stats.ci_failing:
+  // the latest run finished as anything but success or skipped.
+  const ciFailing = p.repos
+    .filter((r) => r.git?.ci?.status === "completed" && !["success", "skipped"].includes(r.git.ci.conclusion))
+    .map((r) => r.name);
   return (
     <div className="mb-4 flex flex-wrap items-start gap-4">
       <div className="flex min-w-0 grow basis-80 items-start gap-3">
@@ -150,25 +160,48 @@ function ProjectHeader({ project: p }: { project: ProjectDetail }) {
                 <Target className="size-3" aria-hidden /> {countdown(p.target_date, today)}
               </Badge>
             ) : null}
+            {ciFailing.length || p.stats.ci_failing ? (
+              <Link
+                to={{ search: "", hash: "proj-repos" }}
+                onClick={() => setTimeout(() => document.getElementById("proj-repos")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50)}
+                className="rounded-full hover:brightness-95"
+              >
+                <Badge tone="critical" dot title="The latest CI run on the default branch failed">
+                  CI failing{ciFailing.length ? ` · ${ciFailing.join(", ")}` : ""}
+                </Badge>
+              </Link>
+            ) : null}
           </div>
           {p.summary ? <p className="mt-1 text-[13px] text-fg-2">{p.summary}</p> : null}
         </div>
       </div>
-      {/* One row on a phone: icons only, with the label as the accessible name and tooltip. */}
+      {/* On a phone the everyday actions keep their words; VS Code and Edit go behind "⋯". */}
       <div className="flex flex-nowrap items-center gap-1.5 sm:gap-2">
-        <OpenInCodeButton size="sm" variant="subtle" responsiveLabel target={{ kind: "project", projectKey: p.key, repoIds: [] }} />
-        <Button size="sm" variant="subtle" onClick={() => setEditing(true)} aria-label="Edit project" title="Edit project">
-          <Pencil className="size-3.5" aria-hidden /> <span className="hidden sm:inline">Edit</span>
+        <span className="hidden sm:contents">
+          <OpenInCodeButton size="sm" variant="subtle" target={codeTarget} />
+          <Button size="sm" variant="subtle" onClick={() => setEditing(true)} title="Edit project">
+            <Pencil className="size-3.5" aria-hidden /> Edit
+          </Button>
+        </span>
+        <Button size="sm" variant="subtle" onClick={() => navigate(botPath(p.key))} title={`Chat with the ${p.key} bot`}>
+          <MessagesSquare className="size-3.5" aria-hidden /> Chat
         </Button>
-        <Button size="sm" variant="subtle" onClick={() => navigate(botPath(p.key))} aria-label={`${p.key} bot`} title={`Talk to the ${p.key} bot`}>
-          <MessagesSquare className="size-3.5" aria-hidden /> <span className="hidden sm:inline">Bot</span>
-        </Button>
-        <Button size="sm" variant="subtle" onClick={() => newRun({ project_key: p.key })} aria-label="Run agent" title="Run agent">
-          <Bot className="size-3.5" aria-hidden /> <span className="hidden sm:inline">Run agent</span>
+        <Button size="sm" variant="subtle" onClick={() => newRun({ project_key: p.key })} title="Run agent">
+          <Bot className="size-3.5" aria-hidden /> Run agent
         </Button>
         <Button size="sm" variant="primary" onClick={() => newTask({ project_key: p.key })} aria-label="New task" title="New task (C)">
-          <Plus className="size-3.5" aria-hidden /> <span className="hidden sm:inline">Task</span>
+          <Plus className="size-3.5" aria-hidden /> Task
         </Button>
+        <Menu
+          label="More project actions"
+          className="sm:hidden"
+          triggerClassName="grid size-7 place-items-center rounded-md border border-line text-fg-2 hover:bg-surface-2"
+          trigger={<MoreHorizontal className="size-4" />}
+          items={[
+            { label: "Open in VS Code", icon: <Code />, disabled: !code.available, onSelect: () => code.open(codeTarget) },
+            { label: "Edit project", icon: <Pencil />, onSelect: () => setEditing(true) },
+          ]}
+        />
       </div>
       {editing ? <ProjectDialog project={p} onClose={() => setEditing(false)} /> : null}
     </div>
@@ -283,36 +316,7 @@ function Overview({ project: p }: { project: ProjectDetail }) {
           )}
         </Panel>
 
-        <Panel
-          title={`Servers · ${p.servers.length}`}
-          icon={<ServerIcon />}
-          id="proj-servers"
-          actions={
-            <Button size="sm" variant="ghost" onClick={() => setServersOpen(true)}>
-              <Pencil className="size-3.5" aria-hidden /> Edit
-            </Button>
-          }
-        >
-          {p.servers.length ? (
-            <ul>
-              {p.servers.map((sv) => (
-                <li key={sv.server_id} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px]">
-                  <ServerIcon className="size-3.5 text-fg-3" aria-hidden />
-                  <span className="font-medium">{sv.name}</span>
-                  <span className="min-w-0 flex-1 truncate text-fg-2">{sv.role}</span>
-                  {sv.critical ? (
-                    <Badge tone="critical" dot title="Production-critical host">
-                      critical
-                    </Badge>
-                  ) : null}
-                  <Badge tone={sv.environment === "production" ? "serious" : "neutral"}>{sv.environment}</Badge>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="px-2 py-2 text-[13px] text-fg-3">Not linked to any server.</p>
-          )}
-        </Panel>
+        <ServersPanel servers={p.servers} onEdit={() => setServersOpen(true)} />
 
         <ProjectMachineSetup project={p} />
 
@@ -340,8 +344,8 @@ function RepoRow({ repo: r, projectKey, onEdit }: { repo: Repo; projectKey: stri
   const g = r.git;
   return (
     <li className="px-3.5 py-3">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
+      <div className="min-w-0">
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[13.5px] font-medium">{r.name}</span>
             <Badge tone="outline">{r.kind}</Badge>
@@ -366,6 +370,27 @@ function RepoRow({ repo: r, projectKey, onEdit }: { repo: Repo; projectKey: stri
                 ↑{g.ahead} ↓{g.behind}
               </span>
             ) : null}
+            {/* In the name row, not a column of their own, so the lines below get the full width on a phone. */}
+            <span className="ml-auto flex shrink-0 items-center">
+              <OpenInCodeButton
+                size="icon-sm"
+                variant="ghost"
+                iconOnly
+                label={`Open ${r.name} in VS Code`}
+                target={{ kind: "project", projectKey, repoIds: [r.id] }}
+              />
+              <Menu
+                label={`Actions for ${r.name}`}
+                triggerClassName="grid size-7 place-items-center rounded-md text-fg-3 hover:bg-surface-2 hover:text-fg"
+                trigger={<MoreHorizontal className="size-4" />}
+                items={[
+                  { label: "Run agent here", icon: <Bot />, disabled: !r.path, onSelect: () => newRun({ project_key: projectKey, repo_id: r.id }) },
+                  { label: "Edit", icon: <Pencil />, onSelect: onEdit },
+                  "separator",
+                  { label: "Remove", icon: <Trash2 />, danger: true, onSelect: () => setConfirm(true) },
+                ]}
+              />
+            </span>
           </div>
           {r.path ? <p className="mt-0.5 truncate font-mono text-[11.5px] text-fg-3">{r.path}</p> : null}
           {g?.error ? (
@@ -396,30 +421,17 @@ function RepoRow({ repo: r, projectKey, onEdit }: { repo: Repo; projectKey: stri
             {g ? (
               <span>
                 scanned <RelativeTime iso={g.scanned_at} /> on {g.runner_name}
+                {g.sync ? (
+                  <>
+                    {" · "}
+                    <SyncNote sync={g.sync} />
+                  </>
+                ) : null}
               </span>
             ) : null}
-            {g?.sync ? <SyncNote sync={g.sync} /> : null}
             {r.deploy ? <span className="truncate">deploy: {r.deploy}</span> : null}
           </div>
         </div>
-        <OpenInCodeButton
-          size="icon-sm"
-          variant="ghost"
-          iconOnly
-          label={`Open ${r.name} in VS Code`}
-          target={{ kind: "project", projectKey, repoIds: [r.id] }}
-        />
-        <Menu
-          label={`Actions for ${r.name}`}
-          triggerClassName="grid size-7 place-items-center rounded-md text-fg-3 hover:bg-surface-2 hover:text-fg"
-          trigger={<MoreHorizontal className="size-4" />}
-          items={[
-            { label: "Run agent here", icon: <Bot />, disabled: !r.path, onSelect: () => newRun({ project_key: projectKey, repo_id: r.id }) },
-            { label: "Edit", icon: <Pencil />, onSelect: onEdit },
-            "separator",
-            { label: "Remove", icon: <Trash2 />, danger: true, onSelect: () => setConfirm(true) },
-          ]}
-        />
       </div>
       <ConfirmDialog
         open={confirm}
@@ -523,7 +535,66 @@ function SyncNote({ sync }: { sync: SyncStatus }) {
       className={clsx(l.tone === "warning" && "text-fg-2", l.tone === "critical" && "text-critical-ink")}
     >
       {l.text}
-      {l.tone !== "muted" && l.title ? `: ${l.title}` : null} · <RelativeTime iso={sync.at} />
+      {l.tone !== "muted" && l.title ? (
+        <>
+          : {l.title} · <RelativeTime iso={sync.at} />
+        </>
+      ) : null}
     </span>
+  );
+}
+
+/** The project's servers, each linking to its page, with a dot for a firing alert that names it. */
+function ServersPanel({ servers, onEdit }: { servers: ProjectServer[]; onEdit: () => void }) {
+  const mon = useMonitoring();
+  const all = useServers();
+  const alerts = (mon.data?.grafana.alerts ?? []).filter((a) => a.state === "firing");
+  const mentioned = servers.map((sv) => {
+    const full = all.data?.find((x) => x.id === sv.server_id);
+    const aliases = serverAliases(full ?? { name: sv.name, public_address: "", tailscale_ip: "" });
+    return { id: sv.server_id, alerts: alerts.filter((a) => alertMentions(a, aliases)) };
+  });
+  const firing = new Map(mentioned.map((m) => [m.id, m.alerts.length]));
+  // Distinct alerts: one naming two of these hosts counts once.
+  const alerting = new Set(mentioned.flatMap((m) => m.alerts)).size;
+  return (
+    <Panel
+      title={`Servers · ${servers.length}${alerting ? ` · ${alerting} alert${alerting === 1 ? "" : "s"}` : ""}`}
+      icon={<ServerIcon />}
+      id="proj-servers"
+      actions={
+        <Button size="sm" variant="ghost" onClick={onEdit}>
+          <Pencil className="size-3.5" aria-hidden /> Edit
+        </Button>
+      }
+    >
+      {servers.length ? (
+        <ul>
+          {servers.map((sv) => {
+            const n = firing.get(sv.server_id) ?? 0;
+            return (
+              <li key={sv.server_id}>
+                <Link to={`/infra/servers/${sv.server_id}`} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] hover:bg-surface-2">
+                  <ServerIcon className="size-3.5 text-fg-3" aria-hidden />
+                  <span className="font-medium">{sv.name}</span>
+                  {n ? (
+                    <span className="size-2 shrink-0 animate-pulse-soft rounded-full bg-critical" role="img" aria-label={`${n} firing alert${n === 1 ? "" : "s"}`} title={`${n} firing alert${n === 1 ? "" : "s"}`} />
+                  ) : null}
+                  <span className="min-w-0 flex-1 truncate text-fg-2">{sv.role}</span>
+                  {sv.critical ? (
+                    <Badge tone="critical" dot title="Production-critical host">
+                      critical
+                    </Badge>
+                  ) : null}
+                  <Badge tone={sv.environment === "production" ? "serious" : "neutral"}>{sv.environment}</Badge>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="px-2 py-2 text-[13px] text-fg-3">Not linked to any server.</p>
+      )}
+    </Panel>
   );
 }

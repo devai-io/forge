@@ -2,6 +2,7 @@
 // grouped by project. The list shows metadata only; values sit behind Reveal
 // in the item sheet (`?item=<id>`, deep-linkable).
 
+import clsx from "clsx";
 import { FilePlus2, FolderGit2, History, KeyRound, Lock, MonitorDown, Plus, Search, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -10,7 +11,7 @@ import type { VaultAudit, VaultItem } from "@/api/types";
 import { Badge, ColorDot } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
-import { Input, Select } from "@/components/ui/Input";
+import { Input, Select, Switch } from "@/components/ui/Input";
 import { PageHeader, Panel } from "@/components/ui/Panel";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { SkeletonRows } from "@/components/ui/Skeleton";
@@ -18,7 +19,7 @@ import { Tabs } from "@/components/ui/Tabs";
 import { ElevationBadge } from "@/features/auth/ElevationBadge";
 import { useUser } from "@/lib/auth";
 import { todayInTz } from "@/lib/format";
-import { groupByProject, groupByRepo, isReference, repoFileContent, VAULT_KINDS } from "@/lib/vault";
+import { groupByProject, groupByRepo, isReference, referencesLast, repoFileContent, VAULT_KINDS } from "@/lib/vault";
 import { AddFilesDialog } from "./AddFilesDialog";
 import { ExpiryBadge, FileBadge, SecretKeyChips, VaultKindIcon } from "./bits";
 import { MachineSetupDialog } from "./MachineSetupDialog";
@@ -43,12 +44,20 @@ export function VaultPage() {
   return (
     <div className="mx-auto max-w-[1200px]">
       <PageHeader
-        title="Vault"
+        title={
+          // On a phone the actions wrap under the long subtitle; Add item sits by the title there instead.
+          <span className="flex items-center justify-between gap-2">
+            Vault
+            <Button variant="primary" size="sm" className="sm:hidden" onClick={() => setAdding(true)}>
+              <Plus className="size-3.5" aria-hidden /> Add item
+            </Button>
+          </span>
+        }
         subtitle="Keys, tokens, signing files and where their originals live — encrypted, revealed on demand."
         actions={
           <>
             <ElevationBadge />
-            <Button variant="primary" size="sm" onClick={() => setAdding(true)}>
+            <Button variant="primary" size="sm" className="max-sm:hidden" onClick={() => setAdding(true)}>
               <Plus className="size-3.5" aria-hidden /> Add item
             </Button>
           </>
@@ -100,6 +109,7 @@ function ItemsTab({
   const [kind, setKind] = useState("");
   const [platform, setPlatform] = useState("");
   const [q, setQ] = useState("");
+  const [valuesOnly, setValuesOnly] = useState(false);
   const projects = useProjects();
   const user = useUser();
   const today = todayInTz(user.timezone);
@@ -111,12 +121,13 @@ function ItemsTab({
     return (vault.data?.items ?? []).filter(
       (i) =>
         (!platform || i.platform === platform) &&
+        (!valuesOnly || !isReference(i)) &&
         (!needle ||
           [i.name, i.identifier, i.host, i.location, ...i.tags, ...Object.values(i.fields)].some((s) =>
             s.toLowerCase().includes(needle),
           )),
     );
-  }, [vault.data, platform, q]);
+  }, [vault.data, platform, q, valuesOnly]);
   const platforms = useMemo(
     () => Array.from(new Set((vault.data?.items ?? []).map((i) => i.platform).filter(Boolean))).sort(),
     [vault.data],
@@ -137,11 +148,13 @@ function ItemsTab({
   const groups = groupByProject(items);
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-0 flex-1 basis-56">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="relative min-w-0 sm:flex-1 sm:basis-56">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-fg-3" aria-hidden />
           <Input aria-label="Search the vault" placeholder="Search name, identifier, host, tag…" value={q} onChange={(e) => setQ(e.target.value)} className="pl-8" />
         </div>
+        {/* Phones: the filters on one row that scrolls sideways instead of a stack of full-width selects. */}
+        <div className="-mx-4 flex items-center gap-2 overflow-x-auto px-4 pb-0.5 sm:contents [&>*]:shrink-0">
         <Select aria-label="Project" className="w-auto" value={project} onChange={(e) => onProject(e.target.value)}>
           <option value="">All projects</option>
           {projects.data?.map((p) => (
@@ -168,6 +181,10 @@ function ItemsTab({
             ))}
           </Select>
         ) : null}
+        <span className="text-[13px] whitespace-nowrap" title="Hide references: entries that only say where the original lives">
+          <Switch checked={valuesOnly} onChange={setValuesOnly} label="With values only" />
+        </span>
+        </div>
       </div>
 
       {project ? <RepoFilesPanel projectKey={project} items={vault.data.items} onOpen={onOpen} /> : null}
@@ -201,7 +218,7 @@ function ItemsTab({
             bodyClassName="p-0"
           >
             <ul className="divide-y divide-line">
-              {g.items.map((item) => (
+              {referencesLast(g.items).map((item) => (
                 <li key={item.id}>
                   <VaultRow item={item} today={today} onOpen={onOpen} />
                 </li>
@@ -215,12 +232,18 @@ function ItemsTab({
 }
 
 function VaultRow({ item, today, onOpen }: { item: VaultItem; today: string; onOpen: (id: number) => void }) {
+  // References hold no value — dimmed (and sorted last) so real secrets stand out.
+  const reference = isReference(item);
   return (
-    <button type="button" onClick={() => onOpen(item.id)} className="flex w-full min-w-0 items-start gap-3 px-3.5 py-2.5 text-left hover:bg-surface-2/60">
-      <VaultKindIcon kind={item.kind} className="mt-0.5 size-4" />
+    <button
+      type="button"
+      onClick={() => onOpen(item.id)}
+      className={clsx("flex w-full min-w-0 items-start gap-3 px-3.5 py-2.5 text-left hover:bg-surface-2/60", reference && "bg-surface-2/30")}
+    >
+      <VaultKindIcon kind={item.kind} className={clsx("mt-0.5 size-4", reference && "opacity-50")} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="text-[13.5px] font-medium">{item.name}</span>
+          <span className={clsx("text-[13.5px]", reference ? "text-fg-2" : "font-medium")}>{item.name}</span>
           {item.platform ? <Badge tone="neutral">{item.platform}</Badge> : null}
           {item.host ? <Badge tone="outline">{item.host}</Badge> : null}
           <FileBadge item={item} />
@@ -232,7 +255,7 @@ function VaultRow({ item, today, onOpen }: { item: VaultItem; today: string; onO
               </span>
             </Badge>
           ) : null}
-          {isReference(item) ? (
+          {reference ? (
             <Badge tone="outline" title="Reference only: Forge holds no value or file for this item">
               reference
             </Badge>

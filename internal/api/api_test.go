@@ -449,6 +449,12 @@ func TestVaultNeedsElevationAndRoundTrips(t *testing.T) {
 	if rev.Secret["store_password"] != "s3cret-store" {
 		t.Fatalf("revealed = %v", rev.Secret)
 	}
+	// The security log names the item that was revealed.
+	var revLog struct{ Events []store.SecurityEvent }
+	expect(t, "reveal logged", h.do("GET", "/api/auth/security?kind=vault_reveal", nil, &revLog), 200)
+	if len(revLog.Events) != 1 || revLog.Events[0].Detail != fmt.Sprintf("item %d (Shop — Play upload keystore)", item.ID) {
+		t.Fatalf("reveal events = %+v", revLog.Events)
+	}
 	req, _ := http.NewRequest("GET", fmt.Sprintf("%s/api/vault/%d/file", h.srv.URL, item.ID), nil)
 	resp, err := h.client.Do(req)
 	if err != nil {

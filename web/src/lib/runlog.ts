@@ -42,6 +42,10 @@ export type DisplayItem =
 
 export const RESULT_PREVIEW_CHARS = 600;
 
+// System events Claude Code reports that say nothing to a reader of the run
+// (token counts, hook bookkeeping, permission polling): left out of the transcript.
+const QUIET_SYSTEM = new Set(["thinking_tokens", "hook_started", "hook_response", "permission_check_status"]);
+
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 function truncateMiddle(text: string, max: number): string {
@@ -178,7 +182,7 @@ export function mapRunEvents(events: RunEvent[]): DisplayItem[] {
           permissionMode: str(d.permissionMode ?? d.permission_mode),
           tools: Array.isArray(d.tools) ? d.tools.length : 0,
         });
-      } else if (d.subtype) {
+      } else if (d.subtype && !QUIET_SYSTEM.has(str(d.subtype))) {
         items.push({ kind: "note", key: `note-${ev.seq}`, text: `system: ${str(d.subtype)}` });
       }
       continue;
@@ -264,3 +268,20 @@ export function previewText(text: string, max = RESULT_PREVIEW_CHARS): { text: s
   if (text.length <= max) return { text, truncated: false };
   return { text: text.slice(0, max), truncated: true };
 }
+
+/**
+ * The transcript without its last assistant message when that message is the
+ * run's result: the run page shows the result on its own above.
+ */
+export function withoutEchoedResult(items: DisplayItem[], result: string): DisplayItem[] {
+  const r = result.trim();
+  if (!r) return items;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.kind === "text") return it.text.trim() === r ? [...items.slice(0, i), ...items.slice(i + 1)] : items;
+    if (it.kind !== "result" && it.kind !== "note" && it.kind !== "log") return items;
+  }
+  return items;
+}
+
+export const toolCallCount = (items: DisplayItem[]) => items.filter((i) => i.kind === "tool").length;

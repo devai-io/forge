@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/Button";
 import { Field, Input } from "@/components/ui/Input";
 import { Panel } from "@/components/ui/Panel";
 import { SkeletonRows } from "@/components/ui/Skeleton";
+import { NeedsProviderKey } from "./ProviderPanel";
 import { Segmented } from "@/components/ui/Tabs";
 import { useToast } from "@/components/ui/Toast";
 import { formatSpend } from "@/lib/assistant";
@@ -57,7 +58,7 @@ export function EnginePanel() {
             {engine.data.provider_key ? (
               <Badge tone="good">OpenRouter key in the vault</Badge>
             ) : (
-              <Badge tone="warning">no OpenRouter key: DeepSeek runs fall back to Claude</Badge>
+              <NeedsProviderKey>DeepSeek runs fall back to Claude</NeedsProviderKey>
             )}
           </div>
 

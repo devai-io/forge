@@ -12,6 +12,7 @@ import { Panel } from "@/components/ui/Panel";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { Segmented } from "@/components/ui/Tabs";
 import { useToast } from "@/components/ui/Toast";
+import { NeedsProviderKey } from "./ProviderPanel";
 
 export function AssistantPanel() {
   const assistant = useAssistant();
@@ -89,7 +90,7 @@ function AssistantForm({ status }: { status: AssistantStatus }) {
         {status.key_configured ? (
           <Badge tone="good">OpenRouter key in the vault</Badge>
         ) : (
-          <Badge tone="warning">no OpenRouter key: DeepSeek is off</Badge>
+          <NeedsProviderKey>DeepSeek is off</NeedsProviderKey>
         )}
       </div>
 

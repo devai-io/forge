@@ -125,14 +125,19 @@ export function ProjectSessions({ projectKey }: { projectKey: string }) {
   );
 }
 
-/** Dashboard: every window running Claude or Codex, and how busy each host is. */
-export function ClaudeSessionsPanel() {
+/**
+ * Dashboard: every window running Claude or Codex, and how busy each host is.
+ * `exclude` drops sessions shown elsewhere (the F-<Project> sessions widget).
+ */
+export function ClaudeSessionsPanel({ exclude }: { exclude?: ReadonlySet<string> } = {}) {
   const hosts = useTerminalHosts({ refetchInterval: 15_000 });
   const peek = usePeek();
   const locked = isElevationError(hosts.error);
   const terminalHosts = (hosts.data?.hosts ?? []).filter((h) => h.terminal);
   if (!locked && !terminalHosts.length) return null;
-  const claude = allWindows(terminalHosts, isAgent);
+  const all = allWindows(terminalHosts, isAgent);
+  const claude = exclude?.size ? all.filter((w) => !exclude.has(w.session.name)) : all;
+  const elsewhere = all.length - claude.length;
 
   return (
     <Panel
@@ -182,7 +187,9 @@ export function ClaudeSessionsPanel() {
               ))}
             </ul>
           ) : (
-            <p className="px-2 py-2 text-[13px] text-fg-3">No Claude sessions running.</p>
+            <p className="px-2 py-2 text-[13px] text-fg-3">
+              {elsewhere ? `No other agent sessions — the ${elsewhere} project sessions are at the top.` : "No Claude sessions running."}
+            </p>
           )}
         </>
       )}

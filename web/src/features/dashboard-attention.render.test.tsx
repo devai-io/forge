@@ -124,7 +124,7 @@ const project = {
   updated_at: "2026-01-01T00:00:00Z",
   stats: {
     total: 0, backlog: 0, todo: 0, in_progress: 0, blocked: 0, done: 0, overdue: 0, done_7d: 0, created_7d: 0, commits_7d: 0,
-    dirty_repos: 0, endpoints_total: 0, endpoints_up: 0, endpoints_down: 0, endpoints_warning: 0, active_runs: 0, last_activity_at: null, progress: 0,
+    dirty_repos: 0, ci_failing: 0, endpoints_total: 0, endpoints_up: 0, endpoints_down: 0, endpoints_warning: 0, active_runs: 0, last_activity_at: null, progress: 0,
   },
 } as Project;
 

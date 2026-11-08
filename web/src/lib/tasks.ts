@@ -11,6 +11,32 @@ export const STATUSES: { value: TaskStatus; label: string }[] = [
   { value: "done", label: "Done" },
 ];
 
+/** The list's group order: what is moving or stuck first, the backlog last (the board keeps STATUSES' order). */
+export const LIST_GROUP_ORDER: TaskStatus[] = ["in_progress", "blocked", "todo", "backlog", "done"];
+
+// Which list groups this viewer folded, per browser. Nothing stored = the backlog folded.
+const COLLAPSED_KEY = "forge.tasks.collapsed";
+export const DEFAULT_COLLAPSED: TaskStatus[] = ["backlog"];
+
+export function readCollapsedGroups(): TaskStatus[] {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_KEY);
+    if (raw === null) return DEFAULT_COLLAPSED;
+    const v: unknown = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((s): s is TaskStatus => STATUSES.some((x) => x.value === s)) : DEFAULT_COLLAPSED;
+  } catch {
+    return DEFAULT_COLLAPSED;
+  }
+}
+
+export function writeCollapsedGroups(statuses: TaskStatus[]) {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(statuses));
+  } catch {
+    /* storage blocked: the groups fold back to the default next time */
+  }
+}
+
 export const PRIORITIES: { value: Priority; label: string }[] = [
   { value: "urgent", label: "Urgent" },
   { value: "high", label: "High" },

@@ -266,7 +266,8 @@ describe("Settings → Assistant", () => {
     );
     renderWithProviders(<AssistantPanel />);
     // Claude needs no key: the switch works without one.
-    expect(await screen.findByText("no OpenRouter key: DeepSeek is off")).toBeInTheDocument();
+    expect(await screen.findByText(/DeepSeek is off/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "add the key in AI provider" })).toHaveAttribute("href", "#settings-provider");
     expect(screen.getByText("Claude Code on desk")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Claude" })).toHaveAttribute("aria-checked", "true");
     expect(screen.queryByLabelText(/API key/)).not.toBeInTheDocument();

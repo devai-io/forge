@@ -5,7 +5,7 @@
 import clsx from "clsx";
 import { Plus, SquareTerminal, WifiOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { isElevationError, promptElevation } from "@/api/client";
 import { useTerminalHosts } from "@/api/hooks";
 import type { TerminalHost, TmuxSession } from "@/api/types";
@@ -144,11 +144,17 @@ function HostSessions({ host }: { host: TerminalHost }) {
   return (
     <div className="space-y-3">
       {!host.online ? (
-        <p className="flex items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-[13px]">
-          <WifiOff className="size-4 shrink-0 text-warning" aria-hidden />
-          {host.runner_name} is offline — last seen <RelativeTime iso={host.updated_at} />. The list below is what it last
-          reported.
-        </p>
+        <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-[13px]">
+          <WifiOff className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+          {/* One span: loose text next to <RelativeTime> would become separate flex columns on a phone. */}
+          <span className="min-w-0 flex-1">
+            {host.runner_name} is offline — last seen <RelativeTime iso={host.updated_at} />. The list below is what it last
+            reported; attach and peek come back when it does.
+          </span>
+          <Link to="/machines" className="shrink-0 font-medium whitespace-nowrap text-accent hover:underline">
+            Machines →
+          </Link>
+        </div>
       ) : (
         <p className="text-[12px] text-fg-3">
           {host.hostname || host.runner_name} · {sessions.length} session{sessions.length === 1 ? "" : "s"} · reported{" "}
@@ -164,6 +170,7 @@ function HostSessions({ host }: { host: TerminalHost }) {
               onAttach={(w) => navigate(attachPath(host.runner_id, s.name, w ? windowParam(w) : null))}
               onPeek={(w) => setPeek({ session: s.name, window: w ? windowParam(w) : null, label: w?.repo_name ?? w?.name })}
               onKill={host.online ? () => setKilling(s) : undefined}
+              offline={host.online ? null : `${host.runner_name} is offline`}
               edit={
                 servesCode
                   ? {

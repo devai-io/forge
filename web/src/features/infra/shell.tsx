@@ -1,11 +1,11 @@
 // "Open shell" on a server: a tmux session on one of your machines that runs
 // ssh to the server, then attaches to it. The full button (server page) lets
-// you pick the machine when several are online; the icon (server cards) uses
-// the usual one.
+// you pick the machine when several are online, and says why it cannot when
+// none is; the icon (server cards, check-up rows) uses the usual one.
 
 import { SquareTerminal } from "lucide-react";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useServerShell, useTerminalHosts } from "@/api/hooks";
 import type { Server } from "@/api/types";
 import { Button } from "@/components/ui/Button";
@@ -46,10 +46,19 @@ function useOpenShell(s: Server) {
   return { online, effective, setPicked, none, open, pending: shell.isPending, title };
 }
 
+/** The full button; when no machine can open it, the reason is written next to it (a hover title is no use on a phone). */
 export function ShellButton({ server }: { server: Server }) {
   const sh = useOpenShell(server);
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex flex-wrap items-center gap-1.5">
+      {sh.none ? (
+        <span className="order-last basis-full text-[11.5px] text-fg-3 sm:order-none sm:basis-auto">
+          No machine with terminals online ·{" "}
+          <Link to="/machines" className="text-accent hover:underline">
+            Machines →
+          </Link>
+        </span>
+      ) : null}
       {sh.online.length > 1 ? (
         <Select compact aria-label="Machine to open the shell from" value={sh.effective} onChange={(e) => sh.setPicked(e.target.value)} className="w-36">
           {sh.online.map((h) => (

@@ -2,7 +2,10 @@
 //
 // Revealed values live in this component's state and nowhere else — not in
 // React Query, not in a toast, not in the console — and are wiped after 60
-// seconds or when the sheet closes, whichever comes first.
+// seconds or when the sheet closes, whichever comes first. "Copy" fetches a
+// value straight into the clipboard (through the same audited reveal) without
+// showing it; a copied value is blanked from the clipboard after those same
+// 60 seconds, best effort.
 
 import clsx from "clsx";
 import { Copy, Download, Eye, EyeOff, Link2, Lock, Pencil, Trash2, X } from "lucide-react";
@@ -27,6 +30,28 @@ import { ExpiryBadge, FileBadge, VaultKindIcon } from "./bits";
 import { VaultItemDialog } from "./VaultItemDialog";
 
 export const REVEAL_SECONDS = 60;
+
+let clipboardWipe: number | undefined;
+
+/**
+ * Put a secret on the clipboard, then blank it after REVEAL_SECONDS. The
+ * blanking is best effort: browsers only allow a write while the page has
+ * focus, and it cannot tell whether something else was copied since.
+ */
+async function copySecret(value: string | Promise<string>): Promise<void> {
+  const clip = navigator.clipboard;
+  if (!clip) throw new Error("No clipboard access here");
+  if (typeof value !== "string" && typeof ClipboardItem !== "undefined" && clip.write) {
+    // Safari drops the click's permission across an await; a ClipboardItem built from a promise keeps it.
+    await clip.write([new ClipboardItem({ "text/plain": value.then((v) => new Blob([v], { type: "text/plain" })) })]);
+  } else {
+    await clip.writeText(await value);
+  }
+  window.clearTimeout(clipboardWipe);
+  clipboardWipe = window.setTimeout(() => {
+    if (document.hasFocus()) void navigator.clipboard?.writeText("").catch(() => {});
+  }, REVEAL_SECONDS * 1000);
+}
 
 export function VaultItemSheet({ id, onClose }: { id: number | null; onClose: () => void }) {
   return (
@@ -244,6 +269,25 @@ function RevealSection({ item }: { item: VaultItem }) {
     setShown({});
   };
 
+  // Straight to the clipboard: fetched through the audited reveal, never shown or kept.
+  const [copying, setCopying] = useState<string | null>(null);
+  const copyHidden = async (k: string) => {
+    setCopying(k);
+    const secret = revealVaultItem(item.id).then((all) => {
+      if (all[k] === undefined) throw new Error(`${k} has no value`);
+      return all[k];
+    });
+    try {
+      await copySecret(secret);
+      toast.success(`Copied ${k} — cleared from the clipboard in ${REVEAL_SECONDS}s`);
+    } catch (err) {
+      // Prefer the reveal's own error (elevation, not found…) over the clipboard's.
+      toast.error(await secret.then(() => err, (e: unknown) => e));
+    } finally {
+      setCopying(null);
+    }
+  };
+
   return (
     <section aria-labelledby="vault-secrets" className="space-y-2">
       <div className="flex items-center justify-between gap-2">
@@ -282,7 +326,11 @@ function RevealSection({ item }: { item: VaultItem }) {
               >
                 {v === undefined ? "••••••••••••" : visible ? v : maskValue(v)}
               </span>
-              {v !== undefined ? (
+              {v === undefined ? (
+                <Button size="sm" variant="ghost" className="shrink-0" aria-label={`Copy ${k}`} title="Copy without showing it" loading={copying === k} onClick={() => void copyHidden(k)}>
+                  <Copy className="size-3.5" aria-hidden /> Copy
+                </Button>
+              ) : (
                 <span className="flex shrink-0 items-center gap-0.5">
                   <Button
                     size="icon-sm"
@@ -297,7 +345,7 @@ function RevealSection({ item }: { item: VaultItem }) {
                     variant="ghost"
                     aria-label={`Copy ${k}`}
                     onClick={() =>
-                      void navigator.clipboard?.writeText(v).then(
+                      void copySecret(v).then(
                         () => toast.success(`Copied ${k}`),
                         () => toast.error("Couldn't copy to the clipboard"),
                       )
@@ -306,12 +354,12 @@ function RevealSection({ item }: { item: VaultItem }) {
                     <Copy className="size-3.5" />
                   </Button>
                 </span>
-              ) : null}
+              )}
             </li>
           );
         })}
       </ul>
-      <p className="text-xs text-fg-3">Every reveal is recorded in the audit log.</p>
+      <p className="text-xs text-fg-3">Every reveal and copy is recorded in the audit log.</p>
     </section>
   );
 }

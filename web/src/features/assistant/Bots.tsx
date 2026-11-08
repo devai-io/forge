@@ -1,5 +1,5 @@
 // Project bots: each project's own long-lived Assistant chat. The list sits
-// under the Assistant's chats; /assistant/bot/:key opens a project's bot — its
+// above the Assistant's chats (few, and long-lived: they don't sink under history); /assistant/bot/:key opens a project's bot — its
 // chat when it has one, else a composer whose first message creates it.
 
 import clsx from "clsx";
@@ -45,12 +45,12 @@ export function BotEntry({ projectKey }: { projectKey: string }) {
 export function BotList() {
   const bots = useBots();
   const [more, setMore] = useState(false);
-  if (bots.isPending) return <SkeletonRows rows={2} className="mt-5" />;
+  if (bots.isPending) return <SkeletonRows rows={2} className="mb-5" />;
   if (bots.error || !bots.data.length) return null;
   const active = bots.data.filter((b) => b.chat);
   const idle = bots.data.filter((b) => !b.chat);
   return (
-    <section aria-labelledby="bots-heading" className="mt-5">
+    <section aria-labelledby="bots-heading" className="mb-5">
       <h2 id="bots-heading" className="mb-1 flex items-center gap-1.5 px-2.5 text-[11px] font-semibold tracking-wide text-fg-3 uppercase">
         <BotIcon className="size-3.5" aria-hidden /> Project bots
       </h2>

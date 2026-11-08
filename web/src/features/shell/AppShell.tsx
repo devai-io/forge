@@ -98,7 +98,8 @@ function ShellFrame() {
       <Sidebar collapsed={collapsed} onToggle={toggleSidebar} />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar />
-        <main className="min-w-0 flex-1 px-4 pt-4 pb-24 sm:px-6 md:pb-10">
+        {/* min-w-0 + overflow-x-clip: one long unbreakable string can never widen a page past the viewport (clip, not hidden, so sticky still works). */}
+        <main className="min-w-0 flex-1 overflow-x-clip px-4 pt-4 pb-24 sm:px-6 md:pb-10">
           <Outlet />
         </main>
       </div>

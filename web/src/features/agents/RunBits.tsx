@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import type { Run, RunStatus } from "@/api/types";
 import { Badge, ColorDot } from "@/components/ui/Badge";
 import { RelativeTime } from "@/components/ui/RelativeTime";
-import { runTitle } from "@/lib/agents";
+import { runTag, runTitle } from "@/lib/agents";
 import { formatCost, formatDuration } from "@/lib/format";
 
 const STATUS: Record<RunStatus, { label: string; tone: "neutral" | "accent" | "good" | "warning" | "critical" | "outline" }> = {
@@ -43,6 +43,16 @@ export function RunKindIcon({ kind, className }: { kind: Run["kind"]; className?
   );
 }
 
+/** "status check" / "continue": what a run Forge sent to carry a session on was, beside its real title. */
+export function RunTagBadge({ run }: { run: Pick<Run, "kind" | "prompt"> }) {
+  const tag = runTag(run);
+  return tag ? (
+    <Badge tone="outline" className="shrink-0 text-[10.5px]" title={run.prompt}>
+      {tag}
+    </Badge>
+  ) : null;
+}
+
 /** One run as a compact, clickable row. */
 export function RunRow({ run, showProject = true }: { run: Run; showProject?: boolean }) {
   const duration =
@@ -57,6 +67,7 @@ export function RunRow({ run, showProject = true }: { run: Run; showProject?: bo
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-[13px] text-fg">{runTitle(run)}</span>
+          <RunTagBadge run={run} />
         </div>
         <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11.5px] text-fg-3">
           <span className="font-mono">#{run.id}</span>
@@ -68,7 +79,7 @@ export function RunRow({ run, showProject = true }: { run: Run; showProject?: bo
           ) : null}
           <span className="truncate">{run.repo_name}</span>
           <span>· {run.runner_name}</span>
-          {run.task_ref ? <span className="font-mono">· {run.task_ref}</span> : null}
+          {run.task_ref && !run.task_title ? <span className="font-mono">· {run.task_ref}</span> : null}
           {run.cost_usd !== null ? <span className="tabular">· {formatCost(run.cost_usd)}</span> : null}
           {duration !== null && run.finished_at ? <span className="tabular">· {formatDuration(duration)}</span> : null}
         </div>

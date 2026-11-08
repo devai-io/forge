@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Route, Routes, useParams } from "react-router-dom";
 import type { Monitoring, Server } from "@/api/types";
@@ -193,5 +193,146 @@ describe("monitoring project filter", () => {
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Project" }), "");
     expect(await screen.findByText("blog-db")).toBeInTheDocument();
     expect(screen.queryByText("Showing what belongs to", { exact: false })).not.toBeInTheDocument();
+  });
+});
+
+describe("live state: Nomad, silent hosts, Grafana, server cards", () => {
+  // web-1: a healthy job with a long history of failed allocations, and a dead one on db-1.
+  const LIVE: Monitoring = {
+    ...MON,
+    hosts: [
+      ...MON.hosts,
+      { name: "edge-1", server_id: null, up: false, last_seen: "2026-10-14T09:00:00Z", uptime_seconds: null, cpu_pct: null, mem_pct: null, disk_pct: null, load1: null },
+    ],
+    nomad: [
+      { host: "web-1", reachable: true, error: "", jobs: [{ id: "shop-api", type: "service", status: "running", running: 2, failed: 340, queued: 0 }] },
+      {
+        host: "db-1",
+        reachable: true,
+        error: "",
+        jobs: [
+          { id: "blog-db", type: "service", status: "running", running: 1, failed: 0, queued: 0 },
+          { id: "blog-cron", type: "service", status: "dead", running: 0, failed: 2, queued: 0 },
+          { id: "nightly", type: "batch", status: "dead", running: 0, failed: 0, queued: 0 },
+        ],
+      },
+    ],
+  };
+  const routes = (m: Monitoring, extra: Record<string, () => Response> = {}) =>
+    routeFetch({
+      "GET /servers": () => jsonResponse(200, { servers: SERVERS }),
+      "GET /monitoring": () => jsonResponse(200, m),
+      "GET /endpoints": () => jsonResponse(200, { endpoints: ENDPOINTS }),
+      "GET /projects": () => jsonResponse(200, { projects: [] }),
+      "GET /terminal/hosts": () => jsonResponse(200, { hosts: [], default_runner_id: null }),
+      ...extra,
+    });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("paints a job red only when it is broken now, problems first, with an Only problems toggle", async () => {
+    vi.stubGlobal("fetch", routes(LIVE));
+    renderWithProviders(<MonitoringPage />, { route: "/monitoring" });
+    const healthy = (await screen.findByText("shop-api")).closest("li")!;
+    expect(healthy).toHaveAttribute("data-level", "ok");
+    expect(within(healthy).getByTitle("340 failed allocations (all time)")).toBeInTheDocument();
+    expect(screen.getByText("blog-cron").closest("li")).toHaveAttribute("data-level", "fail");
+    expect(screen.getByText("nightly").closest("li")).toHaveAttribute("data-level", "ok"); // a finished batch job
+
+    // db-1 (a dead job) comes before web-1; inside it the dead job leads.
+    const nomad = screen.getByRole("region", { name: /Nomad jobs/ });
+    const jobs = within(nomad).getAllByRole("listitem").map((li) => li.querySelector(".font-mono")?.textContent);
+    expect(jobs).toEqual(["blog-cron", "blog-db", "nightly", "shop-api"]);
+
+    await userEvent.click(within(nomad).getByRole("button", { name: "Only problems" }));
+    expect(within(nomad).getByText("blog-cron")).toBeInTheDocument();
+    expect(within(nomad).queryByText("blog-db")).not.toBeInTheDocument();
+    expect(within(nomad).queryByText("shop-api")).not.toBeInTheDocument();
+  });
+
+  it("lists silent hosts as one-line rows first and meters only for reporting hosts; no banner while most still report", async () => {
+    vi.stubGlobal("fetch", routes(LIVE));
+    renderWithProviders(<MonitoringPage />, { route: "/monitoring" });
+    const silent = await screen.findByRole("list", { name: "Hosts not reporting" });
+    expect(within(silent).getByText("edge-1")).toBeInTheDocument();
+    expect(within(silent).getByText("not reporting")).toBeInTheDocument();
+    expect(screen.getAllByRole("meter", { name: "CPU usage" })).toHaveLength(2);
+    expect(screen.queryByText(/metrics source/)).not.toBeInTheDocument();
+  });
+
+  it("points at the metrics source when most hosts go quiet together", async () => {
+    const quiet: Monitoring = { ...LIVE, hosts: LIVE.hosts.map((h) => ({ ...h, up: false })) };
+    vi.stubGlobal("fetch", routes(quiet));
+    renderWithProviders(<MonitoringPage />, { route: "/monitoring" });
+    expect(await screen.findByText(/None of the 3 hosts are reporting/)).toBeInTheDocument();
+    expect(screen.queryByRole("meter", { name: "CPU usage" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the Grafana form behind a banner on Monitoring and a one-liner on a server page", async () => {
+    const off: Monitoring = { ...LIVE, grafana: { ...LIVE.grafana, connected: false, alerts: [], dashboards: [] } };
+    vi.stubGlobal("fetch", routes(off));
+    const { unmount } = renderWithProviders(<MonitoringPage />, { route: "/monitoring" });
+    const summary = await screen.findByText(/Grafana not connected — alerts and dashboards unavailable/);
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText(/Grafana isn't connected, so there are no dashboards/)).toBeInTheDocument();
+    unmount();
+
+    renderWithProviders(<MonitoringPage />, { route: "/monitoring?connect=grafana" });
+    expect((await screen.findByText(/Grafana not connected — alerts/)).closest("details")).toHaveAttribute("open");
+    expect(screen.getByLabelText("Service account token")).toBeInTheDocument();
+  });
+
+  it("server page: compact Grafana line, one-column jobs, inline shell hint, notes early for critical", async () => {
+    const off: Monitoring = { ...LIVE, grafana: { ...LIVE.grafana, connected: false } };
+    vi.stubGlobal("fetch", routes(off));
+    renderWithProviders(
+      <Routes>
+        <Route path="/infra/servers/:id" element={<ServerPage />} />
+      </Routes>,
+      { route: "/infra/servers/1" },
+    );
+    expect(await screen.findByText(/Alerts unavailable — Grafana not connected/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Connect →" })).toHaveAttribute("href", "/monitoring?connect=grafana#mon-alerts");
+    expect(screen.queryByLabelText("Service account token")).not.toBeInTheDocument();
+    expect(screen.getByText("shop-api").closest("ul")).not.toHaveClass("sm:grid-cols-2");
+    expect(await screen.findByText(/No machine with terminals online/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Machines →" })).toHaveAttribute("href", "/machines");
+    expect(screen.getByRole("region", { name: "Notes" })).toHaveClass("order-2");
+  });
+
+  it("infrastructure: neutral border for a healthy critical server, red for broken-now, summary and failing endpoints first", async () => {
+    const eps = [...ENDPOINTS, { ...ENDPOINTS[1], id: 3, name: "Blog admin", url: "https://blog.example.com/admin", last_status: "down", last_code: 503 }];
+    vi.stubGlobal(
+      "fetch",
+      routes(LIVE, {
+        "GET /endpoints": () => jsonResponse(200, { endpoints: eps }),
+        "GET /servers": () =>
+          jsonResponse(200, {
+            servers: [
+              { ...SERVERS[0], projects: ["A", "B", "C", "D", "E"].map((k) => ({ key: k, name: `Proj ${k}`, color: "blue", role: "" })) },
+              SERVERS[1],
+            ],
+          }),
+      }),
+    );
+    renderWithProviders(<InfraPage />, { route: "/infra" });
+    const web = (await screen.findByRole("link", { name: "web-1" })).closest("article")!;
+    await waitFor(() => expect(web).toHaveAttribute("data-level", "warn")); // memory at 85 %
+    expect(web).not.toHaveClass("border-critical/50");
+    expect(within(web).getByText("+2 more")).toBeInTheDocument();
+    const db = screen.getByRole("link", { name: "db-1" }).closest("article")!;
+    expect(db).toHaveAttribute("data-level", "fail");
+    expect(within(db).getByText(/1 job down · 1 endpoint down/)).toBeInTheDocument();
+
+    const summary = screen.getByLabelText("Summary");
+    expect(within(summary).getByRole("link", { name: /2 servers · 1 not reporting/ })).toHaveAttribute("href", "#infra-servers");
+    expect(within(summary).getByRole("link", { name: /Endpoints 2\/3 up · 1 down/ })).toHaveAttribute("href", "#infra-endpoints");
+
+    // Something is failing, so the list opens on "Failing".
+    expect(screen.getByRole("radio", { name: /Failing · 1/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText("Blog admin")).toBeInTheDocument();
+    expect(screen.queryByText("Shop health")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("radio", { name: "All" }));
+    const list = screen.getByRole("region", { name: /Endpoints/ });
+    expect(within(list).getAllByRole("listitem").map((li) => li.querySelector(".font-medium")?.textContent)).toEqual(["Blog admin", "Blog", "Shop health"]);
   });
 });

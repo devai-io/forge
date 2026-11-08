@@ -18,14 +18,15 @@ import { RunStatusBadge } from "@/features/agents/RunBits";
 import { RefreshWorkDialog } from "@/features/dashboard/RefreshWork";
 import { useShell } from "@/features/shell/context";
 import { runTitle } from "@/lib/agents";
-import { investigationProject, investigationPrompt, serviceIssues, type ServiceIssue } from "@/lib/monitoring";
+import { investigationProject, investigationPrompt, prodFirst, serviceIssues, type ServiceIssue } from "@/lib/monitoring";
+import { shortHome } from "@/lib/paths";
 import { attachPath } from "@/lib/terminal";
 
 const SHOWN = 5;
 
 export function TopWidgets({ d }: { d: Dashboard }) {
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+    <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
       <ServicesWidget d={d} />
       <WorkingOnWidget d={d} />
       <ProjectSessionsWidget />
@@ -42,7 +43,7 @@ export function ServicesWidget({ d }: { d: Dashboard }) {
   const mon = useMonitoring();
   const servers = useServers();
   const { newRun } = useShell();
-  const issues = serviceIssues({ down: d.endpoints_down, warning: d.endpoints_warning ?? [] }, mon.data);
+  const issues = prodFirst(serviceIssues({ down: d.endpoints_down, warning: d.endpoints_warning ?? [] }, mon.data), servers.data ?? []);
   const fail = issues.filter((i) => i.level === "fail").length;
   const warn = issues.length - fail;
   const level = fail ? "fail" : warn ? "warn" : "ok";
@@ -64,10 +65,11 @@ export function ServicesWidget({ d }: { d: Dashboard }) {
               title="Start an agent run that looks into these issues"
             >
               <Bot className="size-3.5" aria-hidden />
-              Investigate{issues.length > 1 ? ` all ${issues.length}` : ""}
+              Investigate
+              {issues.length > 1 ? <span className="hidden sm:inline">all {issues.length}</span> : null}
             </Button>
           ) : null}
-          <Link to="/monitoring" className="text-[12px] text-fg-3 hover:text-fg">
+          <Link to="/monitoring" className="hidden text-[12px] text-fg-3 hover:text-fg sm:inline">
             Monitoring →
           </Link>
         </span>
@@ -105,7 +107,14 @@ export function ServicesWidget({ d }: { d: Dashboard }) {
                   <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-label="Warning" />
                 )}
                 <span className="min-w-0">
-                  <span className="block truncate text-[13px]">{i.title}</span>
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate text-[13px]">{i.title}</span>
+                    {i.prod ? (
+                      <Badge tone="critical" className="h-4 shrink-0 px-1 text-[10px] font-semibold tracking-wide">
+                        PROD
+                      </Badge>
+                    ) : null}
+                  </span>
                   {i.detail ? <span className="block truncate text-[11.5px] text-fg-3">{i.detail}</span> : null}
                 </span>
               </Link>
@@ -256,7 +265,10 @@ export function ProjectSessionsWidget() {
   const update = useUpdateProjectSessions();
   const toast = useToast();
   const v = ps.data;
+  const [showOffline, setShowOffline] = useState(false);
   const turnOn = () => update.mutate({ enabled: true, skip_permissions: true }, { onError: (e) => toast.error(e) });
+  // With the master offline every row says "Offline": one line says it better.
+  const hostDown = !!v?.host && !v.host.online;
 
   return (
     <Panel
@@ -297,14 +309,23 @@ export function ProjectSessionsWidget() {
         <p className="px-2 py-2 text-[13px] text-fg-3">No project has a repo with a path yet.</p>
       ) : (
         <>
-          {v.host && !v.host.online ? (
-            <p className="px-2 pt-1 pb-1.5 text-[12px] text-fg-3">{v.host.runner_name} is offline — the sessions come back with it.</p>
+          {hostDown ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 px-2 pt-1 pb-1.5 text-[12.5px] text-fg-3">
+              <span>
+                <strong className="font-medium text-fg-2">{v.host!.runner_name}</strong> is offline — the {v.sessions.length} sessions come back with it.
+              </span>
+              <button type="button" onClick={() => setShowOffline((x) => !x)} className="text-[12px] hover:text-fg" aria-expanded={showOffline}>
+                {showOffline ? "Hide" : "Show"} sessions
+              </button>
+            </div>
           ) : null}
-          <ul aria-label="Project sessions">
-            {v.sessions.map((s) => (
-              <SessionLine key={s.name} s={s} runnerId={v.host?.runner_id ?? null} />
-            ))}
-          </ul>
+          {!hostDown || showOffline ? (
+            <ul aria-label="Project sessions">
+              {v.sessions.map((s) => (
+                <SessionLine key={s.name} s={s} runnerId={v.host?.runner_id ?? null} />
+              ))}
+            </ul>
+          ) : null}
         </>
       )}
     </Panel>
@@ -326,7 +347,7 @@ function SessionLine({ s, runnerId }: { s: ProjectSession; runnerId: number | nu
           </Badge>
         </div>
         <p className="truncate text-[11px] text-fg-3" title={s.dir}>
-          {s.dir}
+          {shortHome(s.dir)}
           {s.activity ? (
             <>
               {" "}

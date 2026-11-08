@@ -3,7 +3,8 @@ import userEvent from "@testing-library/user-event";
 import type { Project, ProjectDetail, VaultItem } from "@/api/types";
 import { AddFilesDialog } from "@/features/vault/AddFilesDialog";
 import { VaultItemDialog } from "@/features/vault/VaultItemDialog";
-import { RepoFilesPanel } from "@/features/vault/VaultPage";
+import { VaultItemSheet } from "@/features/vault/VaultItemSheet";
+import { RepoFilesPanel, VaultPage } from "@/features/vault/VaultPage";
 import { jsonResponse, renderWithProviders, routeFetch } from "@/test/render";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -147,5 +148,49 @@ describe("Repo files and machine setup", () => {
     expect(await screen.findByText("replaced")).toBeInTheDocument();
     expect(calls.at(-1)).toMatchObject({ files: [{ path: ".env" }] });
     expect(calls.at(-1)?.dry_run).toBeUndefined();
+  });
+});
+
+describe("Vault list and copy", () => {
+  const secret: VaultItem = { ...base, id: 2, name: "Shop API token", kind: "token", repo_id: null, repo_name: null, path: "", has_file: false, file_name: "", file_size: 0, secret_keys: ["value"], tags: [] };
+  const reference: VaultItem = { ...secret, id: 3, name: "Apple ID password", kind: "reference", secret_keys: [], location: "1Password" };
+
+  it("sorts references last, and hides them with With values only", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routeFetch({
+        "GET /vault": () => jsonResponse(200, { items: [reference, secret], available: true }),
+        "GET /projects": () => jsonResponse(200, { projects: [] }),
+      }),
+    );
+    renderWithProviders(<VaultPage />, { route: "/vault" });
+    const names = async () => (await screen.findAllByRole("button", { name: /Shop API token|Apple ID password/ })).map((b) => b.textContent);
+    const first = await names();
+    expect(first[0]).toContain("Shop API token");
+    expect(first[1]).toContain("Apple ID password");
+    await userEvent.setup().click(screen.getByRole("switch", { name: "With values only" }));
+    expect(screen.queryByRole("button", { name: /Apple ID password/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Shop API token/ })).toBeInTheDocument();
+  });
+
+  it("copies a value without showing it, through the audited reveal", async () => {
+    let reveals = 0;
+    vi.stubGlobal(
+      "fetch",
+      routeFetch({
+        "GET /vault/2": () => jsonResponse(200, secret),
+        "POST /vault/2/reveal": () => {
+          reveals++;
+          return jsonResponse(200, { secret: { value: "tok-s3cret" } });
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<VaultItemSheet id={2} onClose={() => {}} />);
+    await user.click(await screen.findByRole("button", { name: "Copy value" }));
+    await waitFor(() => expect(reveals).toBe(1));
+    await waitFor(async () => expect(await navigator.clipboard.readText()).toBe("tok-s3cret"));
+    expect(screen.queryByText("tok-s3cret")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reveal" })).toBeInTheDocument();
   });
 });

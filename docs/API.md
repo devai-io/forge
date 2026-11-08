@@ -56,6 +56,7 @@ type ProjectStats = {
   created_7d: number;
   commits_7d: number;        // sum over repos from the latest runner scan
   dirty_repos: number;       // repos with uncommitted changes
+  ci_failing: number;        // repos whose latest CI run finished failed/cancelled (anything but success or skipped)
   endpoints_total: number; endpoints_up: number; endpoints_down: number;
   endpoints_warning: number; // failing, still being rechecked before "down"
   active_runs: number;       // queued + running agent runs
@@ -181,6 +182,7 @@ type Run = {
   project_id: number; project_key: string; project_color: string;
   repo_id: number; repo_name: string;
   task_id: number | null; task_ref: string | null;
+  task_title: string | null;    // the linked task's current title (the web app titles the run "REF title")
   kind: "agent" | "command";
   prompt: string;               // agent runs
   command: string;              // command runs: the name from the runner's config
@@ -490,7 +492,7 @@ type GitStatus = { /* … as above, plus */ ci: CIStatus | null;
   untracked: number };   // "??" files; `dirty` counts tracked changes only
 
 type Dashboard = { /* … as above, plus */ checkup: CheckupSummary | null;
-  checkup_open: CheckItem[];   // the latest check-up's first open items (CheckItem.Open), failing first, at most 5
+  checkup_open: CheckItem[];   // the latest check-up's first open items (CheckItem.Open), failing first, at most 5; endpoints, hosts, nomad and alerts are left out (the Services widget lists them)
 };
 ```
 

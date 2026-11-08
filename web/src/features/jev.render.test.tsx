@@ -17,7 +17,8 @@ describe("Settings → Token saving", () => {
   it("cannot be switched on before the provider key is stored", async () => {
     vi.stubGlobal("fetch", routeFetch({ "GET /jev": () => jsonResponse(200, status()) }));
     renderWithProviders(<TokenSavingPanel />, { qc: testClient({ user: makeUser(), elevated_until: null }) });
-    expect(await screen.findByText("no OpenRouter key yet (AI provider, above)")).toBeInTheDocument();
+    expect(await screen.findByText(/Jev needs the OpenRouter key/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "add the key in AI provider" })).toHaveAttribute("href", "#settings-provider");
     expect(screen.getByRole("switch", { name: "Use Jev" })).toBeDisabled();
     expect(screen.getByRole("switch", { name: "Pick the model for agent runs" })).toBeDisabled();
     expect(screen.queryByRole("switch", { name: /compaction/ })).not.toBeInTheDocument();

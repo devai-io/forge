@@ -184,15 +184,21 @@ func (s *Store) Dashboard(ctx context.Context, tz string) (*Dashboard, error) {
 	d.CheckupOpen = []CheckItem{}
 	if c, err := s.LatestCheckup(ctx); err == nil {
 		d.Checkup = &c.CheckupSummary
-		// Items come failing first, then warnings.
+		// Items come failing first, then warnings. Endpoints, hosts, Nomad
+		// and alerts are left out: the dashboard's Services widget already
+		// lists those live, and repeating them here pushed everything else
+		// (CI, backups, security, …) below the fold.
 		for _, it := range c.Items {
-			if it.Open() && len(d.CheckupOpen) < 5 {
+			if it.Open() && !servicesCategory[it.Category] && len(d.CheckupOpen) < 5 {
 				d.CheckupOpen = append(d.CheckupOpen, it)
 			}
 		}
 	}
 	return d, nil
 }
+
+// servicesCategory: check-up categories the dashboard's Services widget shows.
+var servicesCategory = map[string]bool{"endpoints": true, "hosts": true, "nomad": true, "alerts": true}
 
 // TodayFor is the viewer's current date as YYYY-MM-DD.
 func TodayFor(tz string) string {

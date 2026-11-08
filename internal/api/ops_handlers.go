@@ -95,7 +95,12 @@ func (s *Server) revealVault(w http.ResponseWriter, r *http.Request, u *store.Us
 		return
 	}
 	slog.Info("vault reveal", "item", id, "ip", s.clientIP(r))
-	s.sec(r, "vault_reveal", fmt.Sprintf("item %d", id))
+	// Name the item like downloads do, so the security log says what was read.
+	detail := fmt.Sprintf("item %d", id)
+	if it, err := s.store.VaultByID(r.Context(), id); err == nil {
+		detail = fmt.Sprintf("item %d (%s)", id, it.Name)
+	}
+	s.sec(r, "vault_reveal", detail)
 	writeJSON(w, http.StatusOK, map[string]any{"secret": secret})
 }
 

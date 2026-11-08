@@ -331,12 +331,20 @@ function Prose({ children, className }: { children: string; className?: string }
   );
 }
 
-function OnOff({ on, label, title }: { on: boolean; label: string; title?: string }) {
-  return (
-    <Badge tone={on ? "good" : "outline"} title={title}>
+/** A status chip; with `to` it links to where that setting lives (Settings anchors, the Vault page). */
+function OnOff({ on, label, title, to }: { on: boolean; label: string; title?: string; to?: string }) {
+  const chip = (
+    <Badge tone={on ? "good" : "outline"} title={title} className={to ? "group-hover:border-accent/50 group-hover:text-fg" : undefined}>
       {on ? <CircleCheck className="size-3 text-good" aria-hidden /> : <CircleX className="size-3 text-fg-3" aria-hidden />}
       {label} {on ? "on" : "off"}
     </Badge>
+  );
+  return to ? (
+    <Link to={to} className="group rounded-full focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none">
+      {chip}
+    </Link>
+  ) : (
+    chip
   );
 }
 
@@ -397,14 +405,20 @@ function FactsStrip({ facts, loading, error }: { facts: SystemFacts | undefined;
       </dl>
       <div className="flex flex-wrap gap-1.5">
         <OnOff on={facts.features.smtp} label="SMTP" title="E-mail: check-ups, password resets, new-device sign-ins" />
-        <OnOff on={facts.features.vault} label="Vault" title="A vault key is configured on the server" />
-        <OnOff on={facts.features.totp_enabled} label="Two-factor" />
+        <OnOff on={facts.features.vault} label="Vault" title="A vault key is configured on the server" to="/vault" />
+        <OnOff on={facts.features.totp_enabled} label="Two-factor" title="Settings → Two-factor authentication" to="/settings#settings-2fa" />
         <OnOff on={facts.features.grafana_connected} label="Grafana" title="A Grafana token is in the vault and works" />
         <OnOff on={facts.features.victoriametrics} label="VictoriaMetrics" title="Host metrics are reachable" />
-        <Badge tone="outline" title="Elevation window · session sliding TTL / hard maximum · VS Code session">
-          step-up {prettyDuration(facts.intervals.elevation)} · session {prettyDuration(facts.intervals.session_ttl)} /{" "}
-          {prettyDuration(facts.intervals.session_max)} · editor {prettyDuration(facts.intervals.code_session)}
-        </Badge>
+        <Link to="/settings#security" className="group rounded-full focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none">
+          <Badge
+            tone="outline"
+            className="group-hover:border-accent/50 group-hover:text-fg"
+            title="Elevation window · session sliding TTL / hard maximum · VS Code session — your sessions are in Settings → Security"
+          >
+            step-up {prettyDuration(facts.intervals.elevation)} · session {prettyDuration(facts.intervals.session_ttl)} /{" "}
+            {prettyDuration(facts.intervals.session_max)} · editor {prettyDuration(facts.intervals.code_session)}
+          </Badge>
+        </Link>
         {facts.seeded_at ? (
           <Badge tone="outline" title={facts.seeded_at}>
             seeded <RelativeTime iso={facts.seeded_at} />

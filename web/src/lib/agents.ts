@@ -1,6 +1,7 @@
 // Agent-run helpers shared by the agents screens.
 
 import type { CommandDetail, Engine, Pairing, Run, Runner, RunnerCapabilities, RunnerRole } from "@/api/types";
+import { addDays, todayInTz } from "./format";
 
 // Mirrors deploy/runner.example.json, which is the machine's ~/.config/forge/agent.json:
 // the keys an agent needs to start (api_url, token, allowed_roots) plus safe
@@ -47,10 +48,86 @@ export const PERMISSION_MODE_HELP: Record<string, string> = {
   bypassPermissions: "Everything runs without asking (--dangerously-skip-permissions). Use with a worktree.",
 };
 
-export function runTitle(run: Pick<Run, "kind" | "prompt" | "command">): string {
+type TitledRun = Pick<Run, "kind" | "prompt" | "command"> & Partial<Pick<Run, "task_ref" | "task_title" | "status" | "result">>;
+
+export const RUN_TITLE_MAX = 90;
+
+/** Cut at a word boundary with an ellipsis; one long word is cut where it must be. */
+function clipTitle(text: string, max = RUN_TITLE_MAX): string {
+  const s = text.replace(/\s+/g, " ").trim();
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:.—-]+$/, "")}…`;
+}
+
+/** Markdown emphasis and code marks off a one-line heading. */
+// Emphasis markers go, but an underscore inside a word (alpha_app, snake_case) stays.
+const plainInline = (s: string) =>
+  s
+    .replace(/[*`]+/g, "")
+    .replace(/(^|[^\p{L}\p{N}])_+|_+(?=$|[^\p{L}\p{N}])/gu, "$1")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .trim();
+
+/**
+ * Prompts Forge sends to carry a session on ("Forge status check: …",
+ * "continue"). They say nothing about the work, so lists show them as a
+ * small badge and title the run by its task or its answer instead.
+ */
+export function runTag(run: Pick<Run, "kind" | "prompt">): "status check" | "continue" | null {
+  if (run.kind !== "agent") return null;
+  const p = run.prompt.trim();
+  if (/^Forge status check\b/i.test(p)) return "status check";
+  if (/^(continue|carry on|go on|keep going|resume)[.!]?$/i.test(p)) return "continue";
+  return null;
+}
+
+/**
+ * A run's title: "REF task title" for a task's run; for an answered run whose
+ * result opens with a markdown heading, that heading; else the prompt's first
+ * line (or, for a status check / continue, the answer's), clipped.
+ */
+export function runTitle(run: TitledRun): string {
   if (run.kind === "command") return run.command || "command";
+  if (run.task_ref && run.task_title) return clipTitle(`${run.task_ref} ${run.task_title}`);
+  const result = run.result?.trim() ?? "";
+  const answered = !!result && run.status !== "queued" && run.status !== "running";
+  if (answered) {
+    const heading = /^#{1,6}\s+(.+)/.exec(result.split("\n")[0] ?? "");
+    if (heading && plainInline(heading[1])) return clipTitle(plainInline(heading[1]));
+  }
+  const tag = runTag(run);
+  if (tag) {
+    const line = answered ? result.split("\n").find((l) => l.trim()) : "";
+    return line ? clipTitle(plainInline(line.replace(/^[#>\-*\s]+/, ""))) : tag === "continue" ? "Continue" : "Status check";
+  }
   const first = run.prompt.split("\n").find((l) => l.trim()) ?? "";
-  return first.trim() || "(empty prompt)";
+  return clipTitle(first) || "(empty prompt)";
+}
+
+export type RunDay = { label: "Today" | "Yesterday" | "Earlier"; runs: Run[]; costUsd: number | null };
+
+/**
+ * History under Today / Yesterday / Earlier (by when each run last moved, in
+ * the user's time zone), order kept, empty buckets left out. `costUsd` is the
+ * bucket's total, or null when no run in it reported a cost.
+ */
+export function groupRunsByDay(runs: Run[], timeZone: string | undefined, now: Date = new Date()): RunDay[] {
+  const today = todayInTz(timeZone, now);
+  const yesterday = addDays(today, -1);
+  const days: RunDay[] = [
+    { label: "Today", runs: [], costUsd: null },
+    { label: "Yesterday", runs: [], costUsd: null },
+    { label: "Earlier", runs: [], costUsd: null },
+  ];
+  for (const r of runs) {
+    const day = todayInTz(timeZone, new Date(r.finished_at ?? r.started_at ?? r.created_at));
+    const d = days[day === today ? 0 : day === yesterday ? 1 : 2];
+    d.runs.push(r);
+    if (r.cost_usd !== null && r.cost_usd !== undefined) d.costUsd = (d.costUsd ?? 0) + r.cost_usd;
+  }
+  return days.filter((d) => d.runs.length);
 }
 
 /**

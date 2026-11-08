@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { useQueryClient } from "@tanstack/react-query";
 import { Bot, Code, Eye, Lock, Plug, Sparkles, SquareTerminal, Trash2, Users } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { promptElevation } from "@/api/client";
 import { keys, useKillSession } from "@/api/hooks";
 import type { TmuxSession, TmuxWindow } from "@/api/types";
@@ -11,7 +11,7 @@ import { ConfirmDialog } from "@/components/ui/Dialog";
 import { Input } from "@/components/ui/Input";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { useToast } from "@/components/ui/Toast";
-import { isAgent, truncateMiddle } from "@/lib/terminal";
+import { commandLabel, isAgent, shortPath } from "@/lib/terminal";
 
 /** The prominent marker for a session running Claude Code. */
 export function ClaudeBadge({ className }: { className?: string }) {
@@ -48,17 +48,43 @@ export function AgentBadge({ item, className }: { item?: { claude: boolean; code
   return null;
 }
 
+/** Keeps a disabled button's reason hoverable (a disabled <button> gets no pointer events in some browsers). */
+function Gate({ reason, className, children }: { reason?: string | null; className?: string; children: ReactNode }) {
+  return reason ? (
+    <span title={reason} className={clsx("inline-flex", className)}>
+      {children}
+    </span>
+  ) : (
+    <>{children}</>
+  );
+}
+
+/** VS Code's "edit here" for a window — hidden on phones, where VS Code is no use. */
+function EditButton({ window: w, edit, offline }: { window: TmuxWindow; edit: WindowEdit; offline?: string | null }) {
+  const reason = offline ?? edit.disabledReason;
+  return (
+    <span title={reason ?? `Edit ${w.path} in VS Code`} className="hidden sm:inline-flex">
+      <Button size="icon-sm" variant="ghost" aria-label={`Edit here: open window ${w.index} (${w.name}) in VS Code`} disabled={!!reason} onClick={() => edit.onEdit(w)}>
+        <Code className="size-3.5" />
+      </Button>
+    </span>
+  );
+}
+
 function WindowRow({
   window: w,
   onAttach,
   onPeek,
   edit,
+  offline,
 }: {
   window: TmuxWindow;
   onAttach: () => void;
   onPeek: () => void;
   edit?: WindowEdit;
+  offline?: string | null;
 }) {
+  const cmd = commandLabel(w);
   return (
     <li className="flex min-w-0 items-center gap-2 py-1.5">
       <span
@@ -73,7 +99,7 @@ function WindowRow({
           <span className="font-mono text-[12.5px] text-fg">
             {w.index}:{w.name}
           </span>
-          <AgentBadge item={w} className="h-4.5 px-1.5 text-[10.5px]" />
+          <AgentBadge item={w} className={clsx("h-4.5 px-1.5 text-[10.5px]", offline && "opacity-60")} />
           {w.project_key ? (
             <span className="inline-flex items-center gap-1 text-[11px] text-fg-2">
               <ColorDot color={w.project_color} className="size-2" />
@@ -83,51 +109,36 @@ function WindowRow({
           {w.repo_name ? <span className="text-[11px] text-fg-2">{w.repo_name}</span> : null}
         </div>
         <p className="truncate font-mono text-[11px] text-fg-3" title={w.path}>
-          {w.command ? `${w.command} · ` : ""}
-          {truncateMiddle(w.path, 44)}
+          {cmd ? `${cmd} · ` : ""}
+          {shortPath(w.path, 44)}
         </p>
       </div>
-      {edit && w.path ? (
-        <span title={edit.disabledReason ?? `Edit ${w.path} in VS Code`} className="inline-flex">
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label={`Edit here: open window ${w.index} (${w.name}) in VS Code`}
-            disabled={!!edit.disabledReason}
-            onClick={() => edit.onEdit(w)}
-          >
-            <Code className="size-3.5" />
-          </Button>
-        </span>
-      ) : null}
-      <Button size="icon-sm" variant="ghost" aria-label={`Peek at window ${w.index} (${w.name})`} title="Peek" onClick={onPeek}>
-        <Eye className="size-3.5" />
-      </Button>
-      <Button size="icon-sm" variant="subtle" aria-label={`Attach to window ${w.index} (${w.name})`} title="Attach to this window" onClick={onAttach}>
-        <Plug className="size-3.5" />
-      </Button>
+      {edit && w.path ? <EditButton window={w} edit={edit} offline={offline} /> : null}
+      <Gate reason={offline}>
+        <Button size="icon-sm" variant="ghost" aria-label={`Peek at window ${w.index} (${w.name})`} title={offline ? undefined : "Peek"} disabled={!!offline} onClick={onPeek}>
+          <Eye className="size-3.5" />
+        </Button>
+      </Gate>
+      <Gate reason={offline}>
+        <Button
+          size="icon-sm"
+          variant="subtle"
+          aria-label={`Attach to window ${w.index} (${w.name})`}
+          title={offline ? undefined : "Attach to this window"}
+          disabled={!!offline}
+          onClick={onAttach}
+        >
+          <Plug className="size-3.5" />
+        </Button>
+      </Gate>
     </li>
   );
 }
 
-/**
- * One tmux session: the session's own facts, then a row per window — each
- * window is often its own Claude session in a different repo, so attach and
- * peek work per window too. `onAttach()`/`onPeek()` without a window target
- * the session's current window.
- */
 /** "Edit here" on window rows: open the window's folder in VS Code (only on the machine that serves it). */
 export type WindowEdit = { onEdit: (window: TmuxWindow) => void; disabledReason?: string | null };
 
-export function SessionCard({
-  session: s,
-  hostName,
-  onAttach,
-  onPeek,
-  onKill,
-  edit,
-  compact = false,
-}: {
+type SessionCardProps = {
   session: TmuxSession;
   hostName?: string;
   onAttach: (window?: TmuxWindow) => void;
@@ -135,15 +146,28 @@ export function SessionCard({
   onKill?: () => void;
   edit?: WindowEdit;
   compact?: boolean;
-}) {
+  /** Set (to "<machine> is offline") when the machine is offline: attach, peek and edit are off, and say why. */
+  offline?: string | null;
+};
+
+/**
+ * One tmux session: the session's own facts, then a row per window — each
+ * window is often its own Claude session in a different repo, so attach and
+ * peek work per window too. `onAttach()`/`onPeek()` without a window target
+ * the session's current window. A session with exactly one window is one
+ * compact row instead (most are: one Claude in one repo).
+ */
+export function SessionCard(props: SessionCardProps) {
+  const { session: s, hostName, onAttach, onPeek, onKill, edit, compact = false, offline } = props;
   const windows = s.window_list?.length ? [...s.window_list].sort((a, b) => a.index - b.index) : [];
+  if (windows.length === 1) return <SingleWindowCard {...props} window={windows[0]} />;
   const agent = windows.length ? { claude: windows.some((w) => w.claude), codex: windows.some((w) => !!w.codex) } : s;
   return (
     <article
       aria-label={`Session ${s.name}`}
       className={clsx(
         "flex min-w-0 flex-col gap-2 rounded-xl border bg-surface p-3.5",
-        isAgent(agent) ? "border-accent/45" : "border-line",
+        isAgent(agent) && !offline ? "border-accent/45" : "border-line",
       )}
     >
       <div className="flex min-w-0 items-start gap-2">
@@ -151,7 +175,7 @@ export function SessionCard({
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             <h3 className="truncate font-mono text-[13.5px] font-semibold">{s.name}</h3>
-            <AgentBadge item={agent} />
+            <AgentBadge item={agent} className={offline ? "opacity-60" : undefined} />
             {!windows.length && s.project_key ? (
               <Badge tone="outline">
                 <ColorDot color={s.project_color} className="size-2" />
@@ -163,7 +187,7 @@ export function SessionCard({
           {!windows.length ? (
             <p className="mt-0.5 truncate font-mono text-[11.5px] text-fg-3" title={s.path}>
               {s.repo_name ? <span className="text-fg-2">{s.repo_name} · </span> : null}
-              {truncateMiddle(s.path, compact ? 36 : 52)}
+              {shortPath(s.path, compact ? 36 : 52)}
             </p>
           ) : null}
         </div>
@@ -171,7 +195,7 @@ export function SessionCard({
       {windows.length ? (
         <ul aria-label={`Windows of ${s.name}`} className="divide-y divide-line rounded-lg border border-line px-1.5">
           {windows.map((w) => (
-            <WindowRow key={w.index} window={w} onAttach={() => onAttach(w)} onPeek={() => onPeek(w)} edit={edit} />
+            <WindowRow key={w.index} window={w} onAttach={() => onAttach(w)} onPeek={() => onPeek(w)} edit={edit} offline={offline} />
           ))}
         </ul>
       ) : null}
@@ -184,25 +208,97 @@ export function SessionCard({
         <span>
           {s.windows} window{s.windows === 1 ? "" : "s"}
         </span>
-        {s.attached > 0 ? (
-          <span className="inline-flex items-center gap-1 text-fg-2" title="Clients attached right now, on any machine">
-            <Users className="size-3" aria-hidden /> {s.attached} attached
-          </span>
-        ) : null}
+        <Attached count={s.attached} />
         <span className="ml-auto">
           active <RelativeTime iso={s.activity} />
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
-        <Button size="sm" variant="primary" onClick={() => onAttach()} title="Attach to the session's current window">
-          <Plug className="size-3.5" aria-hidden /> Attach
-        </Button>
-        <Button size="sm" variant="subtle" onClick={() => onPeek()}>
-          <Eye className="size-3.5" aria-hidden /> Peek
-        </Button>
+        <Gate reason={offline}>
+          <Button size="sm" variant="primary" onClick={() => onAttach()} title={offline ? undefined : "Attach to the session's current window"} disabled={!!offline}>
+            <Plug className="size-3.5" aria-hidden /> Attach
+          </Button>
+        </Gate>
+        <Gate reason={offline}>
+          <Button size="sm" variant="subtle" onClick={() => onPeek()} disabled={!!offline}>
+            <Eye className="size-3.5" aria-hidden /> Peek
+          </Button>
+        </Gate>
         {onKill ? (
           <Button size="sm" variant="ghost" className="ml-auto text-fg-3 hover:text-critical-ink" onClick={onKill} aria-label={`Kill ${s.name}`}>
             <Trash2 className="size-3.5" aria-hidden /> Kill
+          </Button>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function Attached({ count, short = false }: { count: number; short?: boolean }) {
+  if (count <= 0) return null;
+  return (
+    <span className="inline-flex items-center gap-1 text-fg-2" title="Clients attached right now, on any machine">
+      <Users className="size-3" aria-hidden /> {count}
+      {short ? <span className="sr-only"> attached</span> : " attached"}
+    </span>
+  );
+}
+
+/** A one-window session as a single row: project, name, agent badge once, path, activity, then Peek and Attach once. */
+function SingleWindowCard({ session: s, window: w, hostName, onAttach, onPeek, onKill, edit, offline }: SessionCardProps & { window: TmuxWindow }) {
+  const agent = { claude: w.claude || s.claude, codex: !!w.codex || !!s.codex };
+  const cmd = commandLabel(w);
+  return (
+    <article
+      aria-label={`Session ${s.name}`}
+      className={clsx(
+        "flex min-w-0 items-center gap-2.5 rounded-xl border bg-surface px-3 py-2.5",
+        isAgent(agent) && !offline ? "border-accent/45" : "border-line",
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+          {w.project_key ? (
+            <span className="inline-flex items-center gap-1 text-[11.5px] font-medium text-fg-2">
+              <ColorDot color={w.project_color} className="size-2" />
+              {w.project_key}
+            </span>
+          ) : (
+            <SquareTerminal className="size-3.5 shrink-0 text-fg-3" aria-hidden />
+          )}
+          <h3 className="min-w-0 truncate font-mono text-[13px] font-semibold">{s.name}</h3>
+          <AgentBadge item={agent} className={clsx("h-4.5 px-1.5 text-[10.5px]", offline && "opacity-60")} />
+          {hostName ? <span className="text-[11px] text-fg-3">on {hostName}</span> : null}
+        </div>
+        <p className="flex min-w-0 items-center gap-1.5 text-[11px] text-fg-3">
+          <span className="min-w-0 truncate font-mono" title={w.path}>
+            {w.repo_name ? <span className="text-fg-2">{w.repo_name} · </span> : null}
+            {cmd ? `${cmd} · ` : ""}
+            {shortPath(w.path, 36)}
+          </span>
+          <span className="shrink-0">
+            · active <RelativeTime iso={s.activity} />
+          </span>
+          <span className="shrink-0">
+            <Attached count={s.attached} short />
+          </span>
+        </p>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        {edit && w.path ? <EditButton window={w} edit={edit} offline={offline} /> : null}
+        <Gate reason={offline}>
+          <Button size="sm" variant="subtle" aria-label={`Peek at ${s.name}`} onClick={() => onPeek(w)} disabled={!!offline}>
+            <Eye className="size-3.5" aria-hidden /> <span className="max-sm:sr-only">Peek</span>
+          </Button>
+        </Gate>
+        <Gate reason={offline}>
+          <Button size="sm" variant="primary" aria-label={`Attach to ${s.name}`} onClick={() => onAttach(w)} disabled={!!offline}>
+            <Plug className="size-3.5" aria-hidden /> Attach
+          </Button>
+        </Gate>
+        {onKill ? (
+          <Button size="icon-sm" variant="ghost" className="text-fg-3 hover:text-critical-ink" onClick={onKill} aria-label={`Kill ${s.name}`} title={`Kill ${s.name}`}>
+            <Trash2 className="size-3.5" />
           </Button>
         ) : null}
       </div>

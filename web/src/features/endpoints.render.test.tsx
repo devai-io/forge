@@ -16,7 +16,7 @@ const stats = (o: Partial<ProjectStats> = {}): ProjectStats => ({
   done_7d: 0,
   created_7d: 0,
   commits_7d: 0,
-  dirty_repos: 0,
+  dirty_repos: 0, ci_failing: 0,
   endpoints_total: 2,
   endpoints_up: 2,
   endpoints_down: 0,

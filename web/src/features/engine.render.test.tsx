@@ -18,7 +18,9 @@ describe("Settings → Agent engine", () => {
   it("defaults to Claude and warns that DeepSeek runs need the OpenRouter key", async () => {
     vi.stubGlobal("fetch", routeFetch({ "GET /engine": () => jsonResponse(200, status()) }));
     renderWithProviders(<EnginePanel />, { qc: testClient({ user: makeUser(), elevated_until: null }) });
-    expect(await screen.findByText("no OpenRouter key: DeepSeek runs fall back to Claude")).toBeInTheDocument();
+    expect(await screen.findByText(/DeepSeek runs fall back to Claude/)).toBeInTheDocument();
+    // The warning itself lives once, in AI provider; this panel links to it.
+    expect(screen.getByRole("link", { name: "add the key in AI provider" })).toHaveAttribute("href", "#settings-provider");
     expect(screen.getByRole("radio", { name: "Claude" })).toHaveAttribute("aria-checked", "true");
     expect(screen.queryByLabelText(/API key/)).not.toBeInTheDocument();
   });

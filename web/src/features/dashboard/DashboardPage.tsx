@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useDashboard, useUpdateProject, useUpdateTask } from "@/api/hooks";
+import { useDashboard, useProjectSessions, useUpdateProject, useUpdateTask } from "@/api/hooks";
 import type { Dashboard, Project, Task } from "@/api/types";
 import { Button } from "@/components/ui/Button";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
@@ -46,6 +46,9 @@ import { CompletionsChart, GoalRing, StatTile } from "./charts";
 export function DashboardPage() {
   const dash = useDashboard();
   const user = useUser();
+  const ps = useProjectSessions();
+  // The F-<Project> sessions have their own widget at the top.
+  const projectSessionNames = new Set(ps.data?.settings.enabled ? ps.data.sessions.map((s) => s.name) : []);
 
   if (dash.isPending) return <DashboardSkeleton />;
   if (dash.error) return <ErrorState error={dash.error} onRetry={() => dash.refetch()} />;
@@ -74,7 +77,7 @@ export function DashboardPage() {
           <FocusPanel d={d} />
           <AttentionPanel d={d} />
         </div>
-        <Panel title="Completions" icon={<TrendingUp />} id="dash-completions" bodyClassName="p-3">
+        <Panel title="Completions" icon={<TrendingUp />} id="dash-completions" className="lg:self-start" bodyClassName="p-3">
           <p className="mb-2 text-[12px] text-fg-3">Tasks done per day, last {d.daily.length} days</p>
           <CompletionsChart days={d.daily} today={d.today} />
         </Panel>
@@ -109,7 +112,7 @@ export function DashboardPage() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="space-y-4">
-          <ClaudeSessionsPanel />
+          <ClaudeSessionsPanel exclude={projectSessionNames} />
           <AgentsPanel d={d} />
         </div>
         <Panel title="Activity" icon={<ActivityIcon />} id="dash-activity" className="lg:col-span-2">
@@ -140,7 +143,7 @@ export function DashboardProjectCard({ project, today }: { project: Project; tod
     );
   return (
     <div className="group/card relative">
-      <ProjectCard project={project} today={today} />
+      <ProjectCard project={project} today={today} compact />
       <button
         type="button"
         onClick={hide}

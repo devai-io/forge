@@ -55,6 +55,7 @@ type ProjectStats struct {
 	Created7d      int `json:"created_7d"`
 	Commits7d      int `json:"commits_7d"`
 	DirtyRepos     int `json:"dirty_repos"`
+	CIFailing      int `json:"ci_failing"` // repos whose latest CI run ended other than success/skipped
 	EndpointsTotal int `json:"endpoints_total"`
 	EndpointsUp    int `json:"endpoints_up"`
 	EndpointsDown  int `json:"endpoints_down"`
@@ -340,6 +341,7 @@ type Run struct {
 	RepoName        string     `json:"repo_name"`
 	TaskID          *int64     `json:"task_id"`
 	TaskRef         *string    `json:"task_ref"`
+	TaskTitle       *string    `json:"task_title"`
 	Kind            string     `json:"kind"`
 	Prompt          string     `json:"prompt"`
 	Command         string     `json:"command"`

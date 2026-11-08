@@ -88,4 +88,24 @@ describe("Focus panel", () => {
     expect(screen.queryByText(/stale/)).not.toBeInTheDocument();
     expect(screen.getByText(/\$0\.0021 this time, \$0\.0063 in all/)).toBeInTheDocument();
   });
+
+  it("drops the ref a title repeats and leads with the chip and its status", async () => {
+    const f = focus();
+    f.focus.now = [
+      { title: "Meta CAPI token missing (SHOP-1)", why: "", ref: "SHOP-1", kind: "task" },
+      { title: "SHOP-4: publish the app", why: "", ref: "SHOP-4", kind: "task" },
+    ];
+    vi.stubGlobal("fetch", routeFetch({ "GET /projects/SHOP/focus": () => jsonResponse(200, f) }));
+    renderWithProviders(
+      <ShellProvider>
+        <FocusPanel projectKey="SHOP" />
+      </ShellProvider>,
+      { route: "/p/SHOP" },
+    );
+    expect(await screen.findByText("Meta CAPI token missing")).toBeInTheDocument();
+    expect(screen.getByText("publish the app")).toBeInTheDocument();
+    const chip = screen.getAllByRole("button", { name: "SHOP-1" })[0];
+    expect(chip.querySelector("svg")).not.toBeNull(); // the task's status icon
+    expect(chip.nextSibling?.textContent).toBe(" ");
+  });
 });

@@ -1,6 +1,6 @@
 // Monitoring display helpers.
 
-import type { Alert, Endpoint, GrafanaDashboard, HostMetrics, Monitoring, NomadHost, Probe, Server } from "@/api/types";
+import type { Alert, Endpoint, GrafanaDashboard, HostMetrics, Monitoring, NomadHost, NomadJob, Probe, Server } from "@/api/types";
 
 export type Level = "ok" | "warn" | "fail";
 
@@ -174,7 +174,22 @@ export type ServiceIssue = {
   project_key?: string;
   /** The host it is about (a server name or address), for host, Nomad and alert issues. */
   host?: string;
+  /** The host is a production or critical server (set by prodFirst). */
+  prod?: boolean;
 };
+
+/**
+ * Marks issues on production or critical servers and sorts them first within
+ * their level: a failing production host outranks a failing build box.
+ */
+export function prodFirst(issues: ServiceIssue[], servers: Pick<Server, "name" | "tailscale_ip" | "public_address" | "environment" | "critical">[]): ServiceIssue[] {
+  const prod = new Set<string>();
+  for (const s of servers)
+    if (s.critical || s.environment === "production") for (const n of [s.name, s.tailscale_ip, s.public_address]) if (n) prod.add(n);
+  const marked = issues.map((i) => ({ ...i, prod: !!i.host && prod.has(i.host) }));
+  const rank = (i: ServiceIssue) => (i.level === "fail" ? 0 : 2) + (i.prod ? 0 : 1);
+  return marked.sort((a, b) => rank(a) - rank(b));
+}
 
 /**
  * Every service that is failing or about to: endpoints (down, or failing and
@@ -272,4 +287,75 @@ export function investigationPrompt(issues: ServiceIssue[], now = new Date()): s
     "",
     `End with a short summary${one ? "" : " per issue"}: status, cause, next step.`,
   ].join("\n");
+}
+
+// ── Severity of live state (Nomad jobs, hosts, a server) ───────────────────
+
+const LEVEL_RANK: Record<Level, number> = { fail: 0, warn: 1, ok: 2 };
+
+/** The worse of two levels. */
+export const worseLevel = (a: Level, b: Level): Level => (LEVEL_RANK[a] <= LEVEL_RANK[b] ? a : b);
+
+/**
+ * Whether a Nomad job is in trouble right now — the same rules as the
+ * check-up: a service or system job that is dead or has nothing running
+ * fails, one with allocations waiting warns. Nomad's `failed` count is
+ * lifetime (every crashed allocation ever), so it says nothing on its own.
+ * Batch jobs are "dead" when they are done and never count.
+ */
+export function jobLevel(j: Pick<NomadJob, "type" | "status" | "running" | "queued">): Level {
+  if (j.type !== "service" && j.type !== "system") return "ok";
+  if (j.status === "dead" || j.running === 0) return "fail";
+  if (j.queued > 0) return "warn";
+  return "ok";
+}
+
+/** A Nomad host's worst: unreachable fails, otherwise its worst job. */
+export function nomadHostLevel(h: NomadHost): Level {
+  if (!h.reachable) return "fail";
+  return h.jobs.reduce<Level>((acc, j) => worseLevel(acc, jobLevel(j)), "ok");
+}
+
+/** The jobs in trouble right now (see jobLevel). */
+export const problemJobs = (h: NomadHost) => (h.reachable ? h.jobs.filter((j) => jobLevel(j) !== "ok") : []);
+
+/** Failing jobs first, then waiting ones, then the rest by name. */
+export function sortNomadJobs(jobs: NomadJob[]): NomadJob[] {
+  return [...jobs].sort((a, b) => LEVEL_RANK[jobLevel(a)] - LEVEL_RANK[jobLevel(b)] || a.id.localeCompare(b.id));
+}
+
+/** Hosts with problems first (unreachable or failing jobs, then waiting ones), then by name. */
+export function sortNomadHosts(hosts: NomadHost[]): NomadHost[] {
+  return [...hosts].sort((a, b) => LEVEL_RANK[nomadHostLevel(a)] - LEVEL_RANK[nomadHostLevel(b)] || a.host.localeCompare(b.host));
+}
+
+/** The highest of CPU, memory and disk use, for sorting hosts by pressure; -1 when nothing is known. */
+export const worstUsage = (h: Pick<HostMetrics, "cpu_pct" | "mem_pct" | "disk_pct">) => Math.max(-1, ...[h.cpu_pct, h.mem_pct, h.disk_pct].map((p) => p ?? -1));
+
+/** Hosts split for display: the ones not reporting (by name), then the reporting ones, heaviest use first. */
+export function splitHosts(hosts: HostMetrics[]): { down: HostMetrics[]; up: HostMetrics[] } {
+  return {
+    down: hosts.filter((h) => !h.up).sort((a, b) => a.name.localeCompare(b.name)),
+    up: hosts.filter((h) => h.up).sort((a, b) => worstUsage(b) - worstUsage(a) || a.name.localeCompare(b.name)),
+  };
+}
+
+/**
+ * Most hosts not reporting at once (more than half, at least two): far more
+ * likely the shared metrics pipeline (vmagent → VictoriaMetrics, or Forge's
+ * view of it) than that many hosts failing together.
+ */
+export const metricsOutage = (down: number, total: number) => down >= 2 && down * 2 > total;
+
+/** The host metrics and the Nomad host that belong to a server, by its id or any name it goes by. */
+export function serverLive(
+  m: Monitoring,
+  server: Pick<Server, "id" | "name" | "public_address" | "tailscale_ip"> & { ssh_target?: string },
+): { host: HostMetrics | undefined; nomad: NomadHost | undefined; aliases: Set<string> } {
+  const aliases = serverAliases(server);
+  return {
+    host: m.hosts.find((h) => h.server_id === server.id) ?? m.hosts.find((h) => hostAliases(h.name).some((a) => aliases.has(a))),
+    nomad: m.nomad.find((n) => hostAliases(n.host).some((a) => aliases.has(a))),
+    aliases,
+  };
 }

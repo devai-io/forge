@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useCreateRunner, useDeleteRunner, usePairRunner, useRotateRunner, useRunners, useSetRunnerRole } from "@/api/hooks";
+import { useCreateRunner, useDeleteRunner, usePairRunner, useRotateRunner, useRunners, useSetRunnerRole, useSystemFacts } from "@/api/hooks";
 import type { CommandDetail, Pairing, Runner, RunnerRole } from "@/api/types";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -37,11 +37,13 @@ import { awaitingPairing, commandDetails, defaultNewRole, ROLE_LABEL, ROLE_ORDER
 import { useNow } from "@/lib/now";
 import { CopyButton, PairingDialog } from "./PairingDialog";
 import { RoleBadge } from "./RoleBadge";
+import { newerVersion, versionLabel } from "./versions";
 
 type Issued = { runner: Runner; pairing: Pairing };
 
 export function MachinesPage() {
   const runners = useRunners(5000);
+  const facts = useSystemFacts();
   // /machines?add=1 (the dashboard's getting-started link) opens "Add machine".
   const [params, setParams] = useSearchParams();
   const [adding, setAdding] = useState(() => params.get("add") === "1");
@@ -83,7 +85,7 @@ export function MachinesPage() {
             {[...runners.data]
               .sort((a, b) => ROLE_ORDER[roleOf(a)] - ROLE_ORDER[roleOf(b)] || a.name.localeCompare(b.name))
               .map((r) => (
-                <RunnerRow key={r.id} runner={r} onToken={setIssued} onPair={setPairing} />
+                <RunnerRow key={r.id} runner={r} serverVersion={facts.data?.version ?? ""} onToken={setIssued} onPair={setPairing} />
               ))}
           </ul>
         ) : (
@@ -200,10 +202,13 @@ function AddMachineDialog({
 
 function RunnerRow({
   runner: r,
+  serverVersion,
   onToken,
   onPair,
 }: {
   runner: Runner;
+  /** The server's own version, to tell when this machine's agent is behind. */
+  serverVersion: string;
   onToken: (x: { runner: Runner; token: string }) => void;
   onPair: (x: Issued) => void;
 }) {
@@ -218,11 +223,14 @@ function RunnerRow({
   const neverSeen = !r.last_seen_at;
   const waiting = awaitingPairing(r, now);
   const pairAgain = () => pair.mutate(r.id, { onSuccess: onPair, onError: (e) => toast.error(e) });
+  // The master is expected to be always on: offline is a problem, not sleep.
+  const masterDown = !r.online && !waiting && !neverSeen && roleOf(r) === "master";
+  const behind = !neverSeen && newerVersion(serverVersion, r.version);
   return (
     <li className="rounded-lg border border-line px-3 py-2.5">
       <div className="flex items-start gap-2.5">
         <span
-          className={clsx("mt-1.5 size-2 shrink-0 rounded-full", r.online ? "bg-good" : "bg-fg-3")}
+          className={clsx("mt-1.5 size-2 shrink-0 rounded-full", r.online ? "bg-good" : masterDown ? "bg-critical" : "bg-fg-3")}
           aria-hidden
         />
         <div className="min-w-0 flex-1">
@@ -249,15 +257,20 @@ function RunnerRow({
               </Badge>
             )}
             {r.running ? <Badge tone="accent">{r.running} running</Badge> : null}
+            {behind ? (
+              <Badge tone="warning" dot title="Run `forge update` on it">
+                update available {versionLabel(r.version)} → {versionLabel(serverVersion)}
+              </Badge>
+            ) : null}
           </div>
-          <p className="mt-0.5 truncate text-[11.5px] text-fg-3">
+          <p className="mt-0.5 text-[11.5px] break-words text-fg-3 sm:truncate">
             {neverSeen ? (
               "never connected"
             ) : (
               <>
                 {r.hostname}
                 {r.os ? ` · ${r.os}` : ""}
-                {r.version ? ` · v${r.version}` : ""} · seen <RelativeTime iso={r.last_seen_at} />
+                {r.version ? ` · ${versionLabel(r.version)}` : ""} · <span className="whitespace-nowrap">seen <RelativeTime iso={r.last_seen_at} /></span>
               </>
             )}
           </p>

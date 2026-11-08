@@ -4,7 +4,10 @@
 // by area, each with what to do about it — and, since items recur day after
 // day, since when it has been there, whether it is still there (Re-check),
 // the task it already became, and a way to put it aside (snooze). Items that
-// were open last time and are gone now are listed as fixed.
+// were open last time and are gone now are listed as fixed. The worst area
+// comes first; inside it, failures on production servers (PROD) lead, and
+// three or more items sharing a finding fold into one row ("10 hosts not
+// reporting metrics") with bulk Re-check and Snooze.
 // `?id=<n>` shows an older check-up from the history strip.
 
 import clsx from "clsx";
@@ -15,8 +18,10 @@ import {
   CircleX,
   ClipboardCheck,
   ExternalLink,
+  Layers,
   ListPlus,
   Mail,
+  MoreHorizontal,
   Play,
   RefreshCw,
   TriangleAlert,
@@ -34,9 +39,10 @@ import {
   useProjects,
   useRecheck,
   useRunCheckup,
+  useServers,
   useSystemFacts,
 } from "@/api/hooks";
-import type { CheckItem, Checkup, CheckupSummary, CheckSeverity, ResolvedItem } from "@/api/types";
+import type { CheckItem, Checkup, CheckupSummary, CheckSeverity, ResolvedItem, Server } from "@/api/types";
 import { Badge, ColorDot } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -49,10 +55,12 @@ import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { HelpLink } from "@/features/docs/HelpLink";
+import { ShellIconButton } from "@/features/infra/shell";
 import { useShell } from "@/features/shell/context";
 import { useUser } from "@/lib/auth";
-import { ageDays, groupCheckItems, isInternalLink, isNew, isSettled, severityLabel } from "@/lib/checkup";
+import { ageDays, groupCheckItems, isInternalLink, isNew, isProdServer, isSettled, itemServer, severityLabel, type CheckGroup } from "@/lib/checkup";
 import { addDays, formatCalendarDate, formatDateTime, formatDuration, todayInTz, weekdayOf } from "@/lib/format";
+import { serverPath } from "@/lib/infra";
 
 export function SeverityIcon({ severity, className }: { severity: CheckSeverity; className?: string }) {
   const cls = clsx("shrink-0", className ?? "size-4");
@@ -248,7 +256,14 @@ function HistoryStrip({
 
 function CheckupView({ checkup: c, isLatest, rechecking }: { checkup: Checkup; isLatest: boolean; rechecking: boolean }) {
   const user = useUser();
-  const { groups, ok, snoozed } = groupCheckItems(c.items, c.date);
+  const servers = useServers();
+  const serverList = servers.data ?? [];
+  const serverOf = new Map(c.items.map((i) => [i.key, itemServer(i, serverList)]));
+  const isProd = (i: CheckItem) => {
+    const s = serverOf.get(i.key);
+    return !!s && isProdServer(s);
+  };
+  const { groups, ok, snoozed } = groupCheckItems(c.items, c.date, isProd);
   const duration = c.finished_at ? new Date(c.finished_at).getTime() - new Date(c.started_at).getTime() : null;
   const pct = c.actions_total ? c.actions_done / c.actions_total : 1;
   const recurring = c.actions_total - c.actions_new;
@@ -329,11 +344,17 @@ function CheckupView({ checkup: c, isLatest, rechecking }: { checkup: Checkup; i
         groups.map((g) => (
           <Panel key={g.category} id={`checkup-${g.category}`} title={<>{g.label} <span className="font-normal text-fg-3">· {g.items.length}</span></>} bodyClassName="p-0">
             <ul className="divide-y divide-line">
-              {g.items.map((item) => (
-                <li key={item.key}>
-                  <CheckRow checkup={c} item={item} canAct={isLatest} rechecking={rechecking} />
-                </li>
-              ))}
+              {g.entries.map((e) =>
+                e.kind === "item" ? (
+                  <li key={e.item.key}>
+                    <CheckRow checkup={c} item={e.item} canAct={isLatest} rechecking={rechecking} server={serverOf.get(e.item.key)} />
+                  </li>
+                ) : (
+                  <li key={e.group.key}>
+                    <GroupRow checkup={c} group={e.group} canAct={isLatest} rechecking={rechecking} serverOf={serverOf} serverCount={servers.data?.length ?? null} />
+                  </li>
+                ),
+              )}
             </ul>
           </Panel>
         ))
@@ -386,16 +407,43 @@ function CheckupView({ checkup: c, isLatest, rechecking }: { checkup: Checkup; i
   );
 }
 
-/** "new today" or "since N days", from first_seen. Nothing on rows that predate the field. */
-function AgeBadge({ item, date }: { item: { first_seen: string }; date: string }) {
+/**
+ * "new today" or "since N days", from first_seen, as small text that sits
+ * inline after the title (inline-block, so a struck-through title does not
+ * strike it). Nothing on rows that predate the field.
+ */
+function AgeText({ item, date }: { item: { first_seen: string }; date: string }) {
   if (!item.first_seen) return null;
-  if (isNew(item, date)) return <Badge tone="accent">new today</Badge>;
+  const cls = "ml-1.5 inline-block text-[11.5px] font-normal whitespace-nowrap";
+  if (isNew(item, date)) return <span className={clsx(cls, "font-medium text-accent")}>new today</span>;
   const days = ageDays(item, date);
   return (
-    <Badge tone="outline" title={`First seen ${formatCalendarDate(item.first_seen)}`}>
+    <span className={clsx(cls, "text-fg-3")} title={`First seen ${formatCalendarDate(item.first_seen)}`}>
       since {days === 1 ? "yesterday" : `${days} days`}
+    </span>
+  );
+}
+
+/** Production-critical server: the same mark as the dashboard's. */
+function ProdBadge({ title = "About a production-critical server" }: { title?: string }) {
+  return (
+    <Badge tone="critical" className="h-4 shrink-0 px-1 text-[10px] font-semibold tracking-wide" title={title}>
+      PROD
     </Badge>
   );
+}
+
+/** Hosts, Nomad and alert findings can be looked at from a shell on the server. */
+const SHELL_CATEGORIES = new Set(["hosts", "nomad", "alerts"]);
+
+/** The snooze choices, as menu items. */
+function snoozeItems(today: string, snoozeFor: (until: string | null) => void) {
+  return [
+    { label: "Hide for 7 days", onSelect: () => snoozeFor(addDays(today, 7)) },
+    { label: "Hide for 30 days", onSelect: () => snoozeFor(addDays(today, 30)) },
+    "separator" as const,
+    { label: "Hide until it changes", onSelect: () => snoozeFor(null) },
+  ];
 }
 
 function ItemLink({ link }: { link: string }) {
@@ -429,7 +477,20 @@ function TaskLink({ item }: { item: CheckItem }) {
   );
 }
 
-function CheckRow({ checkup, item, canAct, rechecking }: { checkup: Checkup; item: CheckItem; canAct: boolean; rechecking: boolean }) {
+function CheckRow({
+  checkup,
+  item,
+  canAct,
+  rechecking,
+  server,
+}: {
+  checkup: Checkup;
+  item: CheckItem;
+  canAct: boolean;
+  rechecking: boolean;
+  /** The server the finding is about, when it is about one. */
+  server?: Server;
+}) {
   const user = useUser();
   const done = useCheckItemDone(checkup.id);
   const snooze = useCheckItemSnooze(checkup.id);
@@ -465,6 +526,8 @@ function CheckRow({ checkup, item, canAct, rechecking }: { checkup: Checkup; ite
       },
     );
   const busy = recheck.isPending || rechecking || fix.isPending;
+  const canMakeTask = item.task_id === null || taskDone;
+  const canSnooze = canAct && !resolved;
   const applyFix = (id: string, label: string) => {
     setFixing(id);
     fix.mutate(
@@ -496,8 +559,12 @@ function CheckRow({ checkup, item, canAct, rechecking }: { checkup: Checkup; ite
       <SeverityIcon severity={item.severity} className="mt-0.5 size-4" />
       <div className="min-w-0 flex-1 space-y-0.5">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <p className={clsx("text-[13.5px] font-medium", settled && "line-through")}>{item.title}</p>
-          <AgeBadge item={item} date={checkup.date} />
+          <p className={clsx("text-[13.5px] font-medium", settled && "line-through")}>
+            {server && isProdServer(server) ? <ProdBadge title={`${server.name} is production-critical`} /> : null}
+            {server && isProdServer(server) ? " " : null}
+            {item.title}
+            <AgeText item={item} date={checkup.date} />
+          </p>
           {resolved ? (
             <Badge tone="good" dot title={formatDateTime(item.resolved_at, user.timezone)}>
               resolved · verified <RelativeTime iso={item.resolved_at} />
@@ -524,8 +591,8 @@ function CheckRow({ checkup, item, canAct, rechecking }: { checkup: Checkup; ite
           ) : null}
           {item.link ? <ItemLink link={item.link} /> : null}
           <TaskLink item={item} />
-          {item.task_id === null || taskDone ? (
-            <button type="button" onClick={() => setMaking(true)} className="inline-flex items-center gap-1 text-[12px] text-fg-3 hover:text-fg">
+          {canMakeTask ? (
+            <button type="button" onClick={() => setMaking(true)} className="hidden items-center gap-1 text-[12px] text-fg-3 hover:text-fg sm:inline-flex">
               <ListPlus className="size-3.5" aria-hidden /> {taskDone ? "Make another task" : "Make task"}
             </button>
           ) : null}
@@ -556,25 +623,201 @@ function CheckRow({ checkup, item, canAct, rechecking }: { checkup: Checkup; ite
               >
                 {recheck.isPending ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" aria-hidden />} Re-check
               </button>
+              <span className="hidden sm:inline-flex">
+                <Menu
+                  label={`Snooze "${item.title}"`}
+                  trigger={
+                    <span className="inline-flex items-center gap-1 text-[12px] text-fg-3 hover:text-fg">
+                      <BellOff className="size-3.5" aria-hidden /> Snooze
+                    </span>
+                  }
+                  items={snoozeItems(today, snoozeFor)}
+                />
+              </span>
+            </>
+          ) : null}
+          {server && SHELL_CATEGORIES.has(item.category) ? (
+            <span className="-my-1">
+              <ShellIconButton server={server} />
+            </span>
+          ) : null}
+          {canMakeTask || canSnooze ? (
+            <span className="ml-auto inline-flex sm:hidden">
               <Menu
-                label={`Snooze "${item.title}"`}
-                trigger={
-                  <span className="inline-flex items-center gap-1 text-[12px] text-fg-3 hover:text-fg">
-                    <BellOff className="size-3.5" aria-hidden /> Snooze
-                  </span>
-                }
+                label={`More actions for "${item.title}"`}
+                triggerClassName="-my-1 grid size-7 place-items-center rounded-md text-fg-3 hover:bg-surface-2 hover:text-fg"
+                trigger={<MoreHorizontal className="size-4" aria-hidden />}
                 items={[
-                  { label: "Hide for 7 days", onSelect: () => snoozeFor(addDays(today, 7)) },
-                  { label: "Hide for 30 days", onSelect: () => snoozeFor(addDays(today, 30)) },
-                  "separator",
-                  { label: "Hide until it changes", onSelect: () => snoozeFor(null) },
+                  ...(canMakeTask ? [{ label: taskDone ? "Make another task" : "Make task", icon: <ListPlus />, onSelect: () => setMaking(true) }] : []),
+                  ...(canMakeTask && canSnooze ? ["separator" as const] : []),
+                  ...(canSnooze ? snoozeItems(today, snoozeFor) : []),
                 ]}
               />
-            </>
+            </span>
           ) : null}
         </div>
       </div>
       {making ? <MakeTaskDialog checkupId={checkup.id} item={item} onClose={() => setMaking(false)} /> : null}
+    </div>
+  );
+}
+
+/**
+ * Several open items with one finding and one action, as one row: what they
+ * share, the hosts (or whatever they are about) as chips, Re-check all and
+ * Snooze all; expands to the single rows. When most hosts stop reporting
+ * together, it says the shared metrics pipeline is the likely cause.
+ */
+function GroupRow({
+  checkup,
+  group: g,
+  canAct,
+  rechecking,
+  serverOf,
+  serverCount,
+}: {
+  checkup: Checkup;
+  group: CheckGroup;
+  canAct: boolean;
+  rechecking: boolean;
+  serverOf: Map<string, Server | undefined>;
+  serverCount: number | null;
+}) {
+  const user = useUser();
+  const recheck = useRecheck(checkup.id);
+  const snooze = useCheckItemSnooze(checkup.id);
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [working, setWorking] = useState<"recheck" | "snooze" | null>(null);
+  const today = todayInTz(user.timezone);
+  const keys = g.items.map((i) => i.key);
+  const fresh = g.items.filter((i) => isNew(i, checkup.date)).length;
+  const prod = g.items.filter((i) => {
+    const s = serverOf.get(i.key);
+    return !!s && isProdServer(s);
+  }).length;
+  const links = new Set(g.items.map((i) => i.link ?? ""));
+  const link = links.size === 1 ? g.items[0].link : null;
+  const pipeline = g.category === "hosts" && g.items.every((i) => i.key.startsWith("host:")) && (serverCount === null || g.items.length * 2 > serverCount);
+  const busy = working !== null || rechecking;
+
+  // One at a time: each answer is the whole check-up, and the last one wins.
+  const recheckAll = async () => {
+    setWorking("recheck");
+    try {
+      let last: Checkup | null = null;
+      for (const key of keys) last = await recheck.mutateAsync({ key });
+      if (last) {
+        const { resolved, open: still } = recheckOutcome(last, keys);
+        toast.success(resolved === 0 ? `Re-checked ${still} — all still there` : `Re-checked ${resolved + still}: ${resolved} resolved, ${still} still open`);
+      }
+    } catch (e) {
+      toast.error(e);
+    } finally {
+      setWorking(null);
+    }
+  };
+  const snoozeAll = async (until: string | null) => {
+    setWorking("snooze");
+    try {
+      for (const key of keys) await snooze.mutateAsync({ key, until });
+      toast.success(`Snoozed ${keys.length} ${until ? `until ${formatCalendarDate(until)}` : "until they change"}`);
+    } catch (e) {
+      toast.error(e);
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  return (
+    <div className="px-3.5 py-3">
+      <div className="flex items-start gap-3">
+        <Layers className="mt-0.5 size-4 shrink-0 text-fg-3" aria-hidden />
+        <SeverityIcon severity={g.severity} className="mt-0.5 size-4" />
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="text-[13.5px] font-medium">
+            {prod ? <ProdBadge title={`${prod} of them on production-critical servers`} /> : null}
+            {prod ? " " : null}
+            {g.title}
+            {fresh ? <span className="ml-1.5 inline-block text-[11.5px] font-medium whitespace-nowrap text-accent">{fresh === g.items.length ? "new today" : `${fresh} new today`}</span> : null}
+          </p>
+          {g.action ? (
+            <p className="text-[12.5px] text-fg">
+              <span className="text-fg-3">→ </span>
+              {g.action}
+            </p>
+          ) : null}
+          {pipeline ? (
+            <p className="rounded-md border border-line bg-surface-2 px-2 py-1 text-[12px] text-fg-2">
+              When {serverCount !== null && g.items.length >= serverCount ? "every host stops" : "most hosts stop"} reporting at once, the shared metrics
+              pipeline (vmagent → VictoriaMetrics, or Forge's link to it) is the likely cause — check it before SSHing into each host.
+            </p>
+          ) : null}
+          <ul aria-label="Affected" className="flex flex-wrap gap-1 pt-0.5">
+            {g.items.map((i, n) => {
+              const s = serverOf.get(i.key);
+              const label = g.subjects[n] || i.title;
+              const cls = clsx("inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 font-mono text-[11.5px] text-fg-2", s && isProdServer(s) && "ring-1 ring-critical/40");
+              return (
+                <li key={i.key}>
+                  {s ? (
+                    <Link to={serverPath(s.id)} className={clsx(cls, "hover:text-fg")} title={i.title}>
+                      {label}
+                    </Link>
+                  ) : (
+                    <span className={cls} title={i.title}>
+                      {label}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5">
+            {link ? <ItemLink link={link} /> : null}
+            {canAct ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void recheckAll()}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1 text-[12px] text-fg-3 hover:text-fg disabled:opacity-60"
+                  title={`Run these ${keys.length} checks again now`}
+                >
+                  {working === "recheck" ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" aria-hidden />} Re-check all
+                </button>
+                <Menu
+                  label={`Snooze all ${keys.length}`}
+                  trigger={
+                    <span className="inline-flex items-center gap-1 text-[12px] text-fg-3 hover:text-fg">
+                      {working === "snooze" ? <Spinner className="size-3.5" /> : <BellOff className="size-3.5" aria-hidden />} Snooze all
+                    </span>
+                  }
+                  items={snoozeItems(today, (until) => void snoozeAll(until))}
+                />
+              </>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              aria-expanded={open}
+              className="inline-flex items-center gap-1 text-[12px] text-fg-3 hover:text-fg"
+            >
+              <ChevronRight className={clsx("size-3.5 transition-transform", open && "rotate-90")} aria-hidden />
+              {open ? "Hide the items" : `Show the ${keys.length} items`}
+            </button>
+          </div>
+        </div>
+      </div>
+      {open ? (
+        <ul className="mt-2 ml-2 divide-y divide-line border-l border-line sm:ml-7">
+          {g.items.map((item) => (
+            <li key={item.key}>
+              <CheckRow checkup={checkup} item={item} canAct={canAct} rechecking={rechecking || working !== null} server={serverOf.get(item.key)} />
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }
@@ -588,7 +831,7 @@ function SnoozedRow({ checkup, item, canAct }: { checkup: Checkup; item: CheckIt
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="text-fg">{item.title}</span>
-          <AgeBadge item={item} date={checkup.date} />
+          <AgeText item={item} date={checkup.date} />
           <span className="text-[11.5px] text-fg-3">{item.snoozed_until ? `until ${formatCalendarDate(item.snoozed_until)}` : "until it changes"}</span>
         </div>
         <div className="flex flex-wrap items-center gap-x-3 pt-0.5">

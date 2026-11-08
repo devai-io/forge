@@ -2,6 +2,7 @@
 // byte sequences the phone key bar sends. Pure, so they are tested directly.
 
 import type { SessionStart, TerminalHost, TmuxSession, TmuxWindow } from "@/api/types";
+import { shortHome } from "./paths";
 
 type Sortable = Pick<TmuxSession, "claude" | "codex" | "activity" | "name">;
 
@@ -62,6 +63,19 @@ export function truncateMiddle(text: string, max = 44): string {
   const head = Math.ceil(keep * 0.35);
   const tail = keep - head;
   return `${text.slice(0, head)}…${text.slice(text.length - tail)}`;
+}
+
+/** A working directory for a card: home as ~ (shortHome), then cut in the middle to `max`. */
+export const shortPath = (path: string, max = 44): string => truncateMiddle(shortHome(path), max);
+
+/**
+ * The foreground command worth printing before a path — "" when it only says
+ * what the Claude/Codex badge next to it already says.
+ */
+export function commandLabel(x: { command: string; claude: boolean; codex?: boolean }): string {
+  const cmd = x.command.trim();
+  if ((x.claude && /^claude\b/i.test(cmd)) || (x.codex && /^codex\b/i.test(cmd))) return "";
+  return cmd;
 }
 
 /** ws(s)://<host>/api/terminal/<runner>/attach?session=…&cols=…&rows=… on the app's own origin. */
