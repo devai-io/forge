@@ -8,12 +8,12 @@ import (
 )
 
 const userCols = `id, username, email, display_name, timezone, weekly_goal, accent, totp_enabled, checkup_time,
-	checkup_email, created_at, password_hash, totp_secret, totp_pending, totp_last_counter`
+	checkup_email, created_at, role, password_hash, totp_secret, totp_pending, totp_last_counter`
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
 	if err := row.Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.Timezone, &u.WeeklyGoal, &u.Accent, &u.TOTPEnabled,
-		&u.CheckupTime, &u.CheckupEmail, &u.CreatedAt, &u.PasswordHash, &u.TOTPSecret, &u.TOTPPending,
+		&u.CheckupTime, &u.CheckupEmail, &u.CreatedAt, &u.Role, &u.PasswordHash, &u.TOTPSecret, &u.TOTPPending,
 		&u.TOTPLastCounter); err != nil {
 		return nil, mapErr(err)
 	}

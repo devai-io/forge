@@ -63,13 +63,18 @@ import { ProjectMachineSetup } from "@/features/vault/ProjectMachineSetup";
 
 type Tab = "overview" | "board" | "list" | "agents" | "memory" | "files" | "activity";
 const TABS: Tab[] = ["overview", "board", "list", "agents", "memory", "files", "activity"];
+const MEMBER_TABS: Tab[] = ["board", "list", "agents", "activity"];
 
 export function ProjectPage() {
   const { key = "" } = useParams();
   const project = useProject(key.toUpperCase());
   const [params, setParams] = useSearchParams();
+  const member = useUser().role === "member";
+  // A member works the board, the list, the runs and the activity; the rest
+  // (overview of servers, memory, files) is the owner's.
+  const tabs = member ? MEMBER_TABS : TABS;
   const tabParam = params.get("tab") as Tab | null;
-  const tab: Tab = tabParam && TABS.includes(tabParam) ? tabParam : "overview";
+  const tab: Tab = tabParam && tabs.includes(tabParam) ? tabParam : member ? "board" : "overview";
   const setTab = (t: Tab) =>
     setParams((p) => {
       const next = new URLSearchParams(p);
@@ -112,7 +117,7 @@ export function ProjectPage() {
           { value: "memory", label: "Memory" },
           { value: "files", label: "Files" },
           { value: "activity", label: "Activity" },
-        ]}
+        ].filter((i) => tabs.includes(i.value as Tab))}
       />
       {tab === "overview" ? <Overview project={p} /> : null}
       {tab === "board" ? <BoardTab project={p} /> : null}

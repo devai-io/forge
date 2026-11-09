@@ -12,7 +12,8 @@ import { ColorDot } from "@/components/ui/Badge";
 import { StatusIcon } from "@/features/tasks/icons";
 import { editorPath } from "@/lib/code";
 import { allWindows, attachPath, isAgent, windowParam, windowTarget } from "@/lib/terminal";
-import { NAV } from "./nav";
+import { useUser } from "@/lib/auth";
+import { isMember, useNav } from "./nav";
 import { useShell } from "./context";
 
 type Item = { id: string; label: string; hint?: string; icon: React.ReactNode; run: () => void; group: string };
@@ -38,6 +39,8 @@ function Palette({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
   const { openTask, newTask, newRun, newSession } = useShell();
   const projects = useProjects();
+  const nav = useNav();
+  const member = isMember(useUser());
   // Live sessions, quietly: a locked terminal just contributes no entries.
   const terminal = useTerminalHosts({ refetchInterval: false });
   const code = useCodeStatus();
@@ -89,7 +92,7 @@ function Palette({ onClose }: { onClose: () => void }) {
           },
         },
       ]
-        .filter((a) => match(a.label))
+        .filter((a) => match(a.label) && !(member && a.id === "new-claude-session"))
         .map((a) => ({ ...a, group: "Actions" })),
     );
     for (const p of projects.data ?? []) {
@@ -120,13 +123,13 @@ function Palette({ onClose }: { onClose: () => void }) {
           });
       }
     }
-    for (const n of NAV) {
+    for (const n of nav) {
       const keywords = "keywords" in n ? n.keywords : "";
       if (match(n.label) || (needle && keywords.includes(needle)))
         out.push({ id: `nav-${n.to}`, label: n.label, icon: <n.icon />, run: go(n.to), group: "Pages" });
     }
-    if (match("Settings")) out.push({ id: "nav-settings", label: "Settings", icon: <Settings />, run: go("/settings"), group: "Pages" });
-    if (match("Security log") || (needle && "sessions sign-ins audit security".includes(needle)))
+    if (!member && match("Settings")) out.push({ id: "nav-settings", label: "Settings", icon: <Settings />, run: go("/settings"), group: "Pages" });
+    if (!member && match("Security log") || (needle && "sessions sign-ins audit security".includes(needle)))
       out.push({ id: "nav-security", label: "Security log", icon: <ShieldAlert />, run: go("/settings#security"), group: "Pages" });
     // One entry per Claude/Codex window, plus each session that has none running.
     const hosts = (terminal.data?.hosts ?? []).filter((h) => h.terminal && h.online);
@@ -174,7 +177,7 @@ function Palette({ onClose }: { onClose: () => void }) {
       }
     }
     return out;
-  }, [q, debounced, projects.data, tasks.data, terminal.data, code.data, navigate, onClose, newTask, newRun, newSession, openTask]);
+  }, [q, debounced, projects.data, tasks.data, terminal.data, code.data, navigate, onClose, newTask, newRun, newSession, openTask, nav, member]);
 
   const clamped = Math.min(active, Math.max(0, items.length - 1));
 

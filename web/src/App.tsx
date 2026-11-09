@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { FullPageSpinner } from "@/components/ui/Spinner";
 import { AgentsPage } from "@/features/agents/AgentsPage";
@@ -17,6 +17,7 @@ import { AppShell } from "@/features/shell/AppShell";
 import { TasksPage } from "@/features/tasks/TasksPage";
 import { TerminalPage } from "@/features/terminal/TerminalPage";
 import { RequireAuth, useAccentSync, useAuthListener } from "@/lib/auth";
+import { useMe } from "@/api/hooks";
 
 // Split off what isn't needed on a typical visit: xterm (the terminal view),
 // and pages opened now and then — the dashboard, board and lists stay in the
@@ -31,6 +32,12 @@ const ServerPage = lazy(() => import("@/features/infra/ServerPage").then((m) => 
 const DocsPage = lazy(() => import("@/features/docs/DocsPage").then((m) => ({ default: m.DocsPage })));
 
 const page = (el: React.ReactNode) => <Suspense fallback={<FullPageSpinner />}>{el}</Suspense>;
+
+/** A limited account: its projects, tasks and agent runs, nothing else. */
+function Home() {
+  const member = useMe().data?.user.role === "member";
+  return member ? <Navigate to="/tasks" replace /> : <DashboardPage />;
+}
 
 export function App() {
   useAuthListener();
@@ -51,7 +58,7 @@ export function App() {
             </RequireAuth>
           }
         >
-          <Route index element={<DashboardPage />} />
+          <Route index element={<Home />} />
           <Route path="assistant" element={page(<AssistantPage />)} />
           <Route path="assistant/:chatId" element={page(<AssistantPage />)} />
           <Route path="assistant/bot/:botKey" element={page(<AssistantPage />)} />

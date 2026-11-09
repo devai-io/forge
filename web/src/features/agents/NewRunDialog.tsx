@@ -21,6 +21,7 @@ import { Field, Input, Select, Switch, Textarea } from "@/components/ui/Input";
 import { Segmented } from "@/components/ui/Tabs";
 import { useToast } from "@/components/ui/Toast";
 import type { NewRunPrefill } from "@/features/shell/context";
+import { useUser } from "@/lib/auth";
 import { commandOptions, defaultRunner, EFFORT_LABEL, ENGINE_LABEL, PERMISSION_MODE_HELP, runnerForCommand } from "@/lib/agents";
 
 const CUSTOM_MODEL = "__custom__"; // the model select's "Other…": type an id
@@ -42,6 +43,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   const [kind, setKind] = useState<RunKind>("agent");
   const [prompt, setPrompt] = useState(prefill.prompt ?? "");
   const [command, setCommand] = useState("");
+  const member = useUser().role === "member"; // agents only
   const [mode, setMode] = useState("");
   const [worktree, setWorktree] = useState(resume?.worktree ?? false);
   const [model, setModel] = useState(resume?.model ?? "");
@@ -227,15 +229,17 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                 {runner.name} is offline. The run will wait in the queue until it reconnects.
               </p>
             ) : null}
-            <Segmented
-              label="Run kind"
-              value={kind}
-              onChange={setKind}
-              items={[
-                { value: "agent", label: "Agent" },
-                { value: "command", label: "Command" },
-              ]}
-            />
+            {member ? null : (
+              <Segmented
+                label="Run kind"
+                value={kind}
+                onChange={setKind}
+                items={[
+                  { value: "agent", label: "Agent" },
+                  { value: "command", label: "Command" },
+                ]}
+              />
+            )}
           </>
         ) : null}
 

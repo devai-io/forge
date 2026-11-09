@@ -21,6 +21,7 @@ type User struct {
 	CheckupTime  string    `json:"checkup_time"`
 	CheckupEmail bool      `json:"checkup_email"`
 	CreatedAt    time.Time `json:"created_at"`
+	Role         string    `json:"role"` // "owner" or "member" (limited to its projects)
 
 	PasswordHash    string `json:"-"`
 	TOTPSecret      []byte `json:"-"` // sealed

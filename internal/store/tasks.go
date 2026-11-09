@@ -62,6 +62,8 @@ type TaskFilter struct {
 	Open       bool
 	Today      string // viewer's date, for Overdue
 	Limit      int
+	// OnlyKeys, when non-nil, limits results to these projects (a member).
+	OnlyKeys []string
 }
 
 func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]Task, error) {
@@ -71,6 +73,9 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]Task, error) {
 
 	if f.ProjectKey != "" {
 		where = append(where, "p.key = "+arg(strings.ToUpper(f.ProjectKey)))
+	}
+	if f.OnlyKeys != nil {
+		where = append(where, "p.key IN (SELECT value FROM json_each("+arg(f.OnlyKeys)+"))")
 	}
 	if len(f.Statuses) > 0 {
 		where = append(where, "t.status IN (SELECT value FROM json_each("+arg(f.Statuses)+"))")

@@ -16,6 +16,8 @@ export type User = {
   checkup_time: string; // "HH:MM" in the user's timezone
   checkup_email: boolean; // e-mail the daily check-up result
   accent: string; // "" = default, a preset id ("teal") or a custom "#rrggbb"
+  /** "member": a limited account — tasks, agent prompts and runs in its own projects only. */
+  role?: "owner" | "member";
 };
 
 /** GET /api/auth/me, POST /api/auth/login and POST /api/setup. */

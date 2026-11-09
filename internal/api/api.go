@@ -399,7 +399,11 @@ func (s *Server) authed(next userHandler) http.HandlerFunc {
 		}
 		ctx := context.WithValue(r.Context(), ctxSession, info)
 		ctx = context.WithValue(ctx, ctxUser, u)
-		next(w, r.WithContext(ctx), u)
+		r = r.WithContext(ctx)
+		if isMember(u) && !s.memberGuard(w, r, u) {
+			return
+		}
+		next(w, r, u)
 	})
 }
 

@@ -52,6 +52,10 @@ Server (workspace: FORGE_HOME, default ~/.config/forge):
   forge setup-token                      print the first-run setup link
   forge add-machine <name> [role]        register a machine, print its pairing code
   forge create-user <username> <email>   create an account (prints a random password)
+  forge create-member <username> <email> <KEY>...
+                                         a limited account: tasks, agent prompts and runs in those projects only
+  forge grant <username> <KEY>           give a member another project
+  forge revoke <username> <KEY>          take a project away from a member
   forge reset-password <username>        set a new random password
   forge disable-2fa <username>           turn two-factor off
   forge backup                           snapshot the database into backups/ now
@@ -289,6 +293,32 @@ func runServer(args []string) error {
 			return errors.New("usage: forge create-user <username> <email>")
 		}
 		return createUser(ctx, cfg, st, args[1], args[2])
+	case "create-member":
+		if len(args) < 4 {
+			return errors.New("usage: forge create-member <username> <email> <KEY>...")
+		}
+		return createMember(ctx, cfg, st, args[1], args[2], args[3:])
+	case "grant", "revoke":
+		if len(args) != 3 {
+			return fmt.Errorf("usage: forge %s <username> <KEY>", args[0])
+		}
+		u, err := st.UserByLogin(ctx, args[1])
+		if err != nil {
+			return fmt.Errorf("user %q: %w", args[1], err)
+		}
+		if u.Role != store.RoleMember {
+			return fmt.Errorf("%s is not a member (owners already see every project)", u.Username)
+		}
+		if args[0] == "grant" {
+			err = st.GrantProject(ctx, u.ID, args[2])
+		} else {
+			err = st.RevokeProject(ctx, u.ID, args[2])
+		}
+		if err != nil {
+			return fmt.Errorf("project %q: %w", args[2], err)
+		}
+		fmt.Printf("%s: %s %s\n", args[0], u.Username, strings.ToUpper(args[2]))
+		return nil
 	case "reset-password":
 		if len(args) != 2 {
 			return errors.New("usage: forge reset-password <username>")
@@ -440,6 +470,36 @@ func createUser(ctx context.Context, cfg config.Config, st *store.Store, usernam
 	}
 	_ = os.Remove(api.SetupTokenFile(cfg.Home))
 	fmt.Printf("created %s <%s>\npassword: %s\nchange it under Settings after signing in.\n", u.Username, u.Email, password)
+	return nil
+}
+
+// createMember is createUser for a limited account, granted the given
+// projects. Everything is validated before the account is written.
+func createMember(ctx context.Context, cfg config.Config, st *store.Store, username, email string, keys []string) error {
+	for _, k := range keys {
+		if _, err := st.ProjectByKey(ctx, "", k); err != nil {
+			return fmt.Errorf("project %q: %w", k, err)
+		}
+	}
+	password := auth.GeneratePassword()
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		return err
+	}
+	u, err := st.CreateUser(ctx, username, email, username, hash, cfg.DefaultTimezone, true)
+	if err != nil {
+		return err
+	}
+	if err := st.SetUserRole(ctx, u.ID, store.RoleMember); err != nil {
+		return err
+	}
+	for _, k := range keys {
+		if err := st.GrantProject(ctx, u.ID, k); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("created member %s <%s> on %s\npassword: %s\nthey change it under Settings after signing in.\n",
+		u.Username, u.Email, strings.ToUpper(strings.Join(keys, ", ")), password)
 	return nil
 }
 

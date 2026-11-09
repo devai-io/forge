@@ -32,6 +32,15 @@ Unauthenticated routes: `POST /api/auth/login`, `POST /api/auth/forgot`,
 `POST /api/auth/reset`, `GET /api/status`, `GET /api/setup`, `POST /api/setup`.
 Everything else → `401 unauthorized` without a valid session.
 
+**Members.** `User.role` is `owner` (default, everything) or `member`: a limited
+account created with `forge create-member <username> <email> <KEY>...` and
+managed with `forge grant|revoke <username> <KEY>`. A member may only call the
+routes listed in `internal/api/members.go` (own account, projects, tasks, runs,
+machine list); any other route → `403 forbidden`. Projects, tasks and runs
+outside its grants are `404`, lists are filtered, a project's servers,
+endpoints, infra notes and repo paths are blanked, tasks cannot change project,
+and `POST /api/runs` accepts only `kind: "agent"`.
+
 ## Types
 
 ```ts

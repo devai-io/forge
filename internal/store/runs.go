@@ -326,6 +326,8 @@ type RunFilter struct {
 	Statuses   []string
 	Finished   bool
 	Limit      int
+	// OnlyKeys, when non-nil, limits results to these projects (a member).
+	OnlyKeys []string
 	// Assistant sessions (Claude Code turns of a chat, no repo) are left out
 	// of run lists; they show in their chat.
 }
@@ -336,6 +338,9 @@ func (s *Store) ListRuns(ctx context.Context, f RunFilter) ([]Run, error) {
 	arg := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
 	if f.ProjectKey != "" {
 		where = append(where, "p.key = "+arg(strings.ToUpper(f.ProjectKey)))
+	}
+	if f.OnlyKeys != nil {
+		where = append(where, "p.key IN (SELECT value FROM json_each("+arg(f.OnlyKeys)+"))")
 	}
 	if f.TaskID != 0 {
 		where = append(where, "r.task_id = "+arg(f.TaskID))

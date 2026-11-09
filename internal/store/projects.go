@@ -81,6 +81,11 @@ func scanProject(row interface{ Scan(...any) error }) (*Project, error) {
 }
 
 func (s *Store) ListProjects(ctx context.Context, today string, includeArchived bool) ([]Project, error) {
+	return s.ListProjectsOnly(ctx, today, includeArchived, nil)
+}
+
+// ListProjectsOnly is ListProjects limited to these keys when only is non-nil.
+func (s *Store) ListProjectsOnly(ctx context.Context, today string, includeArchived bool, only []string) ([]Project, error) {
 	q := projectSelect
 	if !includeArchived {
 		q += ` WHERE p.status <> 'archived'`
@@ -96,6 +101,9 @@ func (s *Store) ListProjects(ctx context.Context, today string, includeArchived 
 		p, err := scanProject(rows)
 		if err != nil {
 			return nil, err
+		}
+		if only != nil && !OneOf(p.Key, only) {
+			continue
 		}
 		out = append(out, *p)
 	}

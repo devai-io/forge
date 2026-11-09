@@ -1,3 +1,4 @@
+import { useMe } from "@/api/hooks";
 import { BookOpen, Bot, ClipboardCheck, Code, Cpu, FolderKanban, Gauge, LayoutDashboard, ListTodo, Lock, Server, Sparkles, SquareTerminal } from "lucide-react";
 
 // `mobile`: gets its own slot in the phone tab bar — five at most, beside "More"
@@ -17,3 +18,16 @@ export const NAV = [
   { to: "/machines", label: "Machines", short: "Machines", icon: Cpu, end: false, mobile: false, keywords: "runners agents pair add machine master worker" },
   { to: "/docs", label: "Docs", short: "Docs", icon: BookOpen, end: false, mobile: false, keywords: "documentation help how it works what forge does security" },
 ] as const;
+
+/** What a limited (member) account may open; the server refuses the rest. */
+const MEMBER_PATHS: string[] = ["/tasks", "/projects", "/agents"];
+
+export function isMember(user: { role?: string } | undefined): boolean {
+  return user?.role === "member";
+}
+
+/** The pages in the menu for this account. */
+export function useNav(): readonly (typeof NAV)[number][] {
+  const role = useMe().data?.user.role;
+  return role === "member" ? NAV.filter((n) => MEMBER_PATHS.includes(n.to)) : NAV;
+}

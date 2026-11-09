@@ -31,7 +31,12 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, u *store.User
 // ── Projects ──────────────────────────────────────────────────────────────
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request, u *store.User) {
-	ps, err := s.store.ListProjects(r.Context(), store.TodayFor(u.Timezone), queryBool(r, "include_archived"))
+	only, err := s.onlyKeys(r, u)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	ps, err := s.store.ListProjectsOnly(r.Context(), store.TodayFor(u.Timezone), queryBool(r, "include_archived"), only)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -44,6 +49,9 @@ func (s *Server) respondProject(w http.ResponseWriter, r *http.Request, u *store
 	if err != nil {
 		writeErr(w, r, err)
 		return
+	}
+	if isMember(u) {
+		scrubProject(p)
 	}
 	writeJSON(w, status, p)
 }
@@ -343,6 +351,11 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request, u *store.User
 			}
 		}
 	}
+	var err error
+	if f.OnlyKeys, err = s.onlyKeys(r, u); err != nil {
+		writeErr(w, r, err)
+		return
+	}
 	tasks, err := s.store.ListTasks(r.Context(), f)
 	if err != nil {
 		writeErr(w, r, err)
@@ -506,6 +519,11 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request, u *store.User)
 	}
 	if st := r.URL.Query().Get("status"); st != "" {
 		f.Statuses = strings.Split(st, ",")
+	}
+	var err error
+	if f.OnlyKeys, err = s.onlyKeys(r, u); err != nil {
+		writeErr(w, r, err)
+		return
 	}
 	runs, err := s.store.ListRuns(r.Context(), f)
 	if err != nil {

@@ -19,7 +19,7 @@ import { useTheme, type ThemePref } from "@/lib/theme";
 import { CommandPalette } from "./CommandPalette";
 import { PullToRefresh } from "@/features/shell/PullToRefresh";
 import { ShellProvider, useShell } from "./context";
-import { NAV } from "./nav";
+import { isMember, useNav } from "./nav";
 
 export function AppShell() {
   return (
@@ -134,6 +134,7 @@ function WaitingBadge({ count, compact }: { count: number; compact?: boolean }) 
 
 function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const projects = useProjects();
+  const nav = useNav();
   const waiting = useWaitingRuns();
   const [creating, setCreating] = useState(false);
   const row = (isActive: boolean, height: string) =>
@@ -154,7 +155,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         <Logo iconOnly={collapsed} />
       </div>
       <nav aria-label="Main" className="space-y-0.5 px-2">
-        {NAV.map(({ to, label, icon: Icon, end }) => (
+        {nav.map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
             to={to}
@@ -283,8 +284,7 @@ function UserMenu({ compact }: { compact: boolean }) {
         )
       }
       items={[
-        { label: "Settings", icon: <Settings />, onSelect: () => navigate("/settings") },
-        "separator",
+        ...(isMember(user) ? [] : [{ label: "Settings", icon: <Settings />, onSelect: () => navigate("/settings") }, "separator" as const]),
         ...themes.map((t) => ({ label: t.label, icon: t.icon, checked: pref === t.value, onSelect: () => setPref(t.value) })),
         "separator",
         {
@@ -321,6 +321,7 @@ function TopBar() {
   const location = useLocation();
   const navigate = useNavigate();
   const logout = useLogout();
+  const user = useUser();
   const projectKey = /^\/p\/([^/]+)/.exec(location.pathname)?.[1];
   const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
   return (
@@ -353,7 +354,7 @@ function TopBar() {
             triggerClassName="grid size-8.5 place-items-center rounded-md text-fg-2 hover:bg-surface-2"
             trigger={<Settings className="size-4" />}
             items={[
-              { label: "Settings", icon: <Settings />, onSelect: () => navigate("/settings") },
+              ...(isMember(user) ? [] : [{ label: "Settings", icon: <Settings />, onSelect: () => navigate("/settings") }]),
               {
                 label: "Sign out",
                 icon: <LogOut />,
@@ -371,7 +372,9 @@ function MobileNav() {
   const location = useLocation();
   const [moreOpen, setMoreOpen] = useState(false);
   const waiting = useWaitingRuns();
-  const more = NAV.filter((n) => !n.mobile);
+  const nav = useNav();
+  const user = useUser();
+  const more = nav.filter((n) => !n.mobile);
   const moreActive = [...more.map((n) => n.to), "/settings"].some((to) => location.pathname.startsWith(to));
 
   // Any navigation closes the sheet.
@@ -399,7 +402,7 @@ function MobileNav() {
           aria-label="More"
           className="animate-up fixed inset-x-3 bottom-[calc(3.5rem+env(safe-area-inset-bottom)+0.5rem)] z-40 grid grid-cols-3 gap-1 rounded-xl border border-line-strong bg-surface p-2 shadow-pop md:hidden"
         >
-          {[...more, { to: "/settings", label: "Settings", short: "Settings", icon: Settings, end: false, mobile: false }].map(
+          {[...more, ...(isMember(user) ? [] : [{ to: "/settings", label: "Settings", short: "Settings", icon: Settings, end: false, mobile: false }])].map(
             ({ to, short, icon: Icon }) => (
               <NavLink
                 key={to}
@@ -422,7 +425,7 @@ function MobileNav() {
         aria-label="Main"
         className="safe-bottom fixed inset-x-0 bottom-0 z-40 grid grid-cols-6 border-t border-line bg-surface/95 backdrop-blur md:hidden"
       >
-        {NAV.filter((n) => n.mobile).map(({ to, short, icon: Icon, end }) => (
+        {nav.filter((n) => n.mobile).map(({ to, short, icon: Icon, end }) => (
           <NavLink key={to} to={to} end={end} className={({ isActive }) => tab(isActive && !moreOpen)}>
             <span className="relative">
               <Icon className="size-5" aria-hidden />
