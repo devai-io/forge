@@ -316,6 +316,10 @@ func (r *Runner) serveControl(ctx context.Context, c *websocket.Conn) {
 			switch m.Type {
 			case "open":
 				r.openTerminal(ctx, m)
+			case "list":
+				// The tmux list right now (the heartbeat's may be seconds old).
+				raw, err := json.Marshal(r.listTmux(ctx))
+				reply(m.ID, string(raw), err)
 			case "capture":
 				text, err := r.capture(ctx, m)
 				reply(m.ID, text, err)
@@ -471,7 +475,7 @@ func (r *Runner) createSession(ctx context.Context, m controlMsg) error {
 }
 
 // startupPrompts are the questions interactive Claude Code may ask before it
-// takes a prompt, and the option that lets the run go on: trusting the
+// takes a prompt, and the option that lets the session go on: trusting the
 // folder (already inside this machine's allowed_roots, where headless runs
 // work without asking), and accepting --dangerously-skip-permissions (only
 // when this machine's permission_modes allow bypassPermissions).
@@ -484,10 +488,8 @@ var startupPrompts = []struct {
 }
 
 // answerStartup watches a just-started agent session for 20 seconds and
-// picks the "yes" option (the second entry: Down, Enter) of each startup
-// question it shows.
+// picks the "yes" option of each startup question it shows.
 func (r *Runner) answerStartup(ctx context.Context, session string, bypass bool) {
-	m := controlMsg{Session: session}
 	answered := map[string]bool{}
 	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
 		pane, err := r.capture(ctx, controlMsg{Session: session, Lines: 40})
@@ -500,13 +502,42 @@ func (r *Runner) answerStartup(ctx context.Context, session string, bypass bool)
 				(p.bypass && !(bypass && contains(r.cfg.PermissionModes, "bypassPermissions"))) {
 				continue
 			}
-			answered[p.marker] = true
-			_, _ = r.tmux(ctx, "send-keys", "-t", target(m), "Down")
-			time.Sleep(150 * time.Millisecond)
-			_, _ = r.tmux(ctx, "send-keys", "-t", target(m), "Enter")
-			slog.Info("answered a Claude Code startup question", "session", session, "answer", p.marker)
+			if r.chooseOption(ctx, session, p.marker) {
+				answered[p.marker] = true
+				slog.Info("answered a Claude Code startup question", "session", session, "answer", p.marker)
+			}
 		}
 	}
+}
+
+// chooseOption moves a dialog's cursor (❯) onto the option that reads marker
+// and confirms it — Enter only once the cursor is seen on that option: the
+// dialog starts on "No, exit", and a Down it was not ready for is lost.
+func (r *Runner) chooseOption(ctx context.Context, session, marker string) bool {
+	m := controlMsg{Session: session}
+	for try := 0; try < 8; try++ {
+		pane, err := r.capture(ctx, controlMsg{Session: session, Lines: 40})
+		if err != nil || !strings.Contains(pane, marker) {
+			return false // the dialog is gone
+		}
+		if cursorOn(pane, marker) {
+			_, err := r.tmux(ctx, "send-keys", "-t", target(m), "Enter")
+			return err == nil
+		}
+		_, _ = r.tmux(ctx, "send-keys", "-t", target(m), "Down")
+		time.Sleep(300 * time.Millisecond)
+	}
+	return false
+}
+
+// cursorOn: the dialog's cursor is on the option that reads marker.
+func cursorOn(pane, marker string) bool {
+	for _, line := range strings.Split(pane, "\n") {
+		if i := strings.Index(line, marker); i >= 0 && strings.Contains(line[:i], "❯") {
+			return true
+		}
+	}
+	return false
 }
 
 // envName is a variable name Forge may export into a session's command.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -419,16 +420,23 @@ type RunInput struct {
 	AppendSystem string `json:"-"`
 	// Cwd is where an Assistant session starts ("" = the machine's home
 	// folder); the machine refuses a folder outside its allowed roots and
-	// falls back to home. Set by the server only.
+	// falls back to home. For a repo run it is the folder its session lives
+	// in when that is not the repo itself (a project agent runs in the
+	// project's folder). Set by the server only.
 	Cwd string `json:"-"`
+	// DefaultMode starts the session in Claude Code's own default permission
+	// mode (it asks in its terminal): a project agent started without
+	// skipping permissions. Set by the server only; the run lives in tmux.
+	DefaultMode bool `json:"-"`
 	// Interactive keeps the session open for questions and follow-ups (an
 	// agent run on a machine that supports it).
 	Interactive bool `json:"interactive"`
 	// OneTurn: the session answers the prompt and the run finishes, instead
 	// of waiting for a reply (agent runs; the dashboard's Refresh uses it).
 	OneTurn bool `json:"one_turn"`
-	// Fresh: start a new agent even though the task already has one (by
-	// default a task's agent runs continue its existing agent).
+	// Fresh: start another agent (an extra session) even though the
+	// project's agent is open or the task already has one — by default the
+	// request goes to that agent.
 	Fresh bool `json:"fresh"`
 }
 
@@ -486,8 +494,8 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 	} else if in.Kind != "agent" {
 		return nil, invalid("kind", "an assistant session is an agent run")
 	}
-	if !home {
-		in.Cwd = ""
+	if !home && in.Cwd != "" && !filepath.IsAbs(in.Cwd) {
+		in.Cwd = "" // a repo run's folder is its repo, or the folder its session was started in
 	}
 
 	in.Prompt = strings.TrimSpace(in.Prompt)
@@ -501,16 +509,20 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 		if len(in.Prompt) > 100000 {
 			return nil, invalid("prompt", "too long")
 		}
-		if in.PermissionMode == "" {
-			in.PermissionMode = "plan"
-		}
-		if !OneOf(in.PermissionMode, PermissionModes) {
-			return nil, invalid("permission_mode", "must be one of %s", strings.Join(PermissionModes, ", "))
-		}
-		// A runner that has never heartbeated advertises nothing; let the run
-		// queue and have the runner refuse it, rather than blocking setup.
-		if runner.LastSeenAt != nil && !OneOf(in.PermissionMode, caps.PermissionModes) {
-			return nil, invalid("permission_mode", "runner %s does not allow %s", runner.Name, in.PermissionMode)
+		if in.DefaultMode && in.Engine != "codex" {
+			in.PermissionMode = "default"
+		} else {
+			if in.PermissionMode == "" {
+				in.PermissionMode = "plan"
+			}
+			if !OneOf(in.PermissionMode, PermissionModes) {
+				return nil, invalid("permission_mode", "must be one of %s", strings.Join(PermissionModes, ", "))
+			}
+			// A runner that has never heartbeated advertises nothing; let the run
+			// queue and have the runner refuse it, rather than blocking setup.
+			if runner.LastSeenAt != nil && !OneOf(in.PermissionMode, caps.PermissionModes) {
+				return nil, invalid("permission_mode", "runner %s does not allow %s", runner.Name, in.PermissionMode)
+			}
 		}
 		if runner.LastSeenAt != nil {
 			if in.Engine == "codex" && !caps.Codex {

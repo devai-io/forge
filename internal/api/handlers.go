@@ -542,9 +542,10 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request, u *store.User
 	if !decode(w, r, &in) {
 		return
 	}
-	// One task, one agent: a run for a task that has an agent (or Continue
-	// on a run) goes to that agent as a message.
-	if cont, ok, err := s.continueTaskAgent(r.Context(), in); err != nil {
+	// One project, one agent: a run for a project whose agent has a
+	// conversation open (or for a task that has an agent, or Continue on a
+	// run) goes to that agent as a message.
+	if cont, ok, err := s.continueAgent(r.Context(), in, isMember(u)); err != nil {
 		writeErr(w, r, err)
 		return
 	} else if ok {
@@ -559,7 +560,9 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request, u *store.User
 		writeErr(w, r, err)
 		return
 	}
-	run = s.placeInTmux(r.Context(), run)
+	// A member's request never lands in a session somebody else started (it
+	// may run with permissions a member cannot ask for): always its own.
+	run = s.placeInTmux(r.Context(), run, in.Fresh || isMember(u))
 	s.wakeups.notify(run.RunnerID)
 	writeJSON(w, http.StatusCreated, run.Public())
 }

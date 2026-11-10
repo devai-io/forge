@@ -6,6 +6,7 @@ import {
   ctrlChar,
   deriveSessionName,
   KEYBAR,
+  modeReport,
   pickHost,
   sanitizeSessionName,
   SESSION_NAME_RE,
@@ -148,3 +149,32 @@ describe("pickHost", () => {
     expect(pickHost([], 1, 1)).toBeNull();
   });
 });
+
+describe("mode requests (DECRQM)", () => {
+  const modes = {
+    applicationCursorKeysMode: true,
+    applicationKeypadMode: false,
+    bracketedPasteMode: true,
+    insertMode: false,
+    mouseTrackingMode: "any" as const,
+    originMode: false,
+    reverseWraparoundMode: false,
+    sendFocusMode: true,
+    synchronizedOutputMode: false,
+    wraparoundMode: true,
+    alternateScreen: true,
+  };
+  it("answers what tmux asks when it attaches: set, reset, or not recognised", () => {
+    expect(modeReport(1, true, modes)).toBe("\x1b[?1;1$y");
+    expect(modeReport(2004, true, modes)).toBe("\x1b[?2004;1$y");
+    expect(modeReport(1049, true, modes)).toBe("\x1b[?1049;1$y");
+    expect(modeReport(1003, true, modes)).toBe("\x1b[?1003;1$y");
+    expect(modeReport(1000, true, modes)).toBe("\x1b[?1000;2$y");
+    expect(modeReport(2026, true, modes)).toBe("\x1b[?2026;2$y");
+    expect(modeReport(2026, true, { ...modes, synchronizedOutputMode: undefined })).toBe("\x1b[?2026;0$y");
+    expect(modeReport(2031, true, modes)).toBe("\x1b[?2031;0$y"); // unknown: not recognised
+    expect(modeReport(4, false, modes)).toBe("\x1b[4;2$y");
+    expect(modeReport(20, false, modes)).toBe("\x1b[20;0$y");
+  });
+});
+

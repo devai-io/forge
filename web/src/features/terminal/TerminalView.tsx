@@ -21,7 +21,7 @@ import { Badge, ColorDot } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { useElevatedUntil } from "@/lib/auth";
-import { ctrlChar, FONT_MAX, FONT_MIN, KEYBAR, readFontSize, storeFontSize, terminalWsUrl } from "@/lib/terminal";
+import { ctrlChar, FONT_MAX, FONT_MIN, KEYBAR, modeReport, readFontSize, storeFontSize, terminalWsUrl } from "@/lib/terminal";
 import { cssVars, terminalTheme } from "@/lib/terminalTheme";
 import { useTheme } from "@/lib/theme";
 import { AgentBadge } from "./bits";
@@ -245,6 +245,15 @@ export function TerminalView() {
     });
     // Mouse reports in X10/binary mode arrive as one char per byte.
     const onBinary = term.onBinary((data) => send(Uint8Array.from(data, (c) => c.charCodeAt(0) & 0xff)));
+    // tmux asks for the terminal's modes when it attaches; xterm.js 6.0's own answer
+    // throws and stops its parser (a blank terminal), so they are answered here.
+    const answerModes = (dec: boolean) => (params: (number | number[])[]) => {
+      const mode = typeof params[0] === "number" ? params[0] : 0;
+      send(modeReport(mode, dec, { ...term.modes, alternateScreen: term.buffer.active.type === "alternate" }));
+      return true;
+    };
+    const onDecModes = term.parser.registerCsiHandler({ prefix: "?", intermediates: "$", final: "p" }, answerModes(true));
+    const onAnsiModes = term.parser.registerCsiHandler({ intermediates: "$", final: "p" }, answerModes(false));
 
     let timer: number | undefined;
     const ro = new ResizeObserver(() => {
@@ -260,6 +269,8 @@ export function TerminalView() {
       ro.disconnect();
       onData.dispose();
       onBinary.dispose();
+      onDecModes.dispose();
+      onAnsiModes.dispose();
       detaching.current = true;
       wsRef.current?.close();
       wsRef.current = null;

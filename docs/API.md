@@ -356,7 +356,7 @@ top = first − 1000).
 | POST | /api/runners/{id}/rotate | – | `{runner: Runner, token: string}` — the token is shown once (manual setup) |
 | DELETE | /api/runners/{id} | – | `204` |
 | GET | /api/runs | query `project` (key), `task` (id), `status`, `limit` (default 50) | `{runs: Run[]}` newest first |
-| POST | /api/runs | `{runner_id, repo_id, kind, prompt?, command?, permission_mode?, model?, engine?, effort?, interactive?, worktree?, task_id?, resume_run_id?, one_turn?, fresh?}` | `201 Run` (queued). `resume_run_id` copies runner/repo from that run and requires it to have a `session_id`; `one_turn` makes an agent run finish once its session has answered (see *One-turn runs*). **One task, one agent**: an agent run for a task that already has an agent (its latest agent run that is open or has a session), or with `resume_run_id`, goes to that run as a message instead — reopening it on its session when it had finished — and the answer is `200 Run` with `continued: true`; `fresh: true` starts a new agent anyway. Falls back to a new run when the machine's agent cannot resume in place |
+| POST | /api/runs | `{runner_id, repo_id, kind, prompt?, command?, permission_mode?, model?, engine?, effort?, interactive?, worktree?, task_id?, resume_run_id?, one_turn?, fresh?}` | `201 Run` (queued). `resume_run_id` copies runner/repo from that run and requires it to have a `session_id`; `one_turn` makes an agent run finish once its session has answered (see *One-turn runs*). **One project, one agent**: an agent run for a project whose agent has a conversation open on that machine (see *Agents in tmux*; not a `one_turn` run) goes to that run as a message instead; failing that, one for a task that already has an agent (its latest agent run that is open or has a session), or with `resume_run_id`, goes to that run — reopening it on its session when it had finished. The answer is then `200 Run` with `continued: true`; `fresh: true` starts another agent anyway (an extra session). Falls back to a new run when the machine's agent cannot resume in place |
 | GET | /api/runs/{id} | – | `Run` |
 | GET | /api/runs/{id}/events | query `after` (seq, default 0), `limit` (default 500) | `{events: RunEvent[], run: Run, prompts: RunPrompt[]}` — poll every ~1.5 s while the run is active; `prompts` is the whole list (empty unless interactive) |
 | POST | /api/runs/{id}/cancel | – | `Run` (queued → cancelled immediately; running → `cancel_requested`, the runner kills it) |
@@ -408,21 +408,31 @@ machine), `forge resume [RUN]` in a shell there, or the run's `resume_hint`.
 #### Agents in tmux
 
 On a machine whose agent reports `tmux_agents` (v0.1.44+), with
-`GET/PATCH /api/agent-settings` `{tmux: boolean}` on (the default), a user's
-Claude Code agent run (not an Assistant turn, not a one-turn run, not Codex or
-DeepSeek) lives in a **tmux session** on its machine, named after its task
-(`SHOP-12`; without a task `SHOP-r34`; a name already taken gets `-<run id>`):
-the same Claude Code session in Forge, in `tmux attach -t SHOP-12` and in the
-Terminal page. The run is never claimed by the machine's headless runner; the
-server drives it over the control channel:
+`GET/PATCH /api/agent-settings` `{tmux?: boolean, remote_control?: boolean}`
+(both on by default; PATCH changes only what it names), a user's Claude Code
+agent run (not an Assistant turn, not a one-turn run, not Codex or DeepSeek)
+is a conversation in its **project's agent session**: the tmux session
+`F-<Project name>` on its machine (unsafe characters become `-`, at most 40),
+or an extra one — `F-<Project>-2`, `-3`, … — when that one holds another
+conversation (or, for a `fresh` run, has Claude Code open at all). It is the
+same Claude Code session in Forge, in `tmux attach -t F-Shop`, in the Terminal
+page and — with `remote_control` on — under that name on claude.ai/code and
+in the Claude app. The run is never claimed by the machine's headless runner;
+the server drives it over the control channel:
 
 - **Start**: `create` with `start: "claude"`, a new `session_id`, the prompt,
-  permission mode, model and effort, and `env.FORGE_RUN_ID`. The run is then
-  `running` with that `session_id`.
-- **Messages** (`POST /api/runs/{id}/messages`, a task's next request, Telegram)
-  are typed in as one `paste` each. **Interrupt** (`POST /api/runs/{id}/cancel`
-  on a running tmux run) presses Esc; the run stays open. **Finish** kills the
-  tmux session.
+  permission mode, model and effort, `remote_control: <tmux name>` and
+  `env.FORGE_RUN_ID`. The run is then `running` with that `session_id`. When
+  Claude Code is already open in the session with no conversation of its own
+  (a project agent nobody has asked anything yet), the prompt is typed into
+  it instead (one `paste`): the run is `running` with an empty `session_id`
+  until that session's next hook names it — its model and permission mode
+  stay what the session started with.
+- **Messages** (`POST /api/runs/{id}/messages`, the project's next request,
+  Telegram) are typed in as one `paste` each (not within 15 s of a start:
+  Claude Code is still drawing its first screen). **Interrupt**
+  (`POST /api/runs/{id}/cancel` on a running tmux run) presses Esc; the run
+  stays open. **Finish** kills the tmux session.
 - **Hooks** (`forge agent setup-claude` installs `forge agent hook --report`)
   report the session's turns: `UserPromptSubmit` → `awaiting: ""`, `Stop` →
   `awaiting: "reply"` with `result` = the last assistant message and the
@@ -431,15 +441,27 @@ server drives it over the control channel:
   the run waits (`origin: "forge"`) or is over (`origin: "tmux"`).
 - **Claude exited** (`SessionEnd`, or the session is gone from the machine's
   tmux list for two minutes): the run is `waiting`; a message starts Claude
-  again in the same tmux session with `--resume` and the message;
-  `POST /api/runs/{id}/handoff` (Open in terminal) starts it with no message
-  and attaches.
-- **Hand-started sessions**: a Claude Code session in tmux whose folder is in
-  a project's repo registers as a run (`origin: "tmux"`, `permission_mode:
-  "default"`) on its first hook, with its first prompt as `prompt`. A session
-  opened in tmux from an existing run (`claude --resume <session>`) binds to
-  that run instead. `/clear` in a tmux session ends that session's run and
-  registers the new conversation (keeping the task).
+  again with `--resume` and the message — in the same tmux session, or, when
+  that one is gone or holds another conversation by then, in the project's
+  session if it is free, else an extra one. `POST /api/runs/{id}/handoff`
+  (Attach) starts it with no message and attaches.
+- **Hand-started conversations**: a Claude Code session in tmux in a
+  project's repo — or in the project's own folder above its repos — becomes
+  a run (`origin: "tmux"`, `permission_mode: "default"`) with its **first
+  request** (`UserPromptSubmit`), which is its `prompt`. A session nobody has
+  asked anything is not a run. A session opened in tmux from an existing run
+  (`claude --resume <session>`) binds to that run instead. `/clear` in a tmux
+  session ends that session's run; the next request there is a new one
+  (keeping the task).
+- `permission_mode: "default"` (hand-started conversations, and project
+  agents started without skipping permissions) is Claude Code's own default:
+  it starts without a `--permission-mode` flag and asks in its terminal.
+- The machine answers Claude Code's startup questions for sessions Forge
+  starts: trusting the folder (inside its `allowed_roots`), and accepting
+  skip-permissions only where its `permission_modes` allow it. It confirms
+  only once the dialog's cursor is on the "yes" option.
+- Agents from v0.1.46 answer the control request `list` with their tmux list
+  as of that moment; for older ones the server uses the last heartbeat's.
 - `TmuxSession` gains `run_id?: number` — the open run living in it.
 - Headless runs set `FORGE_HEADLESS=1`, and their hooks stay silent.
 
@@ -464,7 +486,7 @@ type Run = { /* … */ interactive: boolean;
              resume_hint: string;                   // "cd '/path' && claude --resume <session>" ("" without a session)
              tmux_session: string;                  // the tmux session its Claude Code session lives in ("" = headless; see Agents in tmux)
              origin: "forge" | "tmux";              // tmux: a Claude Code session started by hand in tmux, registered by its hooks
-             continued?: boolean };                 // only on the POST /api/runs answer: the request went to the task's agent
+             continued?: boolean };                 // only on the POST /api/runs answer: the request went to an open agent (the project's, or the task's)
 type RunnerCapabilities = { /* … */ interactive?: boolean; approvals?: boolean;
              resume_in_place?: boolean;             // agents from v0.1.32: resumes a waiting run in place
              terminal_resume?: boolean;             // a terminal can start as `claude --resume <id>`
@@ -805,42 +827,52 @@ equal the app's own origin. Errors before the upgrade are ordinary JSON errors
 Session names: `[A-Za-z0-9_.-]{1,40}`; a name given for a session that exists
 just returns it.
 
-### Project sessions (one Claude per project, Remote Control on)
+### Project agents (one Claude Code session per project, Remote Control on)
 
-When on, the server keeps one long-running Claude Code session per project on
-the master: tmux session `F-<Project name>` (unsafe characters become `-`),
-started as `claude --remote-control F-<Project>` (plus
-`--dangerously-skip-permissions` when `skip_permissions` is on and the machine
-allows `bypassPermissions`) in the project's folder — its one repo, else the
-folder all its repos share unless that folder also holds another project's
-repo (then its first repo). Projects with no repo path are left out. Once a
-minute: a missing session is started; one whose Claude has exited, with
-nobody attached, is killed and started again (3 minutes' grace after a
-start); a running one has its Remote Control link (`https://claude.ai/code/session_…`)
-read off its scrollback once. The `F-` prefix is Forge's. Needs agent v0.1.34+
-(older agents start a plain Claude and report no link).
+Each project has one agent: a Claude Code session on the master, in the tmux
+session `F-<Project name>` (unsafe characters become `-`), started as
+`claude --remote-control F-<Project>` (plus the model, the effort and
+`--dangerously-skip-permissions` when asked for and the machine allows
+`bypassPermissions`) in the project's folder — its one repo, else the folder
+all its repos share unless that folder also holds another project's repo
+(then its first repo). Projects with no repo path are left out. An extra
+agent of the same project is `F-<Project>-2`, `-3`, …
+
+**Nothing starts by itself**: a session opens when the user asks for it
+(`POST /api/project-sessions/{key}`, the project's button on the Agents
+page), and stays until it is closed. Once a minute the server reads the
+Remote Control link (`https://claude.ai/code/session_…`) of each open
+session off its scrollback, once per session. The `F-` prefix is Forge's.
 
 ```ts
 type ProjectSession = {
   project_key: string; project_name: string; project_color: string;
-  name: string;              // F-<Project>: the tmux session and the Remote Control name
+  project_status: ProjectStatus;
+  name: string;              // F-<Project>[-N]: the tmux session and the Remote Control name
   dir: string;
   state: "running" | "starting" | "stopped" | "missing" | "offline";
   url: string | null;        // the claude.ai/code link, once read
   attached: number;          // browsers/terminals attached to the tmux session
   activity: string | null;
+  extra: number;             // 0: the project's agent; 2, 3, …: an extra one
+  run_id: number | null;     // the conversation open in it (see Agents in tmux); null: nobody has asked it anything, or it is closed
+  run_status: "" | "queued" | "running" | "waiting";
+  awaiting: "" | "answer" | "reply";
+  run_prompt: string;        // that run's request, cut to 240 characters
 };
 type ProjectSessions = {
-  settings: { enabled: boolean; skip_permissions: boolean }; // off by default
-  host: { runner_id: number; runner_name: string; online: boolean; skip_permissions: boolean } | null; // the master
-  sessions: ProjectSession[];
+  settings: { skip_permissions: boolean }; // what a new session starts with unless the request says otherwise
+  host: { runner_id: number; runner_name: string; online: boolean; skip_permissions: boolean; tmux_agents: boolean } | null; // the master
+  sessions: ProjectSession[]; // per project: its agent, then the extras that exist (a session, or a run in one)
 };
 ```
 
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | /api/project-sessions | – | `ProjectSessions` |
-| PATCH | /api/project-sessions | `{enabled?, skip_permissions?}` (**elevated**) | `ProjectSessions`; turning on starts the missing sessions right away. Logged as `project_sessions` |
+| PATCH | /api/project-sessions | `{skip_permissions?}` (**elevated**) | `ProjectSessions`. Logged as `project_sessions` |
+| POST | /api/project-sessions/{key} | `{model?, effort?, prompt?, extra?, skip_permissions?}` | `{session, runner_id, run: Run \| null, started: boolean}`. Opens the project's agent — with `extra: true` a new extra one. **Not open** (no session, or Claude exited in it): it starts with `model` (an alias or id), `effort` (`low`…`max`) and `skip_permissions` (default: the setting; only where the master allows it); with a `prompt` it starts as a run with that request (`run`), without one as a plain session (`run: null`) that becomes a run with its first request. **Open, a conversation going**: `prompt` is one more message to that run (`run`), model and effort are ignored; no `prompt` just answers where it is. **Open, no conversation yet**: `prompt` is typed into it and is a run from then on. `started` says whether a session was started. A conversation that had stopped with its session (`waiting`) is finished first — Continue picks it up again. `409 runner_offline` (no connected master with terminals), `409 starting` (a request within 15 s of the session's start), `409 agent_outdated` (a request on an agent older than v0.1.44), `422` for a bad model or effort or a project without a repo path, `502 runner_error`. Logged as `terminal_create` |
+| DELETE | /api/project-sessions/{key}/{name} | – | `204`. Closes one of the project's sessions: its conversation is finished (`succeeded`) and the tmux session killed. `404` for a name that is not this project's |
 
 ## Runner side (Bearer runner token)
 

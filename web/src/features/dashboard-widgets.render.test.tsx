@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import type { Dashboard, Endpoint, Monitoring, ProjectSessions, Run, Server } from "@/api/types";
+import type { Dashboard, Endpoint, Monitoring, ProjectSession, ProjectSessions, Run, Server } from "@/api/types";
 import { ProjectSessionsWidget, ServicesWidget, WorkingOnWidget } from "@/features/dashboard/TopWidgets";
 import { ShellProvider } from "@/features/shell/context";
 import { investigationProject, investigationPrompt, serviceIssues } from "@/lib/monitoring";
@@ -194,34 +194,30 @@ describe("dashboard widgets", () => {
     expect(screen.getByText("· 2")).toBeInTheDocument();
   });
 
-  it("project sessions: turn on, then open in Claude or attach", async () => {
-    let view: ProjectSessions = {
-      settings: { enabled: false, skip_permissions: false },
-      host: { runner_id: 3, runner_name: "desk", online: true, skip_permissions: true },
-      sessions: [],
-    };
-    const fetch = routeFetch({
-      "GET /project-sessions": () => jsonResponse(200, view),
-      "PATCH /project-sessions": () => {
-        view = {
-          ...view,
-          settings: { enabled: true, skip_permissions: true },
-          sessions: [
-            { project_key: "SHOP", project_name: "Shop", project_color: "#3987e5", name: "F-Shop", dir: "/home/demo/dev/shop", state: "running", url: "https://claude.ai/code/session_abc", attached: 0, activity: null },
-            { project_key: "GAME", project_name: "Game", project_color: "#e5a039", name: "F-Game", dir: "/home/demo/dev/game", state: "starting", url: null, attached: 0, activity: null },
-          ],
-        };
-        return jsonResponse(200, view);
-      },
+  it("project agents: the open ones, each with what it is doing, Claude and attach", async () => {
+    const session = (over: Partial<ProjectSession>): ProjectSession => ({
+      project_key: "SHOP", project_name: "Shop", project_color: "#3987e5", project_status: "live", name: "F-Shop", dir: "/home/demo/dev/shop",
+      state: "running", url: null, attached: 0, activity: null, extra: 0, run_id: null, run_status: "", awaiting: "", run_prompt: "", ...over,
     });
-    vi.stubGlobal("fetch", fetch);
+    const view: ProjectSessions = {
+      settings: { skip_permissions: true },
+      host: { runner_id: 3, runner_name: "desk", online: true, skip_permissions: true, tmux_agents: true },
+      sessions: [
+        session({ url: "https://claude.ai/code/session_abc", run_id: 41, run_status: "running", awaiting: "reply", run_prompt: "Fix the cart\nand the tests" }),
+        session({ project_key: "GAME", project_name: "Game", name: "F-Game", state: "starting" }),
+        session({ project_key: "BLOG", project_name: "Blog", name: "F-Blog", state: "missing" }),
+      ],
+    };
+    vi.stubGlobal("fetch", routeFetch({ "GET /project-sessions": () => jsonResponse(200, view) }));
     renderWithProviders(<ProjectSessionsWidget />);
-    fireEvent.click(await screen.findByRole("button", { name: /Turn on/ }));
     await waitFor(() => expect(screen.getByText("F-Shop")).toBeInTheDocument());
-    expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/project-sessions"), expect.objectContaining({ method: "PATCH" }));
     expect(screen.getByRole("link", { name: "Open F-Shop in Claude" })).toHaveAttribute("href", "https://claude.ai/code/session_abc");
-    expect(screen.queryByRole("link", { name: "Open F-Game in Claude" })).toBeNull();
-    expect(screen.getByText("Starting")).toBeInTheDocument();
+    expect(screen.getByText("Your turn")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /#41 · Fix the cart/ })).toHaveAttribute("href", "/agents/runs/41");
+    expect(screen.getByText("Starting…")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Attach to F-Game" })).toBeEnabled();
+    // A project whose agent is not open has no row here: its button is on the Agents page.
+    expect(screen.queryByText("F-Blog")).toBeNull();
+    expect(screen.getByRole("link", { name: "Start one →" })).toHaveAttribute("href", "/agents");
   });
 });

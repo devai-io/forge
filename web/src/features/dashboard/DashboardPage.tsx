@@ -48,7 +48,7 @@ export function DashboardPage() {
   const user = useUser();
   const ps = useProjectSessions();
   // The F-<Project> sessions have their own widget at the top.
-  const projectSessionNames = new Set(ps.data?.settings.enabled ? ps.data.sessions.map((s) => s.name) : []);
+  const projectSessionNames = new Set((ps.data?.sessions ?? []).map((s) => s.name));
 
   if (dash.isPending) return <DashboardSkeleton />;
   if (dash.error) return <ErrorState error={dash.error} onRetry={() => dash.refetch()} />;

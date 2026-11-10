@@ -150,3 +150,44 @@ func TestMemberRunsOnlyOnOpenMachines(t *testing.T) {
 	expect(t, "task agent on closed machine", h.do("POST", "/api/runs", map[string]any{"repo_id": shop.Repos[0].ID,
 		"kind": "agent", "prompt": "more", "task_id": task.ID}, nil), 403)
 }
+
+// Project agents are the owner's: a member can neither see nor open them, and
+// a member's request never lands in the project agent's conversation.
+func TestMemberStaysOutOfProjectAgents(t *testing.T) {
+	h := setup(t)
+	ctx := context.Background()
+	hash, _ := auth.HashPassword(testPassword)
+	bob, err := h.store.CreateUser(ctx, "bob", "bob@example.com", "Bob", hash, "UTC", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetUserRole(ctx, bob.ID, store.RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.GrantProject(ctx, bob.ID, "shop"); err != nil {
+		t.Fatal(err)
+	}
+	h.login()
+	m := newFakeMachine(t, h)
+	if err := h.store.SetRunnerMembersAllowed(ctx, m.rn.Name, true); err != nil {
+		t.Fatal(err)
+	}
+	// The owner's agent has a conversation open in the project's session.
+	var own store.Run
+	expect(t, "owner run", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent",
+		"prompt": "Fix the cart", "permission_mode": "plan"}, &own), 201)
+	m.wait("create", 1)
+
+	jar, _ := cookiejar.New(nil)
+	h.client.Jar = jar
+	expect(t, "member login", h.do("POST", "/api/auth/login", map[string]string{"username": "bob", "password": testPassword}, nil), 200)
+	expect(t, "sessions", h.do("GET", "/api/project-sessions", nil, nil), 403)
+	expect(t, "open", h.do("POST", "/api/project-sessions/SHOP", map[string]any{"prompt": "hello"}, nil), 403)
+	expect(t, "close", h.do("DELETE", "/api/project-sessions/SHOP/F-Shop", nil, nil), 403)
+	var mine store.Run
+	expect(t, "member run", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent",
+		"prompt": "Look at the checkout", "permission_mode": "plan"}, &mine), 201)
+	if mine.ID == own.ID || mine.Continued || mine.TmuxSession != "F-Shop-2" {
+		t.Fatalf("a member's request went into the owner's session: %+v", mine)
+	}
+}

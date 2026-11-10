@@ -43,6 +43,8 @@ import type {
   RunnerRole,
   NewSessionInput,
   TerminalHosts,
+  OpenProjectSessionInput,
+  OpenProjectSessionResult,
   ProjectSessions,
   ProjectSessionsSettings,
   VaultAudit,
@@ -1159,11 +1161,12 @@ export function useTerminalHosts(options: { enabled?: boolean; refetchInterval?:
   });
 }
 
-export function useProjectSessions() {
+export function useProjectSessions(refetchInterval = 15_000, enabled = true) {
   return useQuery({
     queryKey: keys.projectSessions,
     queryFn: () => api.get<ProjectSessions>("/project-sessions"),
-    refetchInterval: 15_000,
+    refetchInterval,
+    enabled,
   });
 }
 
@@ -1171,9 +1174,36 @@ export function useUpdateProjectSessions() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (patch: Partial<ProjectSessionsSettings>) => api.patch<ProjectSessions>("/project-sessions", patch),
-    onSuccess: (v) => {
-      qc.setQueryData(keys.projectSessions, v);
-      // The first sessions start in the background; show them as they come up.
+    onSuccess: (v) => qc.setQueryData(keys.projectSessions, v),
+  });
+}
+
+/** The project's button: opens its agent (or an extra one) on the master, with a first request or without. */
+export function useOpenProjectSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ key, ...body }: OpenProjectSessionInput & { key: string }) =>
+      api.post<OpenProjectSessionResult>(`/project-sessions/${encodeURIComponent(key)}`, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.projectSessions });
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+      void qc.invalidateQueries({ queryKey: keys.terminalHosts });
+      // The session shows up with the machine's next report.
+      setTimeout(() => void qc.invalidateQueries({ queryKey: keys.projectSessions }), 4_000);
+    },
+  });
+}
+
+/** Closes one of a project's agent sessions (its conversation is finished with it). */
+export function useCloseProjectSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ key, name }: { key: string; name: string }) =>
+      api.del(`/project-sessions/${encodeURIComponent(key)}/${encodeURIComponent(name)}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.projectSessions });
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+      void qc.invalidateQueries({ queryKey: keys.terminalHosts });
       setTimeout(() => void qc.invalidateQueries({ queryKey: keys.projectSessions }), 4_000);
     },
   });
@@ -1186,7 +1216,7 @@ export function useAgentSettings() {
 export function useUpdateAgentSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: AgentSettings) => api.patch<AgentSettings>("/agent-settings", v),
+    mutationFn: (v: Partial<AgentSettings>) => api.patch<AgentSettings>("/agent-settings", v),
     onSuccess: (v) => qc.setQueryData(["agent-settings"], v),
   });
 }

@@ -1,7 +1,8 @@
-// Agents: the Claude Code sessions and named commands on your machines —
-// what is running now (and waiting on you) first, then the history. The
-// machines themselves live on their own page (MachinesPage). Nothing open is
-// one line, so the history (by day, with what each day cost) starts high.
+// Agents: a button per active project first (its agent: one Claude Code
+// session in tmux, started and asked from there), then the conversations
+// that are open now (and waiting on you), then the history. The machines
+// themselves live on their own page (MachinesPage). Nothing open is one
+// line, so the history (by day, with what each day cost) starts high.
 
 import clsx from "clsx";
 import { Activity, Bot, Cpu, Plus } from "lucide-react";
@@ -18,6 +19,7 @@ import { useShell } from "@/features/shell/context";
 import { groupRunsByDay } from "@/lib/agents";
 import { useUser } from "@/lib/auth";
 import { formatCost } from "@/lib/format";
+import { ProjectAgents } from "./ProjectAgents";
 import { RunRow } from "./RunBits";
 
 export function AgentsPage() {
@@ -27,7 +29,7 @@ export function AgentsPage() {
     <div className="mx-auto max-w-[1200px] space-y-4">
       <PageHeader
         title="Agents"
-        subtitle="Claude Code, Codex sessions and commands on your machines — queue them, answer them, follow them from anywhere."
+        subtitle="One Claude Code agent per project, in tmux on your machines — start it, ask it, follow it from anywhere."
         actions={
           <>
             <Button variant="ghost" size="sm" onClick={() => navigate("/machines")}>
@@ -39,6 +41,7 @@ export function AgentsPage() {
           </>
         }
       />
+      <ProjectAgents />
       <ActivePanel />
       <RunsPanel />
     </div>

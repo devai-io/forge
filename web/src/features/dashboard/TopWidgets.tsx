@@ -1,25 +1,25 @@
 // The three widgets at the top of the dashboard: are the services up, what
-// is being worked on right now, and one tap into each project's long-running
-// Claude session (F-<Project>, Remote Control on).
+// is being worked on right now, and one tap into each project agent that is
+// open (F-<Project>, Remote Control on).
 
 import clsx from "clsx";
-import { Bot, CircleAlert, CircleCheck, ExternalLink, Hammer, Plug, Power, RefreshCw, Sparkles, TriangleAlert, Activity as Pulse } from "lucide-react";
+import { Bot, CircleAlert, CircleCheck, ExternalLink, Hammer, Plug, RefreshCw, Sparkles, TriangleAlert, Activity as Pulse } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useMonitoring, useProjectSessions, useServers, useUpdateProjectSessions } from "@/api/hooks";
-import type { Dashboard, ProjectSession, ProjectSessionState, Run } from "@/api/types";
+import { useMonitoring, useProjectSessions, useServers } from "@/api/hooks";
+import type { Dashboard, ProjectSession, Run } from "@/api/types";
 import { Badge, ColorDot } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Panel } from "@/components/ui/Panel";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { useToast } from "@/components/ui/Toast";
 import { RunStatusBadge } from "@/features/agents/RunBits";
 import { RefreshWorkDialog } from "@/features/dashboard/RefreshWork";
 import { useShell } from "@/features/shell/context";
 import { runTitle } from "@/lib/agents";
 import { investigationProject, investigationPrompt, prodFirst, serviceIssues, type ServiceIssue } from "@/lib/monitoring";
 import { shortHome } from "@/lib/paths";
+import { isOpen, promptTitle, sessionStatus, type AgentTone } from "@/lib/projectAgents";
 import { attachPath } from "@/lib/terminal";
 
 const SHOWN = 5;
@@ -251,40 +251,30 @@ export function WorkingOnWidget({ d }: { d: Dashboard }) {
   );
 }
 
-const STATE: Record<ProjectSessionState, { label: string; tone: "good" | "accent" | "warning" | "critical" | "outline" }> = {
-  running: { label: "Running", tone: "good" },
-  starting: { label: "Starting", tone: "accent" },
-  stopped: { label: "Stopped", tone: "warning" },
-  missing: { label: "Not started", tone: "outline" },
-  offline: { label: "Offline", tone: "outline" },
-};
-
-/** 3) Project sessions: F-<Project> on the master, open in Claude or attach. */
+/**
+ * 3) Project agents: the F-<Project> sessions that are open on the master —
+ * what each is doing, open in Claude or attach. Starting one is the project's
+ * button on the Agents page.
+ */
 export function ProjectSessionsWidget() {
   const ps = useProjectSessions();
-  const update = useUpdateProjectSessions();
-  const toast = useToast();
   const v = ps.data;
-  const [showOffline, setShowOffline] = useState(false);
-  const turnOn = () => update.mutate({ enabled: true, skip_permissions: true }, { onError: (e) => toast.error(e) });
-  // With the master offline every row says "Offline": one line says it better.
+  const open = (v?.sessions ?? []).filter((s) => isOpen(s) || (s.run_id ?? null) !== null);
   const hostDown = !!v?.host && !v.host.online;
 
   return (
     <Panel
       title={
         <>
-          Project sessions {v?.sessions.length ? <span className="font-normal text-fg-3">· {v.sessions.length}</span> : null}
+          Project agents {open.length ? <span className="font-normal text-fg-3">· {open.length}</span> : null}
         </>
       }
       icon={<Sparkles />}
       id="dash-project-sessions"
       actions={
-        v?.settings.enabled ? (
-          <a href="https://claude.ai/code" target="_blank" rel="noreferrer" className="text-[12px] text-fg-3 hover:text-fg">
-            claude.ai/code ↗
-          </a>
-        ) : null
+        <Link to="/agents" className="text-[12px] text-fg-3 hover:text-fg">
+          Start one →
+        </Link>
       }
     >
       {ps.isPending ? (
@@ -294,67 +284,72 @@ export function ProjectSessionsWidget() {
         </div>
       ) : !v ? (
         <p className="px-2 py-2 text-[13px] text-fg-3">Could not load the sessions.</p>
-      ) : !v.settings.enabled ? (
-        <div className="space-y-2 px-2 py-1.5">
-          <p className="text-[13px] text-fg-2">
-            Keep one Claude Code session per project running on {v.host ? <strong className="font-medium">{v.host.runner_name}</strong> : "the master"}, with Remote Control on —
-            named <span className="font-mono">F-Project</span>, ready on claude.ai/code and in the Claude app.
-          </p>
-          <Button size="sm" variant="primary" onClick={turnOn} loading={update.isPending} disabled={!v.host}>
-            <Power className="size-3.5" aria-hidden /> Turn on
-          </Button>
-          {!v.host ? <p className="text-[12px] text-fg-3">Needs a master machine with terminals on.</p> : null}
-        </div>
-      ) : !v.sessions.length ? (
-        <p className="px-2 py-2 text-[13px] text-fg-3">No project has a repo with a path yet.</p>
+      ) : !v.host ? (
+        <p className="px-2 py-2 text-[13px] text-fg-3">
+          One Claude Code session per project, with Remote Control on — needs a master machine with terminals on.
+        </p>
+      ) : hostDown ? (
+        <p className="px-2 py-2 text-[13px] text-fg-3">
+          <strong className="font-medium text-fg-2">{v.host.runner_name}</strong> is offline — its sessions come back with it.
+        </p>
+      ) : !open.length ? (
+        <p className="px-2 py-2 text-[13px] text-fg-3">
+          No project agent is open.{" "}
+          <Link to="/agents" className="font-medium text-accent hover:underline">
+            Start one from its project's button
+          </Link>
+          .
+        </p>
       ) : (
-        <>
-          {hostDown ? (
-            <div className="flex flex-wrap items-center justify-between gap-2 px-2 pt-1 pb-1.5 text-[12.5px] text-fg-3">
-              <span>
-                <strong className="font-medium text-fg-2">{v.host!.runner_name}</strong> is offline — the {v.sessions.length} sessions come back with it.
-              </span>
-              <button type="button" onClick={() => setShowOffline((x) => !x)} className="text-[12px] hover:text-fg" aria-expanded={showOffline}>
-                {showOffline ? "Hide" : "Show"} sessions
-              </button>
-            </div>
-          ) : null}
-          {!hostDown || showOffline ? (
-            <ul aria-label="Project sessions">
-              {v.sessions.map((s) => (
-                <SessionLine key={s.name} s={s} runnerId={v.host?.runner_id ?? null} />
-              ))}
-            </ul>
-          ) : null}
-        </>
+        <ul aria-label="Project agents">
+          {open.map((s) => (
+            <SessionLine key={s.name} s={s} runnerId={v.host?.runner_id ?? null} />
+          ))}
+        </ul>
       )}
     </Panel>
   );
 }
 
+const TONE: Record<AgentTone, "good" | "accent" | "warning" | "outline"> = {
+  needs: "warning",
+  turn: "warning",
+  working: "accent",
+  starting: "accent",
+  open: "good",
+  closed: "outline",
+  offline: "outline",
+};
+
 function SessionLine({ s, runnerId }: { s: ProjectSession; runnerId: number | null }) {
   const navigate = useNavigate();
-  const st = STATE[s.state];
-  const canAttach = runnerId !== null && (s.state === "running" || s.state === "stopped" || s.state === "starting");
+  const st = sessionStatus(s);
+  const canAttach = runnerId !== null && isOpen(s);
   return (
     <li className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 hover:bg-surface-2/60">
       <ColorDot color={s.project_color} />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="truncate font-mono text-[13px]">{s.name}</span>
-          <Badge tone={st.tone} dot className="h-4.5 px-1.5 text-[10.5px]">
-            {st.label}
+          <Badge tone={TONE[st.tone]} dot className="h-4.5 px-1.5 text-[10.5px]">
+            {st.tone === "closed" ? "Closed" : st.label}
           </Badge>
         </div>
-        <p className="truncate text-[11px] text-fg-3" title={s.dir}>
-          {shortHome(s.dir)}
-          {s.activity ? (
-            <>
-              {" "}
-              · active <RelativeTime iso={s.activity} />
-            </>
-          ) : null}
-        </p>
+        {s.run_id !== null ? (
+          <Link to={`/agents/runs/${s.run_id}`} className="block truncate text-[11px] text-fg-3 hover:text-fg" title={s.run_prompt}>
+            #{s.run_id} · {promptTitle(s.run_prompt) || "conversation"}
+          </Link>
+        ) : (
+          <p className="truncate text-[11px] text-fg-3" title={s.dir}>
+            {shortHome(s.dir)}
+            {s.activity ? (
+              <>
+                {" "}
+                · active <RelativeTime iso={s.activity} />
+              </>
+            ) : null}
+          </p>
+        )}
       </div>
       {s.url ? (
         <a

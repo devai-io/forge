@@ -15,13 +15,15 @@ import (
 	"github.com/devai-io/forge/internal/store"
 )
 
-// Agents in tmux (see store/tmux_agents.go for the model). The server starts
-// a tmux run's Claude Code session on its machine over the control channel,
-// types follow-ups into it as one paste each, and ends it when the user
-// finishes the run; the session's own hooks (POST /api/runner/hook) report
-// its turns. All of it happens per machine under one lock, from three
-// places: right after something changed (tmuxNudge), when the machine's
-// control channel connects, and every 20 seconds (RunTmuxAgents).
+// Agents in tmux (see store/tmux_agents.go for the model). A project's agent
+// is one Claude Code session in the tmux session F-<Project> on a machine
+// (extra ones: F-<Project>-2, …), with Remote Control on. The server starts
+// it over the control channel, types requests into it as one paste each, and
+// ends it when the user finishes the run; the session's own hooks
+// (POST /api/runner/hook) report its turns. All of it happens per machine
+// under one lock, from three places: right after something changed
+// (tmuxNudge), when the machine's control channel connects, and every 20
+// seconds (RunTmuxAgents).
 
 const tmuxTick = 20 * time.Second
 
@@ -91,8 +93,14 @@ func (s *Server) dispatchTmux(ctx context.Context, runnerID int64) {
 		slog.Warn("tmux runs", "err", err)
 		return
 	}
-	for i := range queued {
-		s.startTmuxRun(ctx, cc, &queued[i])
+	if len(queued) > 0 {
+		sessions := s.liveTmux(ctx, cc, runnerID)
+		for i := range queued {
+			s.startTmuxRun(ctx, cc, &queued[i], sessions)
+			if len(queued) > i+1 {
+				sessions = s.liveTmux(ctx, cc, runnerID) // what the last one started counts for the next
+			}
+		}
 	}
 	pending, err := s.store.TmuxPending(ctx, runnerID)
 	if err != nil {
@@ -108,14 +116,46 @@ func (s *Server) dispatchTmux(ctx context.Context, runnerID int64) {
 	}
 }
 
-// startTmuxRun starts (or starts again) a run's Claude Code session in its
-// tmux session: a new run under a fresh session id with its prompt; a run
-// picked up again with --resume and the messages written since.
-func (s *Server) startTmuxRun(ctx context.Context, cc *controlConn, run *store.Run) {
-	sessions, err := s.store.RunnerTmux(ctx, run.RunnerID)
-	if err != nil {
-		return
+// liveTmux is the machine's tmux list right now (agents from v0.1.46 answer
+// "list"), else as of its last heartbeat.
+func (s *Server) liveTmux(ctx context.Context, cc *controlConn, runnerID int64) []store.TmuxSession {
+	if cc != nil {
+		if res, err := cc.call(ctx, map[string]any{"type": "list"}, 5*time.Second); err == nil && strings.HasPrefix(res.Text, "[") {
+			var out []store.TmuxSession
+			if json.Unmarshal([]byte(res.Text), &out) == nil {
+				return out
+			}
+		}
 	}
+	sessions, _ := s.store.RunnerTmux(ctx, runnerID)
+	return sessions
+}
+
+// agentSessionName is the tmux session a project's agent lives in ("" when
+// the project is gone).
+func (s *Server) agentSessionName(ctx context.Context, projectID int64) string {
+	name, err := s.store.ProjectNameByID(ctx, projectID)
+	if err != nil || name == "" {
+		return ""
+	}
+	return projectSessionName(name)
+}
+
+// claudeTaken says whether Claude Code (or Codex) is open in a session of
+// that name: a new conversation that wants a session of its own skips those.
+func claudeTaken(sessions []store.TmuxSession) func(string) bool {
+	return func(name string) bool {
+		_, agent := store.ClaudeIn(sessions, name)
+		return agent
+	}
+}
+
+// startTmuxRun starts (or starts again) a run's Claude Code session in its
+// tmux session: a new run under a fresh session id with its prompt (typed
+// into the session instead, when Claude Code is already open in it with no
+// conversation of its own); a run picked up again with --resume and the
+// messages written since.
+func (s *Server) startTmuxRun(ctx context.Context, cc *controlConn, run *store.Run, sessions []store.TmuxSession) {
 	exists, busy := store.ClaudeIn(sessions, run.TmuxSession)
 	prompt, inboxAfter := run.Prompt, run.InboxAfter
 	resume := ""
@@ -136,7 +176,9 @@ func (s *Server) startTmuxRun(ctx context.Context, cc *controlConn, run *store.R
 			inboxAfter = it.ID
 		}
 		prompt = strings.Join(msgs, "\n\n")
-		if busy {
+		other, _ := s.store.TmuxNameInUse(ctx, run.RunnerID, run.ID, run.TmuxSession)
+		switch {
+		case busy && !other:
 			// Claude is still open in there (the machine's list was behind):
 			// the session is live, so the messages are typed into it.
 			if _, err := s.store.MarkTmuxStarted(ctx, run.ID, resume, run.InboxAfter); err == nil {
@@ -145,19 +187,58 @@ func (s *Server) startTmuxRun(ctx context.Context, cc *controlConn, run *store.R
 				}
 			}
 			return
+		case busy || !exists:
+			// Its session went to another conversation, or is gone: it comes
+			// back in the project's session when that is free, else in an
+			// extra one.
+			base := s.agentSessionName(ctx, run.ProjectID)
+			if base == "" {
+				base = run.TmuxSession
+			}
+			name, err := s.store.FreeTmuxName(ctx, run.RunnerID, run.ID, base, 1, claudeTaken(sessions))
+			if err != nil {
+				s.failTmuxStart(ctx, run, err)
+				return
+			}
+			if name != run.TmuxSession {
+				if _, err := s.store.SetRunTmux(ctx, run.ID, name); err != nil {
+					return
+				}
+				run.TmuxSession = name
+			}
+			exists, _ = store.ClaudeIn(sessions, name)
 		}
 	} else if busy {
-		// The name is taken by a Claude session that is not this run's: use another.
-		name := fmt.Sprintf("%s-%d", run.TmuxSession, run.ID)
-		if _, err := s.store.SetRunTmux(ctx, run.ID, name); err != nil {
+		// Claude Code is open in the session and has no conversation there
+		// (a session nobody has asked anything yet): the request is typed
+		// into it, and its hook says which session this run now is.
+		if _, err := cc.call(ctx, map[string]any{"type": "paste", "session": run.TmuxSession, "text": prompt, "enter": true}, 15*time.Second); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "did not answer") {
+				return // try again on the next pass
+			}
+			s.failTmuxStart(ctx, run, err)
 			return
 		}
-		run.TmuxSession, exists = name, false
+		if _, err := s.store.MarkTmuxStarted(ctx, run.ID, "", inboxAfter); err != nil {
+			slog.Warn("tmux run sent but not recorded", "run", run.ID, "err", err)
+			return
+		}
+		s.appendSystem(ctx, run, fmt.Sprintf("Sent to the Claude Code session open in tmux session %s on %s (its model and permission mode stay as they are) — attach with `tmux attach -t %s`",
+			run.TmuxSession, run.RunnerName, run.TmuxSession))
+		slog.Info("tmux run sent to an open session", "run", run.ID, "session", run.TmuxSession, "runner", run.RunnerName)
+		return
 	}
 	sessionID := resume
+	mode := run.PermissionMode
+	if mode == "default" {
+		mode = "" // Claude Code's own default: it asks in the terminal
+	}
 	msg := map[string]any{"type": "create", "session": run.TmuxSession, "cwd": run.SessionDir(), "start": "claude",
-		"prompt": prompt, "permission_mode": run.PermissionMode, "model": run.Model, "effort": run.Effort,
+		"prompt": prompt, "permission_mode": mode, "model": run.Model, "effort": run.Effort,
 		"env": map[string]string{"FORGE_RUN_ID": fmt.Sprint(run.ID)}, "reuse": exists}
+	if set, err := s.store.AgentSettings(ctx); err == nil && set.RemoteControl {
+		msg["remote_control"] = run.TmuxSession // the same name on claude.ai/code and in the Claude app
+	}
 	if resume != "" {
 		msg["resume"] = resume
 	} else {
@@ -178,6 +259,7 @@ func (s *Server) startTmuxRun(ctx context.Context, cc *controlConn, run *store.R
 		slog.Warn("tmux run started but not recorded", "run", run.ID, "err", err)
 		return
 	}
+	s.projectSessions.markStarted(run.TmuxSession)
 	s.appendSystem(ctx, run, fmt.Sprintf("Claude Code %s in tmux session %s on %s — attach with `tmux attach -t %s`",
 		map[bool]string{true: "resumed", false: "started"}[resume != ""], run.TmuxSession, run.RunnerName, run.TmuxSession))
 	slog.Info("tmux run started", "run", run.ID, "session", run.TmuxSession, "runner", run.RunnerName)
@@ -213,6 +295,9 @@ func (s *Server) deliverTmux(ctx context.Context, cc *controlConn, run *store.Ru
 			_ = s.store.MarkTmuxDelivered(ctx, run.ID, last)
 		}
 		return
+	}
+	if s.projectSessions.startedAgo(run.TmuxSession) < projectSessionSettle {
+		return // Claude Code is still drawing its first screen: typed on the next pass
 	}
 	text := strings.Join(msgs, "\n\n")
 	if _, err := cc.call(ctx, map[string]any{"type": "paste", "session": run.TmuxSession, "text": text, "enter": true}, 15*time.Second); err != nil {
@@ -261,8 +346,10 @@ func newSessionID() string {
 // placeInTmux puts a freshly queued run into tmux when the machine can host
 // it there and the setting is on: a user's Claude Code agent run (not an
 // Assistant turn, not a one-turn status check, not Codex or DeepSeek, which
-// keep their headless engines).
-func (s *Server) placeInTmux(ctx context.Context, run *store.Run) *store.Run {
+// keep their headless engines). It goes to the project's agent session
+// (F-<Project>), or to an extra one (F-<Project>-2, …) when that one holds
+// another conversation — or, for a fresh agent, has Claude Code open at all.
+func (s *Server) placeInTmux(ctx context.Context, run *store.Run, fresh bool) *store.Run {
 	if run.Kind != "agent" || run.Engine != "claude" || run.ChatTurnID != nil || run.OneTurn || run.RepoID == 0 {
 		return run
 	}
@@ -274,11 +361,18 @@ func (s *Server) placeInTmux(ctx context.Context, run *store.Run) *store.Run {
 	if err != nil || !rn.Capabilities.TmuxAgents {
 		return run
 	}
-	name := store.TmuxName(run)
-	sessions, _ := s.store.RunnerTmux(ctx, run.RunnerID)
-	inUse, _ := s.store.TmuxNameInUse(ctx, run.RunnerID, run.ID, name)
-	if exists, _ := store.ClaudeIn(sessions, name); exists || inUse {
-		name = fmt.Sprintf("%s-%d", name, run.ID)
+	base := s.agentSessionName(ctx, run.ProjectID)
+	if base == "" {
+		return run
+	}
+	var taken func(string) bool
+	if fresh {
+		sessions, _ := s.store.RunnerTmux(ctx, run.RunnerID)
+		taken = claudeTaken(sessions)
+	}
+	name, err := s.store.FreeTmuxName(ctx, run.RunnerID, run.ID, base, 1, taken)
+	if err != nil {
+		return run
 	}
 	placed, err := s.store.SetRunTmux(ctx, run.ID, name)
 	if err != nil {
@@ -288,11 +382,35 @@ func (s *Server) placeInTmux(ctx context.Context, run *store.Run) *store.Run {
 	return placed
 }
 
-// continueTaskAgent is "one task, one agent": a new agent run for a task
-// that already has one becomes a message to that one (reopening it if it
-// finished), unless the user asked for a fresh agent. Continue on a run is
-// the same thing for that run. ok is false when there is nothing to continue.
-func (s *Server) continueTaskAgent(ctx context.Context, in store.RunInput) (*store.Run, bool, error) {
+// projectAgentRun is the conversation open in the project's agent session on
+// the machine a new run asks for (nil when there is none).
+func (s *Server) projectAgentRun(ctx context.Context, in store.RunInput) *store.Run {
+	if in.OneTurn || in.RepoID == 0 || in.RunnerID == 0 {
+		return nil // a status check keeps to its own session
+	}
+	repo, err := s.store.RepoByID(ctx, in.RepoID)
+	if err != nil {
+		return nil
+	}
+	name := s.agentSessionName(ctx, repo.ProjectID)
+	if name == "" {
+		return nil
+	}
+	cur, err := s.store.OpenRunInTmux(ctx, in.RunnerID, name)
+	if err != nil || cur.ProjectID != repo.ProjectID || cur.Kind != "agent" || cur.ChatTurnID != nil {
+		return nil
+	}
+	return cur
+}
+
+// continueAgent is "one project, one agent": a new agent run for a project
+// whose agent has a conversation open becomes a message to it; failing that,
+// one for a task that already has an agent goes to that one (reopening it if
+// it finished) — unless the user asked for a fresh agent. Continue on a run
+// is the same thing for that run. A member's request goes to a task's agent
+// only, never into the project agent's conversation. ok is false when there
+// is nothing to continue.
+func (s *Server) continueAgent(ctx context.Context, in store.RunInput, member bool) (*store.Run, bool, error) {
 	if in.Kind != "agent" || in.Fresh || in.ChatTurnID != nil {
 		return nil, false, nil
 	}
@@ -303,22 +421,35 @@ func (s *Server) continueTaskAgent(ctx context.Context, in store.RunInput) (*sto
 		if cur, err = s.store.RunByID(ctx, *in.ResumeRunID); err != nil || cur.ChatTurnID != nil {
 			return nil, false, nil
 		}
-	case in.TaskID != nil:
-		if cur, err = s.store.TaskAgent(ctx, *in.TaskID); err != nil {
-			return nil, false, nil
-		}
 	default:
-		return nil, false, nil
+		if !member { // a member's request stays out of the project agent's conversation
+			cur = s.projectAgentRun(ctx, in)
+		}
+		if cur == nil {
+			if in.TaskID == nil {
+				return nil, false, nil
+			}
+			if cur, err = s.store.TaskAgent(ctx, *in.TaskID); err != nil {
+				return nil, false, nil
+			}
+		}
 	}
 	if in.Engine != "" && in.Engine != cur.Engine && in.ResumeRunID == nil {
 		return nil, false, nil // another engine is another agent
 	}
+	return s.sendToAgent(ctx, cur, in.Prompt, in.OneTurn)
+}
+
+// sendToAgent gives an agent run one more request: added to a prompt that
+// has not started, typed into an open session, or picking a closed one back
+// up on its session.
+func (s *Server) sendToAgent(ctx context.Context, cur *store.Run, prompt string, oneTurn bool) (*store.Run, bool, error) {
 	if cur.Status == "queued" && cur.Resumes == 0 {
-		if ok, err := s.store.AppendToQueuedPrompt(ctx, cur.ID, in.Prompt); err != nil || !ok {
+		if ok, err := s.store.AppendToQueuedPrompt(ctx, cur.ID, prompt); err != nil || !ok {
 			return nil, false, err
 		}
 	} else {
-		requeued, err := s.store.ReopenWithMessage(ctx, cur.ID, in.Prompt, in.OneTurn)
+		requeued, err := s.store.ReopenWithMessage(ctx, cur.ID, prompt, oneTurn)
 		if err != nil {
 			return nil, false, nil // e.g. an old agent that cannot resume in place: a new run on the session, as before
 		}
@@ -351,8 +482,9 @@ type hookReport struct {
 
 // runnerHook is `forge agent hook --report` from a Claude Code session on the
 // machine: it finds the session's run (by the run id Forge gave it, else by
-// session id), registers a hand-started session in tmux as a new run, and
-// records what happened.
+// session id, else the request Forge typed into that tmux session),
+// registers a conversation started by hand in tmux as a new run with its
+// first request, and records what happened.
 func (s *Server) runnerHook(w http.ResponseWriter, r *http.Request, rn *store.Runner) {
 	var in hookReport
 	if !decode16(w, r, &in) {
@@ -369,22 +501,48 @@ func (s *Server) runnerHook(w http.ResponseWriter, r *http.Request, rn *store.Ru
 			run = cur
 		}
 	}
+	if run != nil && run.SessionID != "" && run.SessionID != in.SessionID {
+		// The session Forge started holds another conversation now.
+		switch {
+		case in.Event == "SessionStart" && in.Source == "clear" && run.Status == "running":
+			_ = s.store.EndTmuxRun(ctx, run.ID, "/clear: the tmux session moved on to another conversation")
+			run = nil
+		case run.Status != "running":
+			run = nil // that conversation is over; this one is its own run
+		}
+	}
 	if run == nil {
 		if cur, err := s.store.RunBySession(ctx, rn.ID, in.SessionID); err == nil {
 			run = cur
 		}
 	}
 	opening := in.Event == "SessionStart" || in.Event == "UserPromptSubmit"
+	if run == nil && in.TmuxSession != "" && opening {
+		if cur, err := s.store.OpenRunInTmux(ctx, rn.ID, in.TmuxSession); err == nil && cur.Status == "running" {
+			switch {
+			case cur.SessionID == "":
+				// A request Forge typed into the open session: this is its session.
+				if err := s.store.AdoptTmuxSession(ctx, cur.ID, in.SessionID); err == nil {
+					run, _ = s.store.RunByID(ctx, cur.ID)
+				}
+			case in.Event == "SessionStart" && cur.SessionID != in.SessionID:
+				// /clear, or Claude Code started again: that conversation is over.
+				_ = s.store.EndTmuxRun(ctx, cur.ID, "the tmux session moved on to another conversation")
+			}
+		}
+	}
 	switch {
 	case run == nil:
-		if in.TmuxSession == "" || !opening {
+		// A conversation started by hand becomes a run with its first
+		// request: a session nobody has asked anything is not a run.
+		if in.TmuxSession == "" || in.Event != "UserPromptSubmit" || strings.TrimSpace(in.Prompt) == "" {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		reg, err := s.store.RegisterTmuxRun(ctx, rn.ID, store.TmuxRegistration{SessionID: in.SessionID,
 			TmuxSession: in.TmuxSession, Cwd: in.Cwd, Prompt: in.Prompt})
 		if errors.Is(err, store.ErrNotFound) {
-			w.WriteHeader(http.StatusNoContent) // not in any project's repo
+			w.WriteHeader(http.StatusNoContent) // not in any project
 			return
 		}
 		if err != nil {
@@ -456,11 +614,25 @@ func (s *Server) getAgentSettings(w http.ResponseWriter, r *http.Request, u *sto
 }
 
 func (s *Server) putAgentSettings(w http.ResponseWriter, r *http.Request, u *store.User) {
-	var in store.AgentSettings
+	cur, err := s.store.AgentSettings(r.Context())
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	var in struct {
+		Tmux          *bool `json:"tmux"`
+		RemoteControl *bool `json:"remote_control"`
+	}
 	if !decode(w, r, &in) {
 		return
 	}
-	v, err := s.store.PutAgentSettings(r.Context(), in)
+	if in.Tmux != nil {
+		cur.Tmux = *in.Tmux
+	}
+	if in.RemoteControl != nil {
+		cur.RemoteControl = *in.RemoteControl
+	}
+	v, err := s.store.PutAgentSettings(r.Context(), cur)
 	if err != nil {
 		writeErr(w, r, err)
 		return

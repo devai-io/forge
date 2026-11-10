@@ -266,3 +266,79 @@ export function pickHost(hostIds: number[], stored: number | null, fallback: num
   if (fallback !== null && hostIds.includes(fallback)) return fallback;
   return hostIds[0] ?? null;
 }
+
+/** What xterm.js says about its modes (`term.modes`), plus whether the alternate screen is up. */
+export type TerminalModes = {
+  applicationCursorKeysMode: boolean;
+  applicationKeypadMode: boolean;
+  bracketedPasteMode: boolean;
+  insertMode: boolean;
+  mouseTrackingMode: "none" | "x10" | "vt200" | "drag" | "any";
+  originMode: boolean;
+  reverseWraparoundMode: boolean;
+  sendFocusMode: boolean;
+  synchronizedOutputMode?: boolean;
+  wraparoundMode: boolean;
+  alternateScreen: boolean;
+};
+
+/**
+ * The reply to a mode request (DECRQM: `CSI ? Ps $ p`, or `CSI Ps $ p` for an ANSI mode):
+ * `CSI ? Ps ; Pm $ y`, Pm 1 = set, 2 = reset, 0 = not recognised.
+ *
+ * tmux (3.5+) asks a terminal for its modes the moment a client attaches. xterm.js 6.0's own
+ * answer throws once it has been through a bundler ("i is not defined"), which stops its parser:
+ * the attached terminal stays blank. TerminalView answers with this instead.
+ */
+export function modeReport(mode: number, dec: boolean, m: TerminalModes): string {
+  const flag = (on: boolean) => (on ? 1 : 2);
+  let value = 0;
+  if (!dec) {
+    if (mode === 4) value = flag(m.insertMode);
+  } else {
+    switch (mode) {
+      case 1:
+        value = flag(m.applicationCursorKeysMode);
+        break;
+      case 6:
+        value = flag(m.originMode);
+        break;
+      case 7:
+        value = flag(m.wraparoundMode);
+        break;
+      case 9:
+        value = flag(m.mouseTrackingMode === "x10");
+        break;
+      case 45:
+        value = flag(m.reverseWraparoundMode);
+        break;
+      case 66:
+        value = flag(m.applicationKeypadMode);
+        break;
+      case 47:
+      case 1047:
+      case 1049:
+        value = flag(m.alternateScreen);
+        break;
+      case 1000:
+        value = flag(m.mouseTrackingMode === "vt200");
+        break;
+      case 1002:
+        value = flag(m.mouseTrackingMode === "drag");
+        break;
+      case 1003:
+        value = flag(m.mouseTrackingMode === "any");
+        break;
+      case 1004:
+        value = flag(m.sendFocusMode);
+        break;
+      case 2004:
+        value = flag(m.bracketedPasteMode);
+        break;
+      case 2026:
+        value = m.synchronizedOutputMode === undefined ? 0 : flag(m.synchronizedOutputMode);
+        break;
+    }
+  }
+  return `\x1b[${dec ? "?" : ""}${mode};${value}$y`;
+}

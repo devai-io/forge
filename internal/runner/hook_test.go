@@ -93,3 +93,18 @@ func TestClipKeepsUTF8(t *testing.T) {
 		t.Fatalf("clip = %q", got)
 	}
 }
+
+func TestCursorOn(t *testing.T) {
+	dialog := " Quick safety check\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel"
+	if cursorOn(dialog, "Yes, I trust this folder") {
+		t.Fatal("the cursor starts on No, exit")
+	}
+	moved := " Quick safety check\n   No, exit\n ❯ Yes, I trust this folder\n Enter to confirm · Esc to cancel"
+	if !cursorOn(moved, "Yes, I trust this folder") || cursorOn(moved, "Yes, I accept") {
+		t.Fatal("after Down the cursor is on Yes")
+	}
+	numbered := " ❯ 2. Yes, I accept\n   1. No, exit"
+	if !cursorOn(numbered, "Yes, I accept") {
+		t.Fatal("a numbered option counts too")
+	}
+}

@@ -128,19 +128,21 @@ func TestTmuxAgentLifecycle(t *testing.T) {
 	var tasks struct{ Tasks []store.Task }
 	expect(t, "tasks", h.do("GET", "/api/tasks?project=SHOP", nil, &tasks), 200)
 	task := tasks.Tasks[0]
+	const name = "F-Shop" // the project's agent session
 
-	// A task's agent run starts as Claude Code in a tmux session named after the task.
+	// An agent run starts as Claude Code in the project's tmux session, Remote Control on.
 	var run store.Run
 	expect(t, "queue", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent",
 		"prompt": "Fix the cart", "task_id": task.ID, "permission_mode": "plan"}, &run), 201)
-	if run.TmuxSession != task.Ref {
-		t.Fatalf("tmux session = %q, want %q", run.TmuxSession, task.Ref)
+	if run.TmuxSession != name {
+		t.Fatalf("tmux session = %q, want %q", run.TmuxSession, name)
 	}
 	create := m.wait("create", 1)
 	sid, _ := create["session_id"].(string)
 	env, _ := create["env"].(map[string]any)
-	if create["session"] != task.Ref || create["start"] != "claude" || create["prompt"] != "Fix the cart" || !sessionIDRe.MatchString(sid) ||
-		create["permission_mode"] != "plan" || create["cwd"] != m.path || env["FORGE_RUN_ID"] != fmt.Sprint(run.ID) {
+	if create["session"] != name || create["start"] != "claude" || create["prompt"] != "Fix the cart" || !sessionIDRe.MatchString(sid) ||
+		create["permission_mode"] != "plan" || create["cwd"] != m.path || env["FORGE_RUN_ID"] != fmt.Sprint(run.ID) ||
+		create["remote_control"] != name {
 		t.Fatalf("create = %v", create)
 	}
 	if run = m.run(run.ID); run.Status != "running" || run.SessionID != sid {
@@ -148,12 +150,13 @@ func TestTmuxAgentLifecycle(t *testing.T) {
 	}
 	// It is the server's to drive, never a claim for the machine's headless runner.
 	expect(t, "nothing to claim", m.runner.do("POST", "/api/runner/claim", nil, nil, m.bearer...), 204)
+	h.api.projectSessions.started = map[string]time.Time{} // the session has long drawn its first screen
 
 	// The session's hooks report its turn.
-	m.hook(map[string]any{"event": "UserPromptSubmit", "session_id": sid, "run_id": run.ID, "tmux_session": task.Ref, "prompt": "Fix the cart"})
+	m.hook(map[string]any{"event": "UserPromptSubmit", "session_id": sid, "run_id": run.ID, "tmux_session": name, "prompt": "Fix the cart"})
 	assistant, _ := json.Marshal(map[string]any{"type": "assistant", "message": map[string]any{"role": "assistant",
 		"content": []map[string]any{{"type": "text", "text": "Fixed the cart."}}}})
-	m.hook(map[string]any{"event": "Stop", "session_id": sid, "run_id": run.ID, "tmux_session": task.Ref,
+	m.hook(map[string]any{"event": "Stop", "session_id": sid, "run_id": run.ID, "tmux_session": name,
 		"last_message": "Fixed the cart.", "events": []map[string]any{{"kind": "claude", "data": json.RawMessage(assistant)}}})
 	if run = m.run(run.ID); run.Awaiting != "reply" || run.Result != "Fixed the cart." || run.NumTurns == nil || *run.NumTurns != 1 {
 		t.Fatalf("after the turn = %+v", run)
@@ -164,15 +167,16 @@ func TestTmuxAgentLifecycle(t *testing.T) {
 		t.Fatalf("events = %v", ev.Events)
 	}
 
-	// One task, one agent: another run for the task is a message, typed into the session.
+	// One project, one agent: another run for the project — any task, or none — is a
+	// message, typed into the session.
 	var again store.Run
-	expect(t, "same task", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent",
-		"prompt": "Also the tests", "task_id": task.ID}, &again), 200)
+	expect(t, "same project", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent",
+		"prompt": "Also the tests"}, &again), 200)
 	if again.ID != run.ID || !again.Continued {
 		t.Fatalf("continued = %+v", again)
 	}
 	paste := m.wait("paste", 1)
-	if paste["session"] != task.Ref || paste["text"] != "Also the tests" || paste["enter"] != true {
+	if paste["session"] != name || paste["text"] != "Also the tests" || paste["enter"] != true {
 		t.Fatalf("paste = %v", paste)
 	}
 	if run = m.run(run.ID); run.Awaiting != "" || run.InboxAfter == 0 {
@@ -183,13 +187,13 @@ func TestTmuxAgentLifecycle(t *testing.T) {
 	if _, err := h.store.DB.Exec(context.Background(), `UPDATE runs SET started_at = ts_add(now(), -600) WHERE id = $1`, run.ID); err != nil {
 		t.Fatal(err)
 	}
-	m.beat([]map[string]any{{"name": task.Ref, "windows": 1, "command": "zsh", "claude": false}}, nil)
-	if run = m.run(run.ID); run.Status != "waiting" || run.TmuxSession != task.Ref {
+	m.beat([]map[string]any{{"name": name, "windows": 1, "command": "zsh", "claude": false}}, nil)
+	if run = m.run(run.ID); run.Status != "waiting" || run.TmuxSession != name {
 		t.Fatalf("after Claude exited = %+v", run)
 	}
 	expect(t, "reply", h.do("POST", fmt.Sprintf("/api/runs/%d/messages", run.ID), map[string]string{"text": "carry on"}, nil), 200)
 	resume := m.wait("create", 2)
-	if resume["resume"] != sid || resume["prompt"] != "carry on" || resume["reuse"] != true || resume["session_id"] != nil {
+	if resume["session"] != name || resume["resume"] != sid || resume["prompt"] != "carry on" || resume["reuse"] != true || resume["session_id"] != nil {
 		t.Fatalf("resume = %v", resume)
 	}
 	if run = m.run(run.ID); run.Status != "running" || run.SessionID != sid {
@@ -198,14 +202,14 @@ func TestTmuxAgentLifecycle(t *testing.T) {
 
 	// Interrupt is Esc in the session; Finish closes the tmux session and the run.
 	expect(t, "interrupt", h.do("POST", fmt.Sprintf("/api/runs/%d/cancel", run.ID), nil, nil), 200)
-	if keys := m.wait("keys", 1); keys["text"] != "\x1b" || keys["session"] != task.Ref {
+	if keys := m.wait("keys", 1); keys["text"] != "\x1b" || keys["session"] != name {
 		t.Fatalf("keys = %v", keys)
 	}
 	if run = m.run(run.ID); run.Status != "running" {
 		t.Fatalf("an interrupt must not end the run: %+v", run)
 	}
 	expect(t, "finish", h.do("POST", fmt.Sprintf("/api/runs/%d/finish", run.ID), nil, nil), 200)
-	if kill := m.wait("kill", 1); kill["session"] != task.Ref {
+	if kill := m.wait("kill", 1); kill["session"] != name {
 		t.Fatalf("kill = %v", kill)
 	}
 	deadline := time.Now().Add(3 * time.Second)
@@ -215,22 +219,49 @@ func TestTmuxAgentLifecycle(t *testing.T) {
 	if run.Status != "succeeded" {
 		t.Fatalf("finished = %+v", run)
 	}
+	m.beat(nil, nil) // the tmux session is gone
 
-	// A finished agent is still the task's agent: a new request reopens it on its session.
+	// A finished agent is still the task's agent: a new request for the task reopens it on its session.
 	expect(t, "reopen", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent",
 		"prompt": "One more thing", "task_id": task.ID}, &again), 200)
 	if again.ID != run.ID || !again.Continued {
 		t.Fatalf("reopened = %+v", again)
 	}
-	if third := m.wait("create", 3); third["resume"] != sid || third["prompt"] != "One more thing" {
+	if third := m.wait("create", 3); third["session"] != name || third["resume"] != sid || third["prompt"] != "One more thing" {
 		t.Fatalf("reopen create = %v", third)
 	}
-	// Unless the user asks for a fresh agent.
+	// Unless the user asks for a fresh agent: an extra session next to the project's.
 	var fresh store.Run
 	expect(t, "fresh", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent",
 		"prompt": "Start over", "task_id": task.ID, "fresh": true}, &fresh), 201)
-	if fresh.ID == run.ID || fresh.TmuxSession != fmt.Sprintf("%s-%d", task.Ref, fresh.ID) {
-		t.Fatalf("fresh = %+v (its name must not clash with the open agent's)", fresh)
+	if fresh.ID == run.ID || fresh.TmuxSession != name+"-2" {
+		t.Fatalf("fresh = %+v (an extra agent is %s-2)", fresh, name)
+	}
+	if extra := m.wait("create", 4); extra["session"] != name+"-2" || extra["remote_control"] != name+"-2" || extra["prompt"] != "Start over" {
+		t.Fatalf("extra create = %v", extra)
+	}
+
+	// A conversation picked up again while its session holds another one comes back in a session of its own.
+	expect(t, "finish the first", h.do("POST", fmt.Sprintf("/api/runs/%d/finish", run.ID), nil, nil), 200)
+	m.wait("kill", 2)
+	for run = m.run(run.ID); run.Status != "succeeded" && time.Now().Before(deadline.Add(5*time.Second)); run = m.run(run.ID) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	var other store.Run
+	expect(t, "another conversation", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent",
+		"prompt": "Something else", "fresh": true}, &other), 201)
+	if other.TmuxSession != name {
+		t.Fatalf("the project's session was free: %+v", other)
+	}
+	m.wait("create", 5)
+	m.beat([]map[string]any{{"name": name, "windows": 1, "command": "claude", "claude": true},
+		{"name": name + "-2", "windows": 1, "command": "claude", "claude": true}}, nil)
+	expect(t, "continue the first", h.do("POST", "/api/runs", map[string]any{"kind": "agent", "prompt": "Back to the cart", "resume_run_id": run.ID}, &again), 200)
+	if back := m.wait("create", 6); back["session"] != name+"-3" || back["resume"] != sid || back["prompt"] != "Back to the cart" {
+		t.Fatalf("picked up elsewhere = %v", back)
+	}
+	if run = m.run(run.ID); run.TmuxSession != name+"-3" || run.Status != "running" {
+		t.Fatalf("picked up = %+v", run)
 	}
 }
 
@@ -239,29 +270,33 @@ func TestTmuxHookRegistersHandStartedSessions(t *testing.T) {
 	h.login()
 	m := newFakeMachine(t, h)
 	const sid = "0b6e3f4a-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
-
-	// Outside every project's repos: nothing to register.
-	m.hook(map[string]any{"event": "SessionStart", "session_id": sid, "cwd": "/tmp/scratch", "tmux_session": "scratch"})
 	var list struct{ Runs []store.Run }
-	expect(t, "runs", h.do("GET", "/api/runs", nil, &list), 200)
-	if len(list.Runs) != 0 {
-		t.Fatalf("runs = %+v", list.Runs)
+	runs := func() []store.Run {
+		t.Helper()
+		expect(t, "runs", h.do("GET", "/api/runs", nil, &list), 200)
+		return list.Runs
 	}
 
-	// In a repo: the session is a run from its first hook on.
+	// Outside every project: nothing to register.
+	m.hook(map[string]any{"event": "UserPromptSubmit", "session_id": sid, "cwd": "/tmp/scratch", "tmux_session": "scratch", "prompt": "hello"})
+	if len(runs()) != 0 {
+		t.Fatalf("runs = %+v", list.Runs)
+	}
+	// In a repo, but nobody has asked it anything: an open session is not a run.
 	m.hook(map[string]any{"event": "SessionStart", "session_id": sid, "cwd": m.path + "/pkg", "tmux_session": "work", "source": "startup"})
-	expect(t, "runs", h.do("GET", "/api/runs", nil, &list), 200)
-	if len(list.Runs) != 1 {
+	m.hook(map[string]any{"event": "Notification", "session_id": sid, "tmux_session": "work", "notification_type": "idle_prompt"})
+	if len(runs()) != 0 {
+		t.Fatalf("an idle session became a run: %+v", list.Runs)
+	}
+	// Its first request makes it one.
+	m.hook(map[string]any{"event": "UserPromptSubmit", "session_id": sid, "cwd": m.path + "/pkg", "tmux_session": "work", "prompt": "check the logs"})
+	if len(runs()) != 1 {
 		t.Fatalf("runs = %+v", list.Runs)
 	}
 	run := list.Runs[0]
 	if run.Origin != "tmux" || run.TmuxSession != "work" || run.Status != "running" || run.ProjectKey != "SHOP" ||
-		run.RepoName != "shop_api" || run.SessionID != sid || run.Awaiting != "reply" {
+		run.RepoName != "shop_api" || run.SessionID != sid || run.Awaiting != "" || run.Prompt != "check the logs" {
 		t.Fatalf("registered = %+v", run)
-	}
-	m.hook(map[string]any{"event": "UserPromptSubmit", "session_id": sid, "cwd": m.path, "tmux_session": "work", "prompt": "check the logs"})
-	if run = m.run(run.ID); run.Prompt != "check the logs" || run.Awaiting != "" {
-		t.Fatalf("after the prompt = %+v", run)
 	}
 	m.hook(map[string]any{"event": "Notification", "session_id": sid, "tmux_session": "work",
 		"notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash"})
@@ -281,12 +316,17 @@ func TestTmuxHookRegistersHandStartedSessions(t *testing.T) {
 		t.Fatalf("session = %+v", s)
 	}
 
-	// /clear in the same tmux session: a new conversation, a new run; the old one is over.
+	// /clear in the same tmux session: the old conversation is over; the new one is a run with its first request.
 	const sid2 = "1c7f4a5b-2d3e-4f60-9b0c-1d2e3f4a5b6c"
 	m.hook(map[string]any{"event": "SessionStart", "session_id": sid2, "cwd": m.path, "tmux_session": "work", "source": "clear"})
 	if old := m.run(run.ID); old.Status != "succeeded" {
 		t.Fatalf("the cleared conversation = %+v", old)
 	}
+	expect(t, "runs", h.do("GET", "/api/runs?status=running", nil, &list), 200)
+	if len(list.Runs) != 0 {
+		t.Fatalf("after /clear, before a request = %+v", list.Runs)
+	}
+	m.hook(map[string]any{"event": "UserPromptSubmit", "session_id": sid2, "cwd": m.path, "tmux_session": "work", "prompt": "now the tests"})
 	expect(t, "runs", h.do("GET", "/api/runs?status=running", nil, &list), 200)
 	if len(list.Runs) != 1 || list.Runs[0].SessionID != sid2 || list.Runs[0].TmuxSession != "work" {
 		t.Fatalf("after /clear = %+v", list.Runs)
@@ -295,6 +335,22 @@ func TestTmuxHookRegistersHandStartedSessions(t *testing.T) {
 	m.hook(map[string]any{"event": "SessionEnd", "session_id": sid2, "tmux_session": "work", "reason": "prompt_input_exit"})
 	if r := m.run(list.Runs[0].ID); r.Status != "succeeded" {
 		t.Fatalf("after exit = %+v", r)
+	}
+
+	// A session in the project's own folder (above its repos) is the project's too.
+	const sid3 = "2d8a5b6c-3e4f-4a71-8c1d-2e3f4a5b6c7d"
+	dir := m.path[:strings.LastIndex(m.path, "/")]
+	m.hook(map[string]any{"event": "UserPromptSubmit", "session_id": sid3, "cwd": dir, "tmux_session": "F-Shop", "prompt": "what is next?"})
+	expect(t, "runs", h.do("GET", "/api/runs?status=running", nil, &list), 200)
+	if len(list.Runs) != 1 || list.Runs[0].ProjectKey != "SHOP" || list.Runs[0].TmuxSession != "F-Shop" || list.Runs[0].SessionID != sid3 {
+		t.Fatalf("in the project folder = %+v", list.Runs)
+	}
+	// Opened again from Forge, it starts in that folder, in Claude Code's own permission mode.
+	m.hook(map[string]any{"event": "SessionEnd", "session_id": sid3, "tmux_session": "F-Shop"})
+	expect(t, "elevate", h.do("POST", "/api/auth/elevate", map[string]string{"password": testPassword}, nil), 200)
+	expect(t, "open in terminal", h.do("POST", fmt.Sprintf("/api/runs/%d/handoff", list.Runs[0].ID), nil, nil), 200)
+	if again := m.wait("create", 1); again["resume"] != sid3 || again["cwd"] != dir || again["permission_mode"] != "" {
+		t.Fatalf("reopened = %v", again)
 	}
 }
 

@@ -8,29 +8,35 @@ import (
 	"strings"
 )
 
-// Agents in tmux. An agent run's Claude Code session lives in a tmux session
-// on its machine, named after the run's task (SHOP-12) — the same session
+// Agents in tmux. A project's agent is one Claude Code session in a tmux
+// session on a machine, named after the project (F-Shop; an extra one is
+// F-Shop-2) with Remote Control on under the same name — the same session
 // whether it is opened from Forge's terminal, `tmux attach` or claude.ai.
 // The server drives it over the machine's control channel (api/tmux_agents.go):
-// it starts the session, types follow-ups into it, and learns what happens
+// it starts the session, types requests into it, and learns what happens
 // from Claude Code's hooks (`forge agent hook`) and the heartbeat's tmux list.
 //
-// A tmux run is "running" while its Claude Code session is open (Awaiting
-// says whether it is working, waiting for a reply or for an answer in the
-// terminal), "waiting" once Claude exited (a message starts it again with
-// --resume), and finished only when the user finishes it. Claude Code
-// sessions started by hand in tmux register as runs too (origin "tmux"), so
-// every agent session on a machine is one run in Forge, and the reverse.
+// A run is one conversation in such a session. It is "running" while its
+// Claude Code session is open (Awaiting says whether it is working, waiting
+// for a reply or for an answer in the terminal), "waiting" once Claude exited
+// (a message starts it again with --resume), and finished only when the user
+// finishes it. A conversation started by hand in tmux becomes a run with its
+// first request (origin "tmux"); a session nobody has asked anything is just
+// an open session, not a run.
 
 // AgentSettings is how Forge runs agents.
 type AgentSettings struct {
 	// Tmux: agent runs on machines that support it live in tmux sessions
 	// (default); off runs them headless (`claude -p`) as before.
 	Tmux bool `json:"tmux"`
+	// RemoteControl: an agent's Claude Code session starts with Remote
+	// Control on under its tmux session's name (default), so it can be
+	// picked up on claude.ai/code and in the Claude app.
+	RemoteControl bool `json:"remote_control"`
 }
 
 func (s *Store) AgentSettings(ctx context.Context) (AgentSettings, error) {
-	v := AgentSettings{Tmux: true}
+	v := AgentSettings{Tmux: true, RemoteControl: true}
 	_, err := s.getSetting(ctx, "agents", &v)
 	return v, err
 }
@@ -43,20 +49,35 @@ func (s *Store) PutAgentSettings(ctx context.Context, v AgentSettings) (AgentSet
 // ':' in names; the rest is kept to what is safe in a shell word).
 var tmuxNameRe = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
 
-// TmuxName is the tmux session name for a run: its task ref, else the
-// project key and run number (SHOP-r12).
-func TmuxName(run *Run) string {
-	name := ""
-	if run.TaskRef != nil && *run.TaskRef != "" {
-		name = *run.TaskRef
-	} else {
-		name = fmt.Sprintf("%s-r%d", run.ProjectKey, run.ID)
+// ProjectNameByID is a project's name (its agent's tmux session is named after it).
+func (s *Store) ProjectNameByID(ctx context.Context, id int64) (string, error) {
+	var name string
+	err := s.DB.QueryRow(ctx, `SELECT name FROM projects WHERE id = $1`, id).Scan(&name)
+	return name, mapErr(err)
+}
+
+// FreeTmuxName is base when no open run on the machine has it and taken does
+// not list it, else the first free base-2, base-3, …: a project's extra agents.
+// from is the first number tried (1 = base itself).
+func (s *Store) FreeTmuxName(ctx context.Context, runnerID, exceptRun int64, base string, from int, taken func(string) bool) (string, error) {
+	for n := max(from, 1); n < 100; n++ {
+		name := base
+		if n > 1 {
+			suffix := fmt.Sprintf("-%d", n)
+			if len(name)+len(suffix) > 40 {
+				name = strings.TrimRight(name[:40-len(suffix)], "-")
+			}
+			name += suffix
+		}
+		inUse, err := s.TmuxNameInUse(ctx, runnerID, exceptRun, name)
+		if err != nil {
+			return "", err
+		}
+		if !inUse && (taken == nil || !taken(name)) {
+			return name, nil
+		}
 	}
-	name = strings.Trim(tmuxNameRe.ReplaceAllString(name, "-"), "-")
-	if name == "" {
-		name = fmt.Sprintf("run-%d", run.ID)
-	}
-	return name
+	return "", invalid("session", "too many sessions named %s", base)
 }
 
 // SetRunTmux puts a queued run into tmux under name; the server starts it.
@@ -66,6 +87,14 @@ func (s *Store) SetRunTmux(ctx context.Context, id int64, name string) (*Run, er
 		return nil, err
 	}
 	return s.RunByID(ctx, id)
+}
+
+// AdoptTmuxSession gives a run that was typed into an already open Claude
+// Code session (it has no session id yet) that session's id, as the
+// session's hook reports it.
+func (s *Store) AdoptTmuxSession(ctx context.Context, id int64, sessionID string) error {
+	_, err := s.DB.Exec(ctx, `UPDATE runs SET session_id = $2 WHERE id = $1 AND session_id = ''`, id, sessionID)
+	return err
 }
 
 // TmuxNameInUse: another open run on this machine has the name.
@@ -163,6 +192,21 @@ func (s *Store) OpenRunInTmux(ctx context.Context, runnerID int64, tmuxSession s
 	return &runs[0], nil
 }
 
+// OpenTmuxRuns is the open run living in each tmux session of a machine (the
+// latest, should a name have more than one).
+func (s *Store) OpenTmuxRuns(ctx context.Context, runnerID int64) (map[string]Run, error) {
+	runs, err := s.listRunsWhere(ctx, `r.runner_id = $1 AND r.tmux_session <> '' AND r.status IN ('queued', 'running', 'waiting')
+		ORDER BY r.id`, runnerID)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]Run{}
+	for _, r := range runs {
+		out[r.TmuxSession] = r
+	}
+	return out, nil
+}
+
 // TaskAgent is the run that is a task's agent: its latest agent run (not an
 // Assistant turn) that is open or has a session to pick up again.
 func (s *Store) TaskAgent(ctx context.Context, taskID int64) (*Run, error) {
@@ -197,17 +241,41 @@ type TmuxRegistration struct {
 	Prompt      string
 }
 
-// RegisterTmuxRun records a hand-started Claude Code session in tmux as an
-// agent run, in the repo its folder belongs to. It returns ErrNotFound when
-// the folder is in no project's repo (the session stays Forge-less). A tmux
-// session that held another conversation before (/clear) hands its task on.
+// firstRepoUnder is the project's first repo that lives inside dir (nil when
+// none does).
+func (s *Store) firstRepoUnder(ctx context.Context, projectKey, dir string) (*RepoWithProject, error) {
+	repos, err := s.AllRepos(ctx)
+	if err != nil {
+		return nil, err
+	}
+	dir = strings.TrimRight(dir, "/")
+	for i := range repos {
+		if repos[i].ProjectKey == projectKey && repos[i].Path != "" && strings.HasPrefix(repos[i].Path, dir+"/") {
+			return &repos[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// RegisterTmuxRun records a conversation started by hand in a Claude Code
+// session in tmux as an agent run, in the repo its folder belongs to (a
+// project's own folder: its first repo). It returns ErrNotFound when the
+// folder is in no project (the session stays Forge-less). A tmux session
+// that held another conversation before (/clear) hands its task on.
 func (s *Store) RegisterTmuxRun(ctx context.Context, runnerID int64, in TmuxRegistration) (*Run, error) {
 	if in.SessionID == "" || in.TmuxSession == "" {
 		return nil, invalid("session_id", "a session id and a tmux session are needed")
 	}
-	_, repo, err := s.ProjectForPath(ctx, in.Cwd)
+	key, repo, err := s.ProjectForPath(ctx, in.Cwd)
 	if err != nil {
 		return nil, err
+	}
+	if repo == nil && key != "" {
+		// A project's own folder, above its repos (where its agent runs):
+		// the conversation is filed under the project's first repo in there.
+		if repo, err = s.firstRepoUnder(ctx, key, in.Cwd); err != nil {
+			return nil, err
+		}
 	}
 	if repo == nil {
 		return nil, ErrNotFound

@@ -150,25 +150,39 @@ export function EnginePanel() {
   );
 }
 
-/** One task, one agent, one tmux session: where Claude Code agent runs live. */
+/** One project, one agent, one tmux session: where Claude Code agent runs live. */
 function AgentsInTmux() {
   const settings = useAgentSettings();
   const update = useUpdateAgentSettings();
   const toast = useToast();
   if (!settings.data) return null;
   return (
-    <div className="space-y-1">
-      <Switch
-        checked={settings.data.tmux}
-        disabled={update.isPending}
-        onChange={(tmux) => update.mutate({ tmux }, { onError: (e) => toast.error(e) })}
-        label="Run Claude Code agents in tmux sessions"
-      />
-      <p className="text-[12px] text-fg-3">
-        Each agent run is a Claude Code session in a tmux session named after its task (e.g. SHOP-12) on its machine: the same session in
-        Forge, in <span className="font-mono">tmux attach</span> and in the Terminal page. Forge types your follow-ups into it; sessions you
-        start by hand in tmux show up as runs. Needs agents on v0.1.44 or later; others keep running headless.
-      </p>
+    <div className="space-y-3">
+      <div className="space-y-1">
+        <Switch
+          checked={settings.data.tmux}
+          disabled={update.isPending}
+          onChange={(tmux) => update.mutate({ tmux }, { onError: (e) => toast.error(e) })}
+          label="Run Claude Code agents in tmux sessions"
+        />
+        <p className="text-[12px] text-fg-3">
+          Each project has one agent: a Claude Code session in the tmux session <span className="font-mono">F-Project</span> on its machine —
+          the same session in Forge, in <span className="font-mono">tmux attach</span> and in the Terminal page. Forge types your requests
+          into it; a conversation you start by hand in tmux becomes a run with its first request. Needs agents on v0.1.44 or later; others
+          keep running headless.
+        </p>
+      </div>
+      <div className="space-y-1">
+        <Switch
+          checked={settings.data.remote_control}
+          disabled={update.isPending}
+          onChange={(remote_control) => update.mutate({ remote_control }, { onError: (e) => toast.error(e) })}
+          label="Start agents with Remote Control on"
+        />
+        <p className="text-[12px] text-fg-3">
+          The session shows up on claude.ai/code and in the Claude app under its tmux name, so you can pick it up from anywhere.
+        </p>
+      </div>
     </div>
   );
 }

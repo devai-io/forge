@@ -706,6 +706,7 @@ export type RunInput = {
 /** GET/PATCH /api/agent-settings */
 export type AgentSettings = {
   tmux: boolean; // agent runs live in tmux sessions on machines that support it
+  remote_control: boolean; // their Claude Code sessions start with Remote Control on, under the tmux session's name
 };
 
 export type TaskFilters = {
@@ -777,25 +778,37 @@ export type TerminalHost = {
 
 export type TerminalHosts = { hosts: TerminalHost[]; default_runner_id: number | null };
 
-/** One project's long-running Claude session on the master (F-<Project>, Remote Control on). */
+/**
+ * A project's agent: one Claude Code session on the master (tmux F-<Project>, Remote Control on),
+ * opened when asked for. `extra` 2, 3, … is an extra agent of the same project (F-<Project>-2).
+ */
 export type ProjectSessionState = "running" | "starting" | "stopped" | "missing" | "offline";
 export type ProjectSession = {
   project_key: string;
   project_name: string;
   project_color: string;
+  project_status: ProjectStatus;
   name: string; // the tmux session, and the name Remote Control shows
   dir: string;
   state: ProjectSessionState;
   url: string | null; // the claude.ai/code link, once Claude has printed it
   attached: number;
   activity: string | null;
+  extra: number; // 0: the project's agent
+  run_id: number | null; // the conversation open in it (null: nobody has asked it anything, or it is closed)
+  run_status: "" | "queued" | "running" | "waiting";
+  awaiting: "" | "answer" | "reply";
+  run_prompt: string;
 };
-export type ProjectSessionsSettings = { enabled: boolean; skip_permissions: boolean };
+export type ProjectSessionsSettings = { skip_permissions: boolean };
 export type ProjectSessions = {
   settings: ProjectSessionsSettings;
-  host: { runner_id: number; runner_name: string; online: boolean; skip_permissions: boolean } | null;
+  host: { runner_id: number; runner_name: string; online: boolean; skip_permissions: boolean; tmux_agents: boolean } | null;
   sessions: ProjectSession[];
 };
+/** POST /api/project-sessions/{key}: open the project's agent (or an extra one), with a request or without. */
+export type OpenProjectSessionInput = { model?: string; effort?: string; prompt?: string; extra?: boolean; skip_permissions?: boolean };
+export type OpenProjectSessionResult = { session: string; runner_id: number; run: Run | null; started: boolean };
 
 // What a new terminal session runs: Claude Code, Codex (both with the Forge context) or a plain shell.
 export type SessionStart = "claude" | "codex" | "shell";

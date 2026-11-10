@@ -13,7 +13,7 @@
 import { ShieldAlert, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useCreateRun, useEngine, useProject, useProjects, useRunners, useTaskAgent, useTasks } from "@/api/hooks";
+import { useCreateRun, useEngine, useProject, useProjects, useProjectSessions, useRunners, useTaskAgent, useTasks } from "@/api/hooks";
 import type { Engine, RunKind } from "@/api/types";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -65,6 +65,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   );
   const taskAgentQuery = useTaskAgent(!resume && kind === "agent" && taskId ? Number(taskId) : null);
   const taskAgent = !resume && kind === "agent" && taskId ? (taskAgentQuery.data ?? null) : null;
+  const projectSessions = useProjectSessions(15_000, !member); // the owner's: a member's request goes where the server says
 
   const runnerList = useMemo(() => runners.data ?? [], [runners.data]);
   // Default to the master (the primary machine), else the first online runner.
@@ -83,6 +84,12 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   // Commands any runner offers for this repo (unscoped, or scoped to it) —
   // picking one that lives elsewhere (an iOS upload on the Mac) moves the run there.
   const commands = commandOptions(runnerList, repoName, runner?.id);
+  // One project, one agent: the conversation open in the project's session on this machine gets the request.
+  const projectAgent =
+    !resume && kind === "agent" && runEngine === "claude" && runner && projectSessions.data?.host?.runner_id === runner.id
+      ? (projectSessions.data.sessions.find((x) => x.project_key === effectiveProjectKey && x.extra === 0 && x.run_id !== null && x.run_status !== "waiting") ?? null)
+      : null;
+  const hasAgent = !!projectAgent || !!taskAgent;
   // Default: no permission prompts where the machine allows it, else what
   // the resumed run used, else the safest mode.
   const effectiveMode = modes.includes(mode)
@@ -128,13 +135,13 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
         worktree: kind === "agent" ? worktree : false,
         task_id: taskId ? Number(taskId) : null,
         resume_run_id: resume?.id ?? null,
-        fresh: taskAgent && fresh ? true : undefined,
+        fresh: hasAgent && fresh ? true : undefined,
       },
       {
         onSuccess: (run) => {
           onClose();
           if (run.continued) {
-            toast.success(`Sent to ${run.task_ref ?? "the task"}'s agent (run #${run.id}${run.tmux_session ? `, tmux ${run.tmux_session}` : ""})`);
+            toast.success(`Sent to ${run.tmux_session || `${run.project_key}'s agent`} (run #${run.id})`);
             navigate(`/agents/runs/${run.id}`);
             return;
           }
@@ -393,7 +400,19 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                 label="Run in a fresh git worktree (keeps your working copy untouched)"
               />
             ) : null}
-            {taskAgent ? (
+            {projectAgent ? (
+              <div className="space-y-2 rounded-md border border-line bg-surface-2/60 px-3 py-2 text-[12.5px]" role="note">
+                <p className="text-fg-2">
+                  {effectiveProjectKey}'s agent has a conversation open:{" "}
+                  <Link to={`/agents/runs/${projectAgent.run_id}`} className="text-accent hover:underline">
+                    run #{projectAgent.run_id}
+                  </Link>
+                  <span className="font-mono"> · tmux {projectAgent.name}</span>.{" "}
+                  {fresh ? "An extra agent starts in a session of its own." : "This request goes to it as a message — one project, one agent."}
+                </p>
+                <Switch checked={fresh} onChange={setFresh} label="Start an extra agent instead" />
+              </div>
+            ) : taskAgent ? (
               <div className="space-y-2 rounded-md border border-line bg-surface-2/60 px-3 py-2 text-[12.5px]" role="note">
                 <p className="text-fg-2">
                   {taskAgent.task_ref ?? "This task"} already has an agent:{" "}
@@ -401,7 +420,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                     run #{taskAgent.id}
                   </Link>
                   {taskAgent.tmux_session ? <span className="font-mono"> · tmux {taskAgent.tmux_session}</span> : null}.{" "}
-                  {fresh ? "A new, separate agent starts instead." : "This request goes to it as a message — one task, one agent."}
+                  {fresh ? "A new, separate agent starts instead." : "This request picks that conversation up again."}
                 </p>
                 <Switch checked={fresh} onChange={setFresh} label="Start a fresh agent instead" />
               </div>

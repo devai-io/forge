@@ -323,6 +323,8 @@ func (s *Server) Handler() http.Handler {
 	h("PATCH /api/agent-settings", s.authed(s.putAgentSettings))
 	h("GET /api/project-sessions", s.authed(s.getProjectSessions))
 	h("PATCH /api/project-sessions", s.authed(s.elevated(s.updateProjectSessions)))
+	h("POST /api/project-sessions/{key}", s.authed(s.openProjectSession))
+	h("DELETE /api/project-sessions/{key}/{name}", s.authed(s.closeProjectSession))
 	h("GET /api/terminal/{runner}/attach", s.authed(s.elevated(s.terminalAttach)))
 	h("POST /api/terminal/{runner}/sessions", s.authed(s.elevated(s.terminalCreate)))
 	h("DELETE /api/terminal/{runner}/sessions/{name}", s.authed(s.elevated(s.terminalKill)))
