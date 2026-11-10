@@ -9,7 +9,7 @@ import { Bot, Copy, ExternalLink, MoreHorizontal, Star, Trash2, X } from "lucide
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError } from "@/api/client";
-import { useAddComment, useDeleteComment, useDeleteTask, useProject, useTask, useUpdateTask } from "@/api/hooks";
+import { useAddComment, useAskMemberAgent, useDeleteComment, useDeleteTask, useMemberAgent, useProject, useTask, useUpdateTask } from "@/api/hooks";
 import type { Priority, TaskDetail, TaskInput, TaskStatus, TaskType } from "@/api/types";
 import { ColorDot } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -25,8 +25,9 @@ import { useToast } from "@/components/ui/Toast";
 import { RunRow } from "@/features/agents/RunBits";
 import { useShell } from "@/features/shell/context";
 import { dueInfo, todayInTz } from "@/lib/format";
-import { useCurrentUser } from "@/lib/auth";
-import { buildAgentPrompt, PRIORITIES, STATUSES, TYPES } from "@/lib/tasks";
+import { startsFresh } from "@/lib/agents";
+import { useCurrentUser, useUser } from "@/lib/auth";
+import { buildAgentPrompt, commentPrompt, PRIORITIES, STATUSES, TYPES } from "@/lib/tasks";
 import { PriorityIcon, StatusIcon, TypeIcon } from "./icons";
 import { LabelsEditor } from "./LabelsEditor";
 
@@ -481,12 +482,40 @@ function Comments({ task }: { task: TaskDetail }) {
   const add = useAddComment(task.id);
   const del = useDeleteComment(task.id);
   const toast = useToast();
+  const navigate = useNavigate();
   const [body, setBody] = useState("");
+  // A member with an agent of its own can hand the comment straight to it.
+  const member = useUser().role === "member";
+  const agentView = useMemberAgent(member).data;
+  const ask = useAskMemberAgent();
 
   const submit = () => {
     if (!body.trim()) return;
     add.mutate(body.trim(), {
       onSuccess: () => setBody(""),
+      onError: (e) => toast.error(e),
+    });
+  };
+
+  // Comment, then the agent: the conversation open on this task gets the
+  // comment as its next message; otherwise a new one starts on the task.
+  const submitAndRun = () => {
+    const text = body.trim();
+    if (!text || !agentView?.agent) return;
+    add.mutate(text, {
+      onSuccess: () => {
+        setBody("");
+        ask.mutate(
+          { prompt: commentPrompt(task, text, agentView.run?.task_id === task.id), task_id: task.id, fresh: startsFresh(agentView, task.id) || undefined },
+          {
+            onSuccess: () => {
+              toast.success("Your agent is on it");
+              navigate("/agent");
+            },
+            onError: (e) => toast.error(e),
+          },
+        );
+      },
       onError: (e) => toast.error(e),
     });
   };
@@ -523,8 +552,20 @@ function Comments({ task }: { task: TaskDetail }) {
           }}
           placeholder="Leave a note… (⌘/Ctrl+Enter)"
         />
-        <div className="flex justify-end">
-          <Button size="sm" variant="primary" onClick={submit} loading={add.isPending} disabled={!body.trim()}>
+        <div className="flex flex-wrap justify-end gap-2">
+          {agentView?.agent ? (
+            <Button
+              size="sm"
+              variant="subtle"
+              onClick={submitAndRun}
+              loading={ask.isPending}
+              disabled={!body.trim() || add.isPending}
+              title="Post the comment and hand it to your agent"
+            >
+              <Bot className="size-3.5" aria-hidden /> Comment and run agent
+            </Button>
+          ) : null}
+          <Button size="sm" variant="primary" onClick={submit} loading={add.isPending && !ask.isPending} disabled={!body.trim()}>
             Comment
           </Button>
         </div>

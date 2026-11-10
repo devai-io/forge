@@ -78,7 +78,10 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   const tasks = useTasks({ project: effectiveProjectKey, open: true }, { enabled: !!effectiveProjectKey && !resume });
 
   const offeredModes = runner?.capabilities.permission_modes.length ? runner.capabilities.permission_modes : ["plan"];
-  const modes = runEngine === "codex" ? offeredModes.filter((m) => ["plan", "acceptEdits", "bypassPermissions"].includes(m)) : offeredModes;
+  // A member never skips permission prompts (the server refuses it), so it is not on offer.
+  const modes = (runEngine === "codex" ? offeredModes.filter((m) => ["plan", "acceptEdits", "bypassPermissions"].includes(m)) : offeredModes).filter(
+    (m) => !member || m !== "bypassPermissions",
+  );
   const canInteract = !!runner?.capabilities.interactive;
   const repoName = repos.find((r) => String(r.id) === effectiveRepoId)?.name;
   // Commands any runner offers for this repo (unscoped, or scoped to it) —

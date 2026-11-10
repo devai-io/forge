@@ -280,3 +280,13 @@ export function agentLine(a: { model: string; effort: string; runner_name: strin
     .join(" · ");
 }
 
+/**
+ * Whether a member's request about a task belongs in a new conversation of its
+ * agent: yes when the open one is about something else (it is finished first).
+ * With none open there is nothing to finish: it simply starts.
+ */
+export function startsFresh(view: { run: { task_id: number | null } | null }, taskId: number | null | undefined): boolean {
+  if (!view.run) return false;
+  return !!taskId && view.run.task_id !== taskId;
+}
+

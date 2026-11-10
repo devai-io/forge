@@ -6,6 +6,8 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { Run, SessionStart, TaskStatus } from "@/api/types";
+import { useMe, useMemberAgent } from "@/api/hooks";
+import { MemberRunDialog } from "@/features/agents/MemberRunDialog";
 import { NewRunDialog } from "@/features/agents/NewRunDialog";
 import { NewTaskDialog } from "@/features/tasks/NewTaskDialog";
 import { NewSessionDialog } from "@/features/terminal/NewSessionDialog";
@@ -46,6 +48,9 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   const [runPrefill, setRunPrefill] = useState<NewRunPrefill | null>(null);
   const [sessionPrefill, setSessionPrefill] = useState<NewSessionPrefill | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // A member with an agent of its own: "Run agent" asks that agent (nothing to pick).
+  const member = useMe().data?.user.role === "member";
+  const memberAgent = useMemberAgent(member).data;
 
   const raw = Number(params.get("task"));
   const taskId = Number.isInteger(raw) && raw > 0 ? raw : null;
@@ -87,7 +92,13 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     <ShellContext.Provider value={value}>
       {children}
       {taskPrefill ? <NewTaskDialog prefill={taskPrefill} onClose={() => setTaskPrefill(null)} /> : null}
-      {runPrefill ? <NewRunDialog prefill={runPrefill} onClose={() => setRunPrefill(null)} /> : null}
+      {runPrefill ? (
+        memberAgent?.agent && !runPrefill.resume ? (
+          <MemberRunDialog prefill={runPrefill} view={memberAgent} onClose={() => setRunPrefill(null)} />
+        ) : (
+          <NewRunDialog prefill={runPrefill} onClose={() => setRunPrefill(null)} />
+        )
+      ) : null}
       {sessionPrefill ? <NewSessionDialog prefill={sessionPrefill} onClose={() => setSessionPrefill(null)} /> : null}
     </ShellContext.Provider>
   );

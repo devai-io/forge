@@ -1224,11 +1224,12 @@ export function useMemberAgent(enabled = true, refetchInterval: number | false =
 export function useAskMemberAgent() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { prompt: string; project_key?: string; fresh?: boolean }) => api.post<Run>("/agent", body),
+    mutationFn: (body: { prompt: string; project_key?: string; task_id?: number; fresh?: boolean }) => api.post<Run>("/agent", body),
     onSuccess: (run) => {
       void qc.invalidateQueries({ queryKey: ["member-agent"] });
       void qc.invalidateQueries({ queryKey: ["runs"] });
       void qc.invalidateQueries({ queryKey: keys.runEvents(run.id) });
+      if (run.task_id) void qc.invalidateQueries({ queryKey: keys.task(run.task_id) });
     },
   });
 }

@@ -332,7 +332,11 @@ func (s *Server) askMemberAgent(w http.ResponseWriter, r *http.Request, u *store
 	var in struct {
 		Prompt     string `json:"prompt"`
 		ProjectKey string `json:"project_key"`
-		Fresh      bool   `json:"fresh"`
+		// TaskID: the task this request is about (Run agent on a task, a
+		// comment on it): a new conversation is linked to it and runs in
+		// its project (and its repo, when it names one).
+		TaskID *int64 `json:"task_id"`
+		Fresh  bool   `json:"fresh"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -351,6 +355,13 @@ func (s *Server) askMemberAgent(w http.ResponseWriter, r *http.Request, u *store
 	if in.Prompt == "" {
 		writeErr(w, r, &store.ValidationError{Field: "prompt", Message: "write what the agent should do"})
 		return
+	}
+	var task *store.Task
+	if in.TaskID != nil {
+		if task, err = s.store.TaskByID(ctx, *in.TaskID); err != nil || !s.store.IsProjectMember(ctx, u.ID, task.ProjectID) {
+			writeError(w, http.StatusNotFound, "not_found", "not found")
+			return
+		}
 	}
 	cur, err := s.store.MemberAgentRun(ctx, u.ID)
 	if err != nil {
@@ -386,6 +397,9 @@ func (s *Server) askMemberAgent(w http.ResponseWriter, r *http.Request, u *store
 		return
 	}
 	key := strings.ToUpper(strings.TrimSpace(in.ProjectKey))
+	if task != nil {
+		key = task.ProjectKey
+	}
 	if key == "" && len(projects) > 0 {
 		key = projects[0].Key
 	}
@@ -394,6 +408,12 @@ func (s *Server) askMemberAgent(w http.ResponseWriter, r *http.Request, u *store
 		writeErr(w, r, &store.ValidationError{Field: "project_key", Message: "pick one of your projects (it needs a repo the agent can work in)"})
 		return
 	}
+	if task != nil && task.RepoID != nil {
+		// The task's own repo, when it has somewhere to run.
+		if repo, err := s.store.RepoByID(ctx, *task.RepoID); err == nil && repo.Path != "" && repo.ProjectID == task.ProjectID {
+			repoID = repo.ID
+		}
+	}
 	rn, err := s.store.RunnerByID(ctx, agent.RunnerID)
 	if err != nil {
 		writeErr(w, r, err)
@@ -401,7 +421,7 @@ func (s *Server) askMemberAgent(w http.ResponseWriter, r *http.Request, u *store
 	}
 	run, err := s.store.CreateRun(ctx, store.RunInput{RunnerID: agent.RunnerID, RepoID: repoID, Kind: "agent", Prompt: in.Prompt,
 		Engine: "claude", Model: agent.Model, Effort: agent.Effort, PermissionMode: agent.PermissionMode,
-		Interactive: rn.LastSeenAt == nil || rn.Capabilities.Interactive, UserID: &u.ID})
+		Interactive: rn.LastSeenAt == nil || rn.Capabilities.Interactive, UserID: &u.ID, TaskID: in.TaskID})
 	if err != nil {
 		writeErr(w, r, err)
 		return

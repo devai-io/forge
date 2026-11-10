@@ -317,6 +317,18 @@ func TestMemberAgent(t *testing.T) {
 		t.Fatalf("the conversation before = %+v", old)
 	}
 
+	// Run agent on a task (or a comment on it): the new conversation is that task's.
+	var tasks struct{ Tasks []store.Task }
+	expect(t, "tasks", h.do("GET", "/api/tasks?project=SHOP", nil, &tasks), 200)
+	task := tasks.Tasks[0]
+	var onTask store.Run
+	expect(t, "someone else's task", h.do("POST", "/api/agent", map[string]any{"prompt": "x", "task_id": 999999, "fresh": true}, nil), 404)
+	expect(t, "on a task", h.do("POST", "/api/agent", map[string]any{"prompt": task.Ref + ": do it", "task_id": task.ID, "fresh": true}, &onTask), 201)
+	if onTask.TaskID == nil || *onTask.TaskID != task.ID || onTask.ProjectKey != "SHOP" || onTask.Model != "opus" {
+		t.Fatalf("task run = %+v", onTask)
+	}
+	fresh = onTask
+
 	// Taken away: the machine is closed to it again.
 	if err := h.store.ClearMemberAgent(ctx, bob.ID); err != nil {
 		t.Fatal(err)

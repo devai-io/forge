@@ -118,6 +118,15 @@ export function normalizeLabel(raw: string): string {
 }
 
 /** The prompt a "Run agent on this task" starts from: ref, title, description. */
+/**
+ * What a comment handed to the agent says: the comment alone when the agent's
+ * conversation is already about this task, the task and the comment otherwise.
+ */
+export function commentPrompt(task: Pick<Task, "ref" | "title" | "description">, comment: string, sameConversation: boolean): string {
+  const text = comment.trim();
+  return sameConversation ? `New comment on ${task.ref}:\n\n${text}` : `${buildAgentPrompt(task)}\n\nComment:\n\n${text}`;
+}
+
 export function buildAgentPrompt(task: Pick<Task, "ref" | "title" | "description">): string {
   return `${task.ref}: ${task.title}\n\n${task.description.trim()}`.trim();
 }

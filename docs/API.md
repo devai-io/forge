@@ -75,7 +75,14 @@ type MemberAgentView = {
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | /api/agent | – | `MemberAgentView` |
-| POST | /api/agent | `{prompt, project_key?, fresh?}` | With a conversation open and no `fresh`: one more message to it → `200 Run` with `continued: true`. Otherwise every run the member still has open is finished and a new one is queued on the agent's machine with its model, effort and mode (interactive, headless) in `project_key` (default: the member's first project) → `201 Run`. `403` without an agent, `422` for an empty prompt or a project that is not the member's |
+| POST | /api/agent | `{prompt, project_key?, task_id?, fresh?}` | With a conversation open and no `fresh`: one more message to it → `200 Run` with `continued: true`. Otherwise every run the member still has open is finished and a new one is queued on the agent's machine with its model, effort and mode (interactive, headless) in `project_key` (default: the member's first project) → `201 Run`. `task_id` (Run agent on a task, a comment handed to the agent) links the new run to that task and runs it in the task's project — and its repo, when the task names one with a path. `403` without an agent, `404` for a task outside the member's projects, `422` for an empty prompt or a project that is not the member's |
+
+In the web app a member with an agent gets its own **Run agent** dialog (the
+prompt, and — with a conversation open — whether to start a new one; a request
+about another task than the open conversation's starts a new one by default),
+and **Comment and run agent** under a task's comments: the comment is posted,
+then handed to the agent — as the next message when its conversation is about
+that task, else as a new conversation on the task.
 
 ## Types
 

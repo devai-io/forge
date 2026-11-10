@@ -5,8 +5,12 @@ import type { ReactNode } from "react";
 import { Route, Routes } from "react-router-dom";
 import type { MemberAgentView, Run } from "@/api/types";
 import { MemberAgentPage } from "@/features/agents/MemberAgentPage";
+import { ShellProvider } from "@/features/shell/context";
+import { TaskDrawer } from "@/features/tasks/TaskDrawer";
+import { makeTask } from "@/test/fixtures";
 import { useNav } from "@/features/shell/nav";
-import { agentLine } from "@/lib/agents";
+import { agentLine, startsFresh } from "@/lib/agents";
+import { commentPrompt } from "@/lib/tasks";
 import { jsonResponse, makeUser, renderWithProviders, testClient } from "@/test/render";
 
 const AT = "2026-11-10T09:00:00Z";
@@ -108,5 +112,70 @@ describe("a member's agent", () => {
       { qc: testClient(), route: "/agent" },
     );
     expect(await screen.findByText("runs page")).toBeInTheDocument();
+  });
+
+  it("a request about a task joins the conversation on that task, and starts a new one otherwise", () => {
+    expect(startsFresh({ run: null }, 5)).toBe(false);
+    expect(startsFresh({ run: { task_id: 5 } }, 5)).toBe(false);
+    expect(startsFresh({ run: { task_id: 9 } }, 5)).toBe(true);
+    expect(startsFresh({ run: { task_id: 9 } }, null)).toBe(false);
+    const task = { ref: "SHOP-5", title: "Fix the cart", description: "Totals are wrong" };
+    expect(commentPrompt(task, " Also the tax ", true)).toBe("New comment on SHOP-5:\n\nAlso the tax");
+    expect(commentPrompt(task, "Also the tax", false)).toBe("SHOP-5: Fix the cart\n\nTotals are wrong\n\nComment:\n\nAlso the tax");
+  });
+
+  it("Run agent on a task, and Comment and run agent, go to the member's own agent", async () => {
+    const task = { ...makeTask({ id: 5, ref: "SHOP-5", title: "Fix the cart", description: "Totals are wrong" }), comments: [], runs: [] };
+    let current = view();
+    const asked: Record<string, unknown>[] = [];
+    const comments: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit = {}) => {
+        const path = url.split("?")[0].replace(/^\/api/, "");
+        const method = init.method ?? "GET";
+        if (path === "/tasks/5" && method === "GET") return jsonResponse(200, task);
+        if (path === "/projects/SHOP") return jsonResponse(200, { id: 1, key: "SHOP", name: "Shop", color: "#3987e5", repos: [], servers: [], endpoints: [] });
+        if (path === "/agent" && method === "GET") return jsonResponse(200, current);
+        if (path === "/tasks/5/comments" && method === "POST") {
+          comments.push(JSON.parse(String(init.body)));
+          return jsonResponse(201, { id: comments.length, task_id: 5, body: comments[comments.length - 1].body, created_at: AT });
+        }
+        if (path === "/agent" && method === "POST") {
+          asked.push(JSON.parse(String(init.body)));
+          current = view({ run: run({ id: 20 + asked.length, task_id: 5, task_ref: "SHOP-5" }) });
+          return jsonResponse(201, current.run);
+        }
+        return jsonResponse(404, { error: { code: "not_found", message: path } });
+      }),
+    );
+    const user = userEvent.setup();
+    const qc = member();
+    qc.setQueryData(["member-agent"], current);
+    const drawer = (
+      <ShellProvider>
+        <TaskDrawer />
+      </ShellProvider>
+    );
+    const first = renderWithProviders(drawer, { qc, route: "/tasks?task=5" });
+    // Run agent: no machine, model or mode to pick — the task goes to the agent.
+    await user.click(await screen.findByRole("button", { name: "Run agent" }));
+    const dialog = await screen.findByRole("dialog", { name: "Run your agent on SHOP-5" });
+    expect(within(dialog).getByText("Claude Code · opus · High effort · on desk")).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Runner")).toBeNull();
+    expect(within(dialog).queryByLabelText("Permission mode")).toBeNull();
+    expect(within(dialog).getByLabelText("What should it do?")).toHaveValue("SHOP-5: Fix the cart\n\nTotals are wrong");
+    await user.click(within(dialog).getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(asked).toEqual([{ prompt: "SHOP-5: Fix the cart\n\nTotals are wrong", task_id: 5 }]));
+
+    // (It then shows the Agent page.) Back on the task: a comment handed to the agent
+    // is posted, then sent to the conversation open on this task.
+    await waitFor(() => expect(qc.getQueryData<MemberAgentView>(["member-agent"])?.run?.id).toBe(21));
+    first.unmount();
+    renderWithProviders(drawer, { qc, route: "/tasks?task=5" });
+    await user.type(await screen.findByLabelText("New comment"), "Also round the tax");
+    await user.click(screen.getByRole("button", { name: "Comment and run agent" }));
+    await waitFor(() => expect(comments).toEqual([{ body: "Also round the tax" }]));
+    await waitFor(() => expect(asked[1]).toEqual({ prompt: "New comment on SHOP-5:\n\nAlso round the tax", task_id: 5 }));
   });
 });
