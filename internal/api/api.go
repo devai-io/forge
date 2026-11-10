@@ -286,6 +286,8 @@ func (s *Server) Handler() http.Handler {
 	h("POST /api/runs/{id}/end", s.authed(s.endRunSession))
 	h("POST /api/runs/{id}/finish", s.authed(s.finishRun))
 	h("POST /api/runs/{id}/handoff", s.authed(s.elevated(s.handoffRun)))
+	h("GET /api/agent", s.authed(s.getMemberAgent))
+	h("POST /api/agent", s.authed(s.askMemberAgent))
 
 	h("POST /api/runner/pair", s.runnerPair)
 	h("POST /api/runner/heartbeat", s.runnerAuth(s.runnerHeartbeat))

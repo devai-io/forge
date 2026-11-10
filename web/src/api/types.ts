@@ -704,6 +704,25 @@ export type RunInput = {
 };
 
 /** GET/PATCH /api/agent-settings */
+/**
+ * A member's agent: the one agent a limited account works with, as the owner set it
+ * (`forge member-agent`): one machine, a model, an effort, a permission mode.
+ */
+export type MemberAgent = {
+  runner_id: number;
+  runner_name: string;
+  online: boolean;
+  model: string; // "" = Claude Code's default
+  effort: string; // "" = its default
+  permission_mode: string;
+};
+export type MemberAgentView = {
+  agent: MemberAgent | null; // null: this account has none (the owner, or a member without one)
+  projects: { key: string; name: string; color: string }[]; // where it can work
+  run: Run | null; // the conversation it has open
+  recent: Run[]; // the member's earlier ones, newest first
+};
+
 export type AgentSettings = {
   tmux: boolean; // agent runs live in tmux sessions on machines that support it
   remote_control: boolean; // their Claude Code sessions start with Remote Control on, under the tmux session's name

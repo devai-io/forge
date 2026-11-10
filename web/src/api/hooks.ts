@@ -43,6 +43,7 @@ import type {
   RunnerRole,
   NewSessionInput,
   TerminalHosts,
+  MemberAgentView,
   OpenProjectSessionInput,
   OpenProjectSessionResult,
   ProjectSessions,
@@ -1205,6 +1206,29 @@ export function useCloseProjectSession() {
       void qc.invalidateQueries({ queryKey: ["runs"] });
       void qc.invalidateQueries({ queryKey: keys.terminalHosts });
       setTimeout(() => void qc.invalidateQueries({ queryKey: keys.projectSessions }), 4_000);
+    },
+  });
+}
+
+/** A member's own agent (GET /api/agent); `agent` is null for an account without one. */
+export function useMemberAgent(enabled = true, refetchInterval: number | false = false) {
+  return useQuery({
+    queryKey: ["member-agent"],
+    queryFn: () => api.get<MemberAgentView>("/agent"),
+    enabled,
+    refetchInterval,
+  });
+}
+
+/** A request for the member's agent: one more message to its open conversation, or (fresh, or none open) a new one. */
+export function useAskMemberAgent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { prompt: string; project_key?: string; fresh?: boolean }) => api.post<Run>("/agent", body),
+    onSuccess: (run) => {
+      void qc.invalidateQueries({ queryKey: ["member-agent"] });
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+      void qc.invalidateQueries({ queryKey: keys.runEvents(run.id) });
     },
   });
 }

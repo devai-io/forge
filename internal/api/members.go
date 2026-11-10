@@ -2,10 +2,13 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/devai-io/forge/internal/store"
 )
@@ -43,6 +46,8 @@ var memberRoutes = map[string]bool{
 	"POST /api/runs/{id}/messages":             true,
 	"POST /api/runs/{id}/end":                  true,
 	"POST /api/runs/{id}/finish":               true,
+	"GET /api/agent":                           true,
+	"POST /api/agent":                          true,
 }
 
 func isMember(u *store.User) bool { return u.Role == store.RoleMember }
@@ -93,9 +98,18 @@ func (s *Server) memberGuard(w http.ResponseWriter, r *http.Request, u *store.Us
 				return deny()
 			}
 			// Steering a run (messages, answers, end) types into its
-			// machine: only on machines opened to members.
-			if r.Method != http.MethodGet && !s.store.RunnerMembersAllowed(ctx, run.RunnerID) {
-				return closedMachine(w)
+			// machine: only on a machine open to this member, and only a
+			// run it started itself — never a session somebody else
+			// opened, which may run with permissions a member cannot ask
+			// for.
+			if r.Method != http.MethodGet {
+				if !s.store.MemberMachineOpen(ctx, u.ID, run.RunnerID) {
+					return closedMachine(w)
+				}
+				if run.UserID == nil || *run.UserID != u.ID {
+					writeError(w, http.StatusForbidden, "forbidden", "that run is not yours to steer")
+					return false
+				}
 			}
 		}
 	}
@@ -142,13 +156,17 @@ func (s *Server) memberGuard(w http.ResponseWriter, r *http.Request, u *store.Us
 			writeError(w, http.StatusForbidden, "forbidden", "members cannot skip permission prompts")
 			return false
 		}
-		// The machine the prompt lands on: a resumed run's, the task's
-		// current agent's (the prompt becomes a message to it), or the
-		// one asked for.
+		// The machine the prompt lands on: a resumed run's (its own runs
+		// only), the task's current agent's when that is its own (the
+		// prompt becomes a message to it), or the one asked for — its
+		// agent's machine, when the owner gave it an agent.
 		machine := b.RunnerID
+		if a, err := s.store.MemberAgent(ctx, u.ID); err == nil {
+			machine = a.RunnerID
+		}
 		if b.ResumeRunID != nil {
 			prev, err := s.store.RunByID(ctx, *b.ResumeRunID)
-			if err != nil || !s.store.IsProjectMember(ctx, u.ID, prev.ProjectID) {
+			if err != nil || !s.store.IsProjectMember(ctx, u.ID, prev.ProjectID) || prev.UserID == nil || *prev.UserID != u.ID {
 				return deny()
 			}
 			machine = prev.RunnerID
@@ -164,12 +182,12 @@ func (s *Server) memberGuard(w http.ResponseWriter, r *http.Request, u *store.Us
 				return deny()
 			}
 			if b.ResumeRunID == nil && !b.Fresh {
-				if cur, err := s.store.TaskAgent(ctx, *b.TaskID); err == nil {
+				if cur, err := s.store.TaskAgent(ctx, *b.TaskID); err == nil && cur.UserID != nil && *cur.UserID == u.ID {
 					machine = cur.RunnerID
 				}
 			}
 		}
-		if !s.store.RunnerMembersAllowed(ctx, machine) {
+		if !s.store.MemberMachineOpen(ctx, u.ID, machine) {
 			return closedMachine(w)
 		}
 	}
@@ -181,12 +199,12 @@ func closedMachine(w http.ResponseWriter) bool {
 	return false
 }
 
-// memberRunners is a member's view of the machines: only those open to
-// members, without hostnames.
-func memberRunners(rs []store.Runner) []store.Runner {
+// memberRunners is a member's view of the machines: only those open to it
+// (its agent's machine, else the ones open to members), without hostnames.
+func memberRunners(rs []store.Runner, agent *store.MemberAgent) []store.Runner {
 	out := []store.Runner{}
 	for _, rn := range rs {
-		if rn.MembersAllowed {
+		if (agent != nil && rn.ID == agent.RunnerID) || (agent == nil && rn.MembersAllowed) {
 			rn.Hostname = ""
 			rn.Capabilities.CommandDetails = []store.CommandDetail{}
 			rn.Capabilities.Commands = []string{}
@@ -219,4 +237,175 @@ func scrubProject(p *store.ProjectDetail) {
 		p.Repos[i].Deploy = ""
 		p.Repos[i].Notes = ""
 	}
+}
+
+// ── A member's agent ──────────────────────────────────────────────────────
+//
+// The owner may give a member one agent (`forge member-agent USER MACHINE
+// [MODEL] [EFFORT] [MODE]`): Claude Code on that machine, with that model,
+// effort and permission mode, in one of the member's projects. The member
+// gets an Agent page with that one agent: it asks, answers the agent's
+// questions and permission prompts there, and starts over when it likes —
+// it chooses nothing else. The agent runs headless (its prompts come to
+// Forge: a member has no terminal), one conversation at a time.
+
+type memberAgentProject struct {
+	Key   string `json:"key"`
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}
+
+type memberAgentView struct {
+	Agent    *store.MemberAgent   `json:"agent"`
+	Projects []memberAgentProject `json:"projects"`
+	Run      *store.Run           `json:"run"`
+	Recent   []store.Run          `json:"recent"`
+}
+
+// memberAgentProjects is the member's projects the agent can work in (those
+// with a repo that has a path), with the repo its runs are filed under.
+func (s *Server) memberAgentProjects(ctx context.Context, u *store.User) ([]memberAgentProject, map[string]int64, error) {
+	keys, err := s.store.MemberProjectKeys(ctx, u.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	projects, err := s.store.ListProjectsOnly(ctx, store.TodayFor("UTC"), false, keys)
+	if err != nil {
+		return nil, nil, err
+	}
+	repos, err := s.store.AllRepos(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	out, repoOf := []memberAgentProject{}, map[string]int64{}
+	for _, p := range projects {
+		if !store.OneOf(p.Key, keys) {
+			continue
+		}
+		if repo := projectRepo(repos, p.Key, projectDir(repos, p.Key)); repo != nil {
+			out = append(out, memberAgentProject{Key: p.Key, Name: p.Name, Color: p.Color})
+			repoOf[p.Key] = repo.ID
+		}
+	}
+	return out, repoOf, nil
+}
+
+func (s *Server) getMemberAgent(w http.ResponseWriter, r *http.Request, u *store.User) {
+	ctx := r.Context()
+	v := memberAgentView{Projects: []memberAgentProject{}, Recent: []store.Run{}}
+	agent, err := s.store.MemberAgent(ctx, u.ID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusOK, v) // no agent: the page is not offered
+			return
+		}
+		writeErr(w, r, err)
+		return
+	}
+	v.Agent = agent
+	if v.Projects, _, err = s.memberAgentProjects(ctx, u); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if cur, err := s.store.MemberAgentRun(ctx, u.ID); err == nil {
+		pub := cur.Public()
+		v.Run = &pub
+	}
+	runs, err := s.store.MemberRuns(ctx, u.ID, 15)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	for _, run := range runs {
+		if v.Run == nil || run.ID != v.Run.ID {
+			v.Recent = append(v.Recent, run.Public())
+		}
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
+// askMemberAgent gives the member's agent a request: one more message to
+// the conversation it has open, or — with none, or with `fresh` — a new
+// conversation (the open one is finished first), on the agent's machine with
+// its model, effort and permission mode.
+func (s *Server) askMemberAgent(w http.ResponseWriter, r *http.Request, u *store.User) {
+	var in struct {
+		Prompt     string `json:"prompt"`
+		ProjectKey string `json:"project_key"`
+		Fresh      bool   `json:"fresh"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	ctx := context.WithoutCancel(r.Context())
+	agent, err := s.store.MemberAgent(ctx, u.ID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusForbidden, "forbidden", "this account has no agent")
+			return
+		}
+		writeErr(w, r, err)
+		return
+	}
+	in.Prompt = strings.TrimSpace(in.Prompt)
+	if in.Prompt == "" {
+		writeErr(w, r, &store.ValidationError{Field: "prompt", Message: "write what the agent should do"})
+		return
+	}
+	cur, err := s.store.MemberAgentRun(ctx, u.ID)
+	if err != nil {
+		cur = nil
+	}
+	if cur != nil && !in.Fresh {
+		run, ok, err := s.sendToAgent(ctx, cur, in.Prompt, false)
+		if err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		if ok {
+			out := run.Public()
+			out.Continued = true
+			writeJSON(w, http.StatusOK, out)
+			return
+		}
+		// It cannot take another message (an older agent on that machine): start over.
+	}
+	// One agent, one conversation: whatever this member still has open ends here.
+	if mine, err := s.store.MemberRuns(ctx, u.ID, 100); err == nil {
+		for _, old := range mine {
+			if store.OneOf(old.Status, store.RunOpenStatuses) {
+				if _, err := s.store.FinishRunByUser(ctx, old.ID); err == nil {
+					s.inboxes.notify(old.ID)
+				}
+			}
+		}
+	}
+	projects, repoOf, err := s.memberAgentProjects(ctx, u)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	key := strings.ToUpper(strings.TrimSpace(in.ProjectKey))
+	if key == "" && len(projects) > 0 {
+		key = projects[0].Key
+	}
+	repoID, ok := repoOf[key]
+	if !ok {
+		writeErr(w, r, &store.ValidationError{Field: "project_key", Message: "pick one of your projects (it needs a repo the agent can work in)"})
+		return
+	}
+	rn, err := s.store.RunnerByID(ctx, agent.RunnerID)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	run, err := s.store.CreateRun(ctx, store.RunInput{RunnerID: agent.RunnerID, RepoID: repoID, Kind: "agent", Prompt: in.Prompt,
+		Engine: "claude", Model: agent.Model, Effort: agent.Effort, PermissionMode: agent.PermissionMode,
+		Interactive: rn.LastSeenAt == nil || rn.Capabilities.Interactive, UserID: &u.ID})
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	s.wakeups.notify(run.RunnerID)
+	writeJSON(w, http.StatusCreated, run.Public())
 }

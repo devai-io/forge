@@ -42,10 +42,40 @@ endpoints, infra notes and repo paths are blanked, tasks cannot change project,
 and `POST /api/runs` accepts only `kind: "agent"` and never
 `permission_mode: "bypassPermissions"`. A member's prompts run only on machines
 opened with `forge member-machine <machine> on` (`Runner.members_allowed`,
-default off): `POST /api/runs` whose machine (the one asked for, the resumed
-run's, or the task's current agent's) is closed → `403`, and so is any
-non-GET on a run whose machine is closed. `GET /api/runners` lists only open
-machines to a member, without hostnames or named commands.
+default off) — or, for a member with an agent of its own (below), on that
+agent's machine and no other: `POST /api/runs` whose machine (the one asked
+for, the resumed run's, or the task's current agent's) is closed → `403`, and
+so is any non-GET on a run whose machine is closed. A member steers
+(messages, answers, cancel, finish, `resume_run_id`) only the runs it started
+itself (`403`/`404` otherwise): never a session the owner opened. A member's
+runs are headless — what the agent asks comes to Forge, a member has no
+terminal — and never join the project agent's conversation.
+`GET /api/runners` lists only open machines to a member, without hostnames or
+named commands.
+
+**A member's agent.** `forge member-agent <username> <machine> [model] [effort] [mode]`
+gives a member one agent: Claude Code on that machine only, with that model
+and effort (empty = Claude Code's defaults) and permission mode (default
+`acceptEdits`; never `bypassPermissions`); `forge member-agent <username> off`
+takes it away. The member then has an **Agent** page in place of Agents, with
+that one agent and one conversation at a time, and every agent run it queues
+(`POST /api/runs` included) is forced to that machine, model, effort and mode.
+
+```ts
+type MemberAgent = { runner_id: number; runner_name: string; online: boolean;
+                     model: string; effort: string; permission_mode: string };
+type MemberAgentView = {
+  agent: MemberAgent | null;                                // null: no agent (any other account)
+  projects: { key: string; name: string; color: string }[]; // the member's projects with a repo to work in
+  run: Run | null;                                          // the conversation it has open (the member's latest open agent run)
+  recent: Run[];                                            // the member's earlier ones, newest first (15)
+};
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | /api/agent | – | `MemberAgentView` |
+| POST | /api/agent | `{prompt, project_key?, fresh?}` | With a conversation open and no `fresh`: one more message to it → `200 Run` with `continued: true`. Otherwise every run the member still has open is finished and a new one is queued on the agent's machine with its model, effort and mode (interactive, headless) in `project_key` (default: the member's first project) → `201 Run`. `403` without an agent, `422` for an empty prompt or a project that is not the member's |
 
 ## Types
 

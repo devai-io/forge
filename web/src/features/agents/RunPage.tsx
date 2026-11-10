@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Markdown } from "@/components/ui/Markdown";
 import { RelativeTime } from "@/components/ui/RelativeTime";
+import { useUser } from "@/lib/auth";
 import { useNow } from "@/lib/now";
 import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import { useToast } from "@/components/ui/Toast";
@@ -71,14 +72,17 @@ function RunView({
   const navigate = useNavigate();
   const toast = useToast();
   const { newRun, openTask } = useShell();
+  const member = useUser().role === "member"; // no terminal: nothing to open a session in
   const open = isOpenRun(run);
   const waiting = run.status === "waiting";
   // The run can be taken into Claude Code once it has a session and is not mid-work.
   // A run living in tmux is always one attach away (its session started again when Claude exited).
   const inTmux = !!run.tmux_session;
-  const canHandoff = inTmux
-    ? run.status !== "queued"
-    : run.kind === "agent" && !!run.session_id && !run.handoff && run.status !== "queued" && !(run.status === "running" && !run.interactive);
+  const canHandoff = member
+    ? false
+    : inTmux
+      ? run.status !== "queued"
+      : run.kind === "agent" && !!run.session_id && !run.handoff && run.status !== "queued" && !(run.status === "running" && !run.interactive);
   const openInClaude = () =>
     handoff.mutate(run.id, {
       onSuccess: ({ runner_id, session }) => {
@@ -280,7 +284,7 @@ function RunView({
                 </button>
               </dd>
             </div>
-          ) : run.resume_hint ? (
+          ) : run.resume_hint && !member ? (
             <div className="col-span-2 sm:col-span-4 lg:col-span-6">
               <dt className="text-fg-3">
                 In a terminal on {run.runner_name}{" "}

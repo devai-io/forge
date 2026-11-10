@@ -57,6 +57,10 @@ Server (workspace: FORGE_HOME, default ~/.config/forge):
   forge grant <username> <KEY>           give a member another project
   forge revoke <username> <KEY>          take a project away from a member
   forge member-machine <machine> on|off  let members run agents on a machine (off by default)
+  forge member-agent <username> <machine> [model] [effort] [mode]
+                                         give a member one agent: that machine only, that model and effort
+                                         (mode: acceptEdits by default, never bypassPermissions)
+  forge member-agent <username> off      take it away (forge member-agent <username> shows it)
   forge reset-password <username>        set a new random password
   forge disable-2fa <username>           turn two-factor off
   forge backup                           snapshot the database into backups/ now
@@ -334,6 +338,40 @@ func runServer(args []string) error {
 		}
 		fmt.Printf("member runs on %s: %s\n", args[1], args[2])
 		return nil
+	case "member-agent":
+		if len(args) < 2 || len(args) > 6 {
+			return errors.New("usage: forge member-agent <username> <machine> [model] [effort] [mode] | forge member-agent <username> off")
+		}
+		u, err := st.UserByLogin(ctx, args[1])
+		if err != nil {
+			return fmt.Errorf("user %q: %w", args[1], err)
+		}
+		show := func(a *store.MemberAgent) {
+			fmt.Printf("%s's agent: on %s only · model %s · effort %s · %s\n", u.Username, a.RunnerName,
+				orDefault(a.Model), orDefault(a.Effort), a.PermissionMode)
+		}
+		switch {
+		case len(args) == 2:
+			a, err := st.MemberAgent(ctx, u.ID)
+			if err != nil {
+				fmt.Printf("%s has no agent\n", u.Username)
+				return nil
+			}
+			show(a)
+		case args[2] == "off":
+			if err := st.ClearMemberAgent(ctx, u.ID); err != nil {
+				return err
+			}
+			fmt.Printf("%s has no agent now\n", u.Username)
+		default:
+			opt := append(args[3:], "", "", "")
+			a, err := st.SetMemberAgent(ctx, u.ID, args[2], opt[0], opt[1], opt[2])
+			if err != nil {
+				return err
+			}
+			show(a)
+		}
+		return nil
 	case "reset-password":
 		if len(args) != 2 {
 			return errors.New("usage: forge reset-password <username>")
@@ -517,6 +555,13 @@ func createMember(ctx context.Context, cfg config.Config, st *store.Store, usern
 	fmt.Printf("created member %s <%s> on %s\npassword: %s\nthey change it under Settings after signing in.\n",
 		u.Username, u.Email, strings.ToUpper(strings.Join(keys, ", ")), password)
 	return nil
+}
+
+func orDefault(s string) string {
+	if s == "" {
+		return "default"
+	}
+	return s
 }
 
 func resetPassword(ctx context.Context, st *store.Store, username string) error {

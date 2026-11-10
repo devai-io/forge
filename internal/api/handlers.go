@@ -460,7 +460,8 @@ func (s *Server) listRunners(w http.ResponseWriter, r *http.Request, u *store.Us
 		return
 	}
 	if isMember(u) {
-		rs = memberRunners(rs)
+		agent, _ := s.store.MemberAgent(r.Context(), u.ID)
+		rs = memberRunners(rs, agent)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"runners": rs})
 }
@@ -542,10 +543,22 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request, u *store.User
 	if !decode(w, r, &in) {
 		return
 	}
+	in.UserID = &u.ID
+	member := isMember(u)
+	if member {
+		// A member with an agent of its own runs everything as that agent:
+		// its machine, model, effort and permission mode, whatever was asked.
+		if a, err := s.store.MemberAgent(r.Context(), u.ID); err == nil && in.Kind == "agent" {
+			in.Engine, in.Model, in.Effort, in.PermissionMode, in.Worktree = "claude", a.Model, a.Effort, a.PermissionMode, false
+			if in.ResumeRunID == nil {
+				in.RunnerID = a.RunnerID
+			}
+		}
+	}
 	// One project, one agent: a run for a project whose agent has a
 	// conversation open (or for a task that has an agent, or Continue on a
 	// run) goes to that agent as a message.
-	if cont, ok, err := s.continueAgent(r.Context(), in, isMember(u)); err != nil {
+	if cont, ok, err := s.continueAgent(r.Context(), in, u); err != nil {
 		writeErr(w, r, err)
 		return
 	} else if ok {
@@ -560,9 +573,12 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request, u *store.User
 		writeErr(w, r, err)
 		return
 	}
-	// A member's request never lands in a session somebody else started (it
-	// may run with permissions a member cannot ask for): always its own.
-	run = s.placeInTmux(r.Context(), run, in.Fresh || isMember(u))
+	// A member's run stays headless: what the agent asks (questions,
+	// permissions) comes to Forge, where the member answers — it has no
+	// terminal to answer in.
+	if !member {
+		run = s.placeInTmux(r.Context(), run, in.Fresh)
+	}
 	s.wakeups.notify(run.RunnerID)
 	writeJSON(w, http.StatusCreated, run.Public())
 }

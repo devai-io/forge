@@ -407,10 +407,11 @@ func (s *Server) projectAgentRun(ctx context.Context, in store.RunInput) *store.
 // whose agent has a conversation open becomes a message to it; failing that,
 // one for a task that already has an agent goes to that one (reopening it if
 // it finished) — unless the user asked for a fresh agent. Continue on a run
-// is the same thing for that run. A member's request goes to a task's agent
-// only, never into the project agent's conversation. ok is false when there
-// is nothing to continue.
-func (s *Server) continueAgent(ctx context.Context, in store.RunInput, member bool) (*store.Run, bool, error) {
+// is the same thing for that run. A member's request goes only to a run that
+// member started, never into the project agent's conversation. ok is false
+// when there is nothing to continue.
+func (s *Server) continueAgent(ctx context.Context, in store.RunInput, u *store.User) (*store.Run, bool, error) {
+	member := isMember(u)
 	if in.Kind != "agent" || in.Fresh || in.ChatTurnID != nil {
 		return nil, false, nil
 	}
@@ -436,6 +437,9 @@ func (s *Server) continueAgent(ctx context.Context, in store.RunInput, member bo
 	}
 	if in.Engine != "" && in.Engine != cur.Engine && in.ResumeRunID == nil {
 		return nil, false, nil // another engine is another agent
+	}
+	if member && (cur.UserID == nil || *cur.UserID != u.ID) {
+		return nil, false, nil // a member's request goes only to a run it started
 	}
 	return s.sendToAgent(ctx, cur, in.Prompt, in.OneTurn)
 }

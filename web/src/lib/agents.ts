@@ -272,3 +272,11 @@ export function pairingState(
 export function awaitingPairing(r: Pick<Runner, "last_seen_at" | "pair_expires_at">, now: number): boolean {
   return !r.last_seen_at && !!r.pair_expires_at && Date.parse(r.pair_expires_at) > now;
 }
+
+/** A member's agent in a line: "Claude Code · opus · High effort · on desk". */
+export function agentLine(a: { model: string; effort: string; runner_name: string }): string {
+  return ["Claude Code", a.model || "default model", a.effort ? `${EFFORT_LABEL[a.effort] ?? a.effort} effort` : "", `on ${a.runner_name}`]
+    .filter(Boolean)
+    .join(" · ");
+}
+

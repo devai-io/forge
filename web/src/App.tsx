@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { FullPageSpinner } from "@/components/ui/Spinner";
 import { AgentsPage } from "@/features/agents/AgentsPage";
+import { MemberAgentPage } from "@/features/agents/MemberAgentPage";
 import { MachinesPage } from "@/features/agents/MachinesPage";
 import { RunPage } from "@/features/agents/RunPage";
 import { ForgotPage, LoginPage, ResetPage } from "@/features/auth/AuthPages";
@@ -66,6 +67,7 @@ export function App() {
           <Route path="terminal/:runnerId/:session" element={page(<TerminalView />)} />
           <Route path="editor" element={page(<EditorPage />)} />
           <Route path="checkup" element={<CheckupPage />} />
+          <Route path="agent" element={<MemberAgentPage />} />
           <Route path="tasks" element={<TasksPage />} />
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="p/:key" element={<ProjectPage />} />

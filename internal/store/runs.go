@@ -253,7 +253,7 @@ SELECT r.id, coalesce(r.runner_id, 0), coalesce(rn.name, r.runner_name), coalesc
        CASE WHEN r.status <> 'running' THEN ''
             WHEN EXISTS (SELECT 1 FROM run_prompts pr WHERE pr.run_id = r.id AND pr.status = 'pending') THEN 'answer'
             ELSE r.awaiting END,
-       r.inbox_after, r.resumes, r.finish_requested, r.handoff, r.one_turn, r.tmux_session, r.origin
+       r.inbox_after, r.resumes, r.finish_requested, r.handoff, r.one_turn, r.tmux_session, r.origin, r.user_id
 FROM runs r
 LEFT JOIN projects p ON p.id = r.project_id
 LEFT JOIN repos rp ON rp.id = r.repo_id
@@ -270,7 +270,7 @@ func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 		&r.ExitCode, &r.CostUSD, &r.NumTurns, &r.DurationMS, &r.CreatedAt, &r.StartedAt, &r.FinishedAt,
 		&r.RepoPath, &r.ResumeSession, &r.ModelNote, &r.Engine, &r.Effort, &r.ChatTurnID, &usage, &r.AppendSystem,
 		&r.Interactive, &r.Cwd, &r.Awaiting, &r.InboxAfter, &r.Resumes, &r.FinishRequested, &r.Handoff, &r.OneTurn,
-		&r.TmuxSession, &r.Origin); err != nil {
+		&r.TmuxSession, &r.Origin, &r.UserID); err != nil {
 		return nil, mapErr(err)
 	}
 	r.Usage = json.RawMessage(usage)
@@ -428,6 +428,8 @@ type RunInput struct {
 	// mode (it asks in its terminal): a project agent started without
 	// skipping permissions. Set by the server only; the run lives in tmux.
 	DefaultMode bool `json:"-"`
+	// UserID is the account that queues the run. Set by the server only.
+	UserID *int64 `json:"-"`
 	// Interactive keeps the session open for questions and follow-ups (an
 	// agent run on a machine that supports it).
 	Interactive bool `json:"interactive"`
@@ -587,12 +589,12 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO runs (runner_id, runner_name, project_id, repo_id, task_id, kind, prompt, command,
 			                  permission_mode, model, worktree, resume_run_id, resume_session, model_note, engine, effort, chat_turn_id,
-			                  append_system, interactive, cwd, one_turn)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21) RETURNING id`,
+			                  append_system, interactive, cwd, one_turn, user_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING id`,
 			runner.ID, runner.Name, projectID, repoID, in.TaskID, in.Kind, in.Prompt, in.Command,
 			in.PermissionMode, in.Model, in.Worktree, in.ResumeRunID, resumeSession, in.ModelNote, in.Engine,
 			in.Effort, in.ChatTurnID, in.AppendSystem, in.Interactive, in.Cwd,
-			in.OneTurn && in.Kind == "agent" && in.ChatTurnID == nil).Scan(&id); err != nil {
+			in.OneTurn && in.Kind == "agent" && in.ChatTurnID == nil, in.UserID).Scan(&id); err != nil {
 			return mapErr(err)
 		}
 		if home {

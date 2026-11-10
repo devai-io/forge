@@ -421,6 +421,9 @@ type Run struct {
 	// Continued: set on the answer to POST /api/runs when the request went
 	// to the task's existing agent instead of starting a new run.
 	Continued bool `json:"continued,omitempty"`
+	// UserID is the account that started the run (nil: before v0.1.47, or a
+	// session started on the machine). A member steers only its own.
+	UserID *int64 `json:"-"`
 }
 
 type RunEvent struct {
