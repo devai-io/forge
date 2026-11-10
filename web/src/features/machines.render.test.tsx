@@ -16,7 +16,7 @@ const runner = (o: Partial<Runner>): Runner => ({
   running: 0,
   created_at: "2026-09-01T00:00:00Z",
   role: "master",
-  pair_expires_at: null,
+  pair_expires_at: null, members_allowed: false,
   ...o,
 });
 

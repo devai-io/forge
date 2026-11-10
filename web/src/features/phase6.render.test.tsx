@@ -104,7 +104,7 @@ describe("PairingDialog", () => {
       running: 0,
       created_at: new Date().toISOString(),
       role: "master",
-      pair_expires_at: expires,
+      pair_expires_at: expires, members_allowed: false,
       capabilities: { claude: false, permission_modes: [], commands: [], max_concurrent: 0, command_details: [], ci: false, terminal: false, code: false },
     } as Runner;
     let polls = 0;
