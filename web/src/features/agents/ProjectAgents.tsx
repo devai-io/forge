@@ -1,4 +1,4 @@
-// The project buttons at the top of Agents: one big square per active
+// The project buttons at the top of Agents: one small square per active
 // project. A project has one agent — a Claude Code session in the tmux
 // session F-<Project> on the master, Remote Control on — and its button says
 // what that agent is doing. Clicking it asks for a model, an effort and,
@@ -95,9 +95,9 @@ function ProjectButtons() {
         ) : null}
       </div>
       {shown.length ? (
-        <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-3 md:grid-cols-5 lg:grid-cols-6" aria-label="Project agents">
+        <ul className="flex flex-wrap gap-2" aria-label="Project agents">
           {shown.map((g) => (
-            <li key={g.key} className="min-w-0">
+            <li key={g.key}>
               <ProjectButton group={g} onClick={() => setPicked(g.key)} />
             </li>
           ))}
@@ -115,7 +115,7 @@ function ProjectButtons() {
   );
 }
 
-/** One project: a big square that says what its agent is doing. */
+/** One project: a small square — its key and what its agent is doing; the name is in its tooltip and label. */
 function ProjectButton({ group, onClick }: { group: AgentGroup; onClick: () => void }) {
   const st = groupStatus(group);
   const open = openCount(group);
@@ -125,29 +125,28 @@ function ProjectButton({ group, onClick }: { group: AgentGroup; onClick: () => v
       type="button"
       onClick={onClick}
       aria-label={`${group.name}: ${st.tone === "closed" ? "not open — start its agent" : st.label}${open > 1 ? `, ${open} sessions` : ""}`}
-      title={`${group.primary.name} · ${shortHome(group.primary.dir)}`}
+      title={`${group.name} · ${group.primary.name} · ${shortHome(group.primary.dir)}`}
       className={clsx(
-        "group relative flex aspect-square w-full min-w-0 flex-col justify-between rounded-2xl border p-2.5 text-left transition-[background,box-shadow,transform] duration-100 sm:p-3.5",
-        "hover:shadow-pop active:scale-[0.98]",
+        "group relative flex size-[4.25rem] flex-col justify-between rounded-xl border p-1.5 text-left transition-[background,box-shadow,transform] duration-100",
+        "hover:shadow-pop active:scale-[0.97]",
         lit ? "border-line-strong" : "border-line bg-surface hover:bg-surface-2",
       )}
       style={lit ? { background: `color-mix(in srgb, ${group.color || "var(--accent)"} 13%, var(--surface))` } : undefined}
     >
-      <span className="flex min-w-0 items-center gap-1.5">
-        <ColorDot color={group.color} className="size-3 rounded-[4px] sm:size-3.5" />
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] font-medium tracking-wide text-fg-2 sm:text-[12px]">{group.key}</span>
+      <span className="flex h-3 items-center justify-between">
+        <ColorDot color={group.color} className="size-2.5" />
         {open > 1 ? (
-          <span className="tabular shrink-0 rounded-full bg-surface px-1.5 text-[10.5px] font-medium text-fg-2 ring-1 ring-line-strong" aria-hidden>
+          <span className="tabular rounded-full bg-surface px-1 text-[9.5px] leading-3 font-medium text-fg-2 ring-1 ring-line-strong" aria-hidden>
             {open}
           </span>
         ) : null}
       </span>
-      <span className="line-clamp-2 text-[14px] leading-tight font-semibold break-words sm:text-[16px]">{group.name}</span>
-      <span className={clsx("flex min-w-0 items-center gap-1.5 text-[11.5px] sm:text-[12.5px]", lit ? "text-fg" : "text-fg-3")}>
+      <span className="truncate font-mono text-[11.5px] leading-none font-semibold tracking-wide">{group.key}</span>
+      <span className={clsx("flex min-w-0 items-center gap-1 text-[9.5px] leading-none", lit ? "text-fg" : "text-fg-3")}>
         {st.tone === "closed" ? (
-          <Play className="size-3 shrink-0 group-hover:text-accent" aria-hidden />
+          <Play className="size-2.5 shrink-0 group-hover:text-accent" aria-hidden />
         ) : (
-          <span className={clsx("size-2 shrink-0 rounded-full", DOT[st.tone])} aria-hidden />
+          <span className={clsx("size-1.5 shrink-0 rounded-full", DOT[st.tone])} aria-hidden />
         )}
         <span className="truncate font-medium">{st.label}</span>
       </span>
