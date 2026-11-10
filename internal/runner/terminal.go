@@ -2,6 +2,8 @@ package runner
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -259,6 +262,18 @@ type controlMsg struct {
 	// RemoteControl starts Claude with --remote-control <name>: the session
 	// can be driven from claude.ai/code and the Claude app under that name.
 	RemoteControl string `json:"remote_control"`
+	// An agent run in tmux (api/tmux_agents.go): SessionID starts a new
+	// Claude Code session under that id (--session-id); PermissionMode,
+	// Model, Effort and Worktree are claude's flags; Env is exported for the
+	// session (FORGE_RUN_ID, which its hooks report). Reuse types the command
+	// into the session when it already exists (its Claude has exited).
+	SessionID      string            `json:"session_id"`
+	PermissionMode string            `json:"permission_mode"`
+	Model          string            `json:"model"`
+	Effort         string            `json:"effort"`
+	Worktree       string            `json:"worktree"`
+	Env            map[string]string `json:"env"`
+	Reuse          bool              `json:"reuse"`
 	// SSH is the destination a Start "ssh" session connects to.
 	SSH     string          `json:"ssh"`
 	Name    string          `json:"name"`
@@ -306,6 +321,8 @@ func (r *Runner) serveControl(ctx context.Context, c *websocket.Conn) {
 				reply(m.ID, text, err)
 			case "keys":
 				reply(m.ID, "", r.sendKeys(ctx, m))
+			case "paste":
+				reply(m.ID, "", r.paste(ctx, m))
 			case "create":
 				reply(m.ID, "", r.createSession(ctx, m))
 			case "rc_url":
@@ -376,8 +393,12 @@ var resumeID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{7,63}$`)
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 func (r *Runner) createSession(ctx context.Context, m controlMsg) error {
+	exists := false
 	if _, err := r.tmux(ctx, "has-session", "-t", "="+m.Session); err == nil {
-		return nil // exists: attaching to it is what the caller wants
+		if !m.Reuse || m.Start != "claude" {
+			return nil // exists: attaching to it is what the caller wants
+		}
+		exists = true // an agent's session whose Claude exited: start it again in there
 	}
 	dir, err := os.UserHomeDir()
 	if err != nil {
@@ -397,8 +418,10 @@ func (r *Runner) createSession(ctx context.Context, m controlMsg) error {
 	if m.SkipPermissions && (!agent || !contains(r.cfg.PermissionModes, "bypassPermissions")) {
 		return errors.New("skipping permissions is not enabled on this runner (bypassPermissions in its permission_modes)")
 	}
-	if _, err := r.tmux(ctx, "new-session", "-d", "-s", m.Session, "-c", dir, "-x", "200", "-y", "50"); err != nil {
-		return err
+	if !exists {
+		if _, err := r.tmux(ctx, "new-session", "-d", "-s", m.Session, "-c", dir, "-x", "200", "-y", "50"); err != nil {
+			return err
+		}
 	}
 	if m.Start == "ssh" {
 		time.Sleep(300 * time.Millisecond) // let the shell print its prompt
@@ -414,7 +437,7 @@ func (r *Runner) createSession(ctx context.Context, m controlMsg) error {
 	if m.Resume != "" && !resumeID.MatchString(m.Resume) {
 		return errors.New("invalid session id")
 	}
-	line := r.cfg.ClaudePath
+	var line string
 	if m.Start == "codex" {
 		line = r.cfg.CodexPath
 		if m.Resume != "" {
@@ -423,22 +446,192 @@ func (r *Runner) createSession(ctx context.Context, m controlMsg) error {
 		if m.SkipPermissions {
 			line += " --dangerously-bypass-approvals-and-sandbox"
 		}
+		if strings.TrimSpace(m.Prompt) != "" && m.Resume == "" {
+			line += " " + shellQuote(m.Prompt)
+		}
 	} else {
-		if m.Resume != "" {
-			line += " --resume " + m.Resume
-		}
-		if m.SkipPermissions {
-			line += " --dangerously-skip-permissions"
-		}
-		if m.RemoteControl != "" {
-			line += " --remote-control " + shellQuote(m.RemoteControl)
+		var err error
+		if line, err = r.claudeLine(m, dir); err != nil {
+			return err
 		}
 	}
-	if strings.TrimSpace(m.Prompt) != "" && m.Resume == "" {
-		line += " " + shellQuote(m.Prompt)
+	if exists {
+		line = "cd " + shellQuote(dir) + " && " + line
 	}
 	time.Sleep(300 * time.Millisecond) // let the shell print its prompt
-	return r.sendKeys(ctx, controlMsg{Session: m.Session, Text: line, Enter: true})
+	if err := r.sendKeys(ctx, controlMsg{Session: m.Session, Text: line, Enter: true}); err != nil {
+		return err
+	}
+	if m.Start == "claude" && (m.SessionID != "" || len(m.Env) > 0) {
+		// An agent run nobody is watching: answer Claude Code's first-run
+		// questions the way its headless runs never have to.
+		go r.answerStartup(context.WithoutCancel(ctx), m.Session, m.PermissionMode == "bypassPermissions" || m.SkipPermissions)
+	}
+	return nil
+}
+
+// startupPrompts are the questions interactive Claude Code may ask before it
+// takes a prompt, and the option that lets the run go on: trusting the
+// folder (already inside this machine's allowed_roots, where headless runs
+// work without asking), and accepting --dangerously-skip-permissions (only
+// when this machine's permission_modes allow bypassPermissions).
+var startupPrompts = []struct {
+	marker string
+	bypass bool
+}{
+	{marker: "Yes, I trust this folder"},
+	{marker: "Yes, I accept", bypass: true},
+}
+
+// answerStartup watches a just-started agent session for 20 seconds and
+// picks the "yes" option (the second entry: Down, Enter) of each startup
+// question it shows.
+func (r *Runner) answerStartup(ctx context.Context, session string, bypass bool) {
+	m := controlMsg{Session: session}
+	answered := map[string]bool{}
+	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
+		pane, err := r.capture(ctx, controlMsg{Session: session, Lines: 40})
+		if err != nil {
+			return
+		}
+		for _, p := range startupPrompts {
+			// Only a dialog (it says how to confirm), never the same words in the conversation.
+			if answered[p.marker] || !strings.Contains(pane, p.marker) || !strings.Contains(pane, "Enter to confirm") ||
+				(p.bypass && !(bypass && contains(r.cfg.PermissionModes, "bypassPermissions"))) {
+				continue
+			}
+			answered[p.marker] = true
+			_, _ = r.tmux(ctx, "send-keys", "-t", target(m), "Down")
+			time.Sleep(150 * time.Millisecond)
+			_, _ = r.tmux(ctx, "send-keys", "-t", target(m), "Enter")
+			slog.Info("answered a Claude Code startup question", "session", session, "answer", p.marker)
+		}
+	}
+}
+
+// envName is a variable name Forge may export into a session's command.
+var envName = regexp.MustCompile(`^FORGE_[A-Z0-9_]{1,40}$`)
+
+// modelName is what --model may carry (an alias or a model id).
+var modelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,79}$`)
+
+// maxInlinePrompt: a longer prompt goes to a file the session is pointed at,
+// rather than through the shell (typed keys, `ps`).
+const maxInlinePrompt = 2000
+
+// claudeLine is the shell line that starts Claude Code in a terminal: a
+// plain session, a resumed one, or an agent run's (with its own session id,
+// permission mode, model, effort, worktree and first prompt). Everything the
+// server sends is checked against this machine's config before it becomes a
+// flag, the way a headless run's is.
+func (r *Runner) claudeLine(m controlMsg, dir string) (string, error) {
+	var b strings.Builder
+	keys := make([]string, 0, len(m.Env))
+	for k := range m.Env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if !envName.MatchString(k) {
+			return "", fmt.Errorf("invalid variable %q", k)
+		}
+		b.WriteString(k + "=" + shellQuote(m.Env[k]) + " ")
+	}
+	b.WriteString(r.cfg.ClaudePath)
+	switch {
+	case m.Resume != "":
+		b.WriteString(" --resume " + m.Resume)
+	case m.SessionID != "":
+		if !resumeID.MatchString(m.SessionID) {
+			return "", errors.New("invalid session id")
+		}
+		b.WriteString(" --session-id " + m.SessionID)
+	}
+	if m.PermissionMode != "" {
+		if !contains(r.cfg.PermissionModes, m.PermissionMode) {
+			return "", fmt.Errorf("permission mode %q is not enabled on this runner", m.PermissionMode)
+		}
+		b.WriteString(" " + strings.Join(permissionArgs(m.PermissionMode), " "))
+	} else if m.SkipPermissions {
+		b.WriteString(" --dangerously-skip-permissions")
+	}
+	if m.Model != "" {
+		if !modelName.MatchString(m.Model) {
+			return "", errors.New("invalid model")
+		}
+		b.WriteString(" --model " + shellQuote(m.Model))
+	}
+	if m.Effort != "" {
+		if !contains(claudeEfforts, m.Effort) {
+			return "", errors.New("invalid effort")
+		}
+		b.WriteString(" --effort " + m.Effort)
+	}
+	if m.Worktree != "" {
+		if !tmuxName.MatchString(m.Worktree) {
+			return "", errors.New("invalid worktree name")
+		}
+		b.WriteString(" --worktree " + m.Worktree)
+	}
+	if m.RemoteControl != "" {
+		b.WriteString(" --remote-control " + shellQuote(m.RemoteControl))
+	}
+	if prompt := strings.TrimSpace(m.Prompt); prompt != "" {
+		if len(prompt) > maxInlinePrompt {
+			path, err := writePromptFile(m.Session, prompt)
+			if err != nil {
+				return "", err
+			}
+			prompt = "Your request is in " + path + " — read it and do what it says."
+		}
+		b.WriteString(" " + shellQuote(prompt))
+	}
+	return b.String(), nil
+}
+
+// writePromptFile keeps a long prompt in the user cache dir for the session
+// to read (0600: it may say things that are nobody else's business).
+func writePromptFile(session, prompt string) (string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(base, "forge", "prompts")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, fmt.Sprintf("%s-%d.md", session, time.Now().UnixNano()))
+	return path, os.WriteFile(path, []byte(prompt), 0o600)
+}
+
+func randomName() string {
+	b := make([]byte, 6)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// paste puts text into a session's pane as one bracketed paste (a message
+// with line breaks stays one message in Claude Code), then presses Enter.
+func (r *Runner) paste(ctx context.Context, m controlMsg) error {
+	if m.Text == "" {
+		return errors.New("nothing to paste")
+	}
+	buf := "forge-" + randomName()
+	load := exec.CommandContext(ctx, r.cfg.TmuxPath, "load-buffer", "-b", buf, "-")
+	load.Env = r.tmuxEnv()
+	load.Stdin = strings.NewReader(m.Text)
+	if out, err := load.CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux load-buffer: %s", strings.TrimSpace(string(out)))
+	}
+	if _, err := r.tmux(ctx, "paste-buffer", "-p", "-d", "-b", buf, "-t", target(m)); err != nil {
+		return err
+	}
+	if !m.Enter {
+		return nil
+	}
+	time.Sleep(150 * time.Millisecond) // let the TUI take the paste before the key that sends it
+	_, err := r.tmux(ctx, "send-keys", "-t", target(m), "Enter")
+	return err
 }
 
 // rcURL is the session link Claude Code prints once Remote Control is on.

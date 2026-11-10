@@ -162,6 +162,9 @@ func (s *Server) runnerControl(w http.ResponseWriter, r *http.Request, rn *store
 	s.terminals.controls[rn.ID] = cc
 	s.terminals.mu.Unlock()
 	slog.Info("runner control connected", "runner", rn.Name)
+	if rn.Capabilities.TmuxAgents {
+		go s.dispatchTmux(context.Background(), rn.ID) // what waited for this machine to come back
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

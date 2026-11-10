@@ -16,8 +16,20 @@ const STATUS: Record<RunStatus, { label: string; tone: "neutral" | "accent" | "g
   cancelled: { label: "Cancelled", tone: "outline" },
 };
 
-export function RunStatusBadge({ run }: { run: Pick<Run, "status" | "cancel_requested"> & { awaiting?: Run["awaiting"] } }) {
+export function RunStatusBadge({
+  run,
+}: {
+  run: Pick<Run, "status" | "cancel_requested"> & { awaiting?: Run["awaiting"]; tmux_session?: string };
+}) {
   const s = STATUS[run.status];
+  // A session in tmux whose Claude exited is not waiting on anyone: a message starts it again.
+  if (run.tmux_session && run.status === "waiting") {
+    return (
+      <Badge tone="outline" dot title="Claude Code is not open in its tmux session; a message (or Open in terminal) starts it again">
+        Closed
+      </Badge>
+    );
+  }
   // An interactive session waiting on the user says so.
   const waiting = run.status === "running" && !run.cancel_requested && run.awaiting;
   if (waiting) {
@@ -79,6 +91,11 @@ export function RunRow({ run, showProject = true }: { run: Run; showProject?: bo
           ) : null}
           <span className="truncate">{run.repo_name}</span>
           <span>· {run.runner_name}</span>
+          {run.tmux_session ? (
+            <span className="inline-flex items-center gap-1 font-mono" title="Lives in this tmux session on its machine">
+              · <SquareTerminal className="size-3" aria-hidden /> {run.tmux_session}
+            </span>
+          ) : null}
           {run.task_ref && !run.task_title ? <span className="font-mono">· {run.task_ref}</span> : null}
           {run.cost_usd !== null ? <span className="tabular">· {formatCost(run.cost_usd)}</span> : null}
           {duration !== null && run.finished_at ? <span className="tabular">· {formatDuration(duration)}</span> : null}

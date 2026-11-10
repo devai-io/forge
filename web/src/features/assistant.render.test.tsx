@@ -95,7 +95,7 @@ const run = (over: Partial<Run> = {}): Run => ({
   finish_requested: false,
   one_turn: false,
   handoff: "",
-  resume_hint: "",
+  resume_hint: "", tmux_session: "", origin: "forge",
   ...over,
 });
 

@@ -202,11 +202,17 @@ func (s *Store) Heartbeat(ctx context.Context, runnerID int64, in HeartbeatInput
 	}
 	if _, err := s.DB.Exec(ctx, `UPDATE runs SET status = 'failed', finished_at = now(),
 		error = 'the runner restarted and lost this run'
-		WHERE runner_id = $1 AND status = 'running' AND started_at < ts_add(now(), -60)
+		WHERE runner_id = $1 AND status = 'running' AND started_at < ts_add(now(), -60) AND tmux_session = ''
 		  AND id NOT IN (SELECT value FROM json_each($2))`, runnerID, running); err != nil {
 		return nil, err
 	}
-	rows, err := s.DB.Query(ctx, `SELECT id FROM runs WHERE runner_id = $1 AND status = 'running' AND cancel_requested`, runnerID)
+	if in.Tmux != nil {
+		if err := s.reconcileTmuxRuns(ctx, runnerID, in.Tmux); err != nil {
+			return nil, err
+		}
+	}
+	rows, err := s.DB.Query(ctx, `SELECT id FROM runs WHERE runner_id = $1 AND status = 'running' AND cancel_requested
+		AND tmux_session = ''`, runnerID)
 	if err != nil {
 		return nil, err
 	}
@@ -225,8 +231,10 @@ func (s *Store) Heartbeat(ctx context.Context, runnerID int64, in HeartbeatInput
 // FailOrphanedRuns ends runs whose runner has gone silent for ten minutes.
 func (s *Store) FailOrphanedRuns(ctx context.Context) error {
 	_, err := s.DB.Exec(ctx, `UPDATE runs SET status = 'failed', finished_at = now(), error = 'runner went offline'
-		WHERE status = 'running' AND runner_id IN (
+		WHERE status = 'running' AND tmux_session = '' AND runner_id IN (
 			SELECT id FROM runners WHERE last_seen_at IS NULL OR last_seen_at < ts_add(now(), -600))`)
+	// A run in tmux outlives its machine's agent: its session is still there
+	// when the machine reports again (reconcileTmuxRuns), so it is not failed.
 	return err
 }
 
@@ -243,7 +251,7 @@ SELECT r.id, coalesce(r.runner_id, 0), coalesce(rn.name, r.runner_name), coalesc
        CASE WHEN r.status <> 'running' THEN ''
             WHEN EXISTS (SELECT 1 FROM run_prompts pr WHERE pr.run_id = r.id AND pr.status = 'pending') THEN 'answer'
             ELSE r.awaiting END,
-       r.inbox_after, r.resumes, r.finish_requested, r.handoff, r.one_turn
+       r.inbox_after, r.resumes, r.finish_requested, r.handoff, r.one_turn, r.tmux_session, r.origin
 FROM runs r
 LEFT JOIN projects p ON p.id = r.project_id
 LEFT JOIN repos rp ON rp.id = r.repo_id
@@ -259,7 +267,8 @@ func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 		&r.Model, &r.Worktree, &r.ResumeRunID, &r.Status, &r.CancelRequested, &r.SessionID, &r.Result, &r.Error,
 		&r.ExitCode, &r.CostUSD, &r.NumTurns, &r.DurationMS, &r.CreatedAt, &r.StartedAt, &r.FinishedAt,
 		&r.RepoPath, &r.ResumeSession, &r.ModelNote, &r.Engine, &r.Effort, &r.ChatTurnID, &usage, &r.AppendSystem,
-		&r.Interactive, &r.Cwd, &r.Awaiting, &r.InboxAfter, &r.Resumes, &r.FinishRequested, &r.Handoff, &r.OneTurn); err != nil {
+		&r.Interactive, &r.Cwd, &r.Awaiting, &r.InboxAfter, &r.Resumes, &r.FinishRequested, &r.Handoff, &r.OneTurn,
+		&r.TmuxSession, &r.Origin); err != nil {
 		return nil, mapErr(err)
 	}
 	r.Usage = json.RawMessage(usage)
@@ -417,6 +426,9 @@ type RunInput struct {
 	// OneTurn: the session answers the prompt and the run finishes, instead
 	// of waiting for a reply (agent runs; the dashboard's Refresh uses it).
 	OneTurn bool `json:"one_turn"`
+	// Fresh: start a new agent even though the task already has one (by
+	// default a task's agent runs continue its existing agent).
+	Fresh bool `json:"fresh"`
 }
 
 // CreateRun validates a run against what its runner says it can do, then
@@ -606,7 +618,7 @@ func (s *Store) ClaimRun(ctx context.Context, runnerID int64) (*Run, error) {
 	var id int64
 	err := s.DB.QueryRow(ctx, `
 		UPDATE runs SET status = 'running', started_at = now()
-		WHERE id = (SELECT id FROM runs WHERE runner_id = $1 AND status = 'queued'
+		WHERE id = (SELECT id FROM runs WHERE runner_id = $1 AND status = 'queued' AND tmux_session = ''
 		            ORDER BY id LIMIT 1)
 		RETURNING id`, runnerID).Scan(&id)
 	if err != nil {

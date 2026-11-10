@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/devai-io/forge/internal/auth"
 	"github.com/devai-io/forge/internal/store"
@@ -538,12 +539,24 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request, u *store.User
 	if !decode(w, r, &in) {
 		return
 	}
+	// One task, one agent: a run for a task that has an agent (or Continue
+	// on a run) goes to that agent as a message.
+	if cont, ok, err := s.continueTaskAgent(r.Context(), in); err != nil {
+		writeErr(w, r, err)
+		return
+	} else if ok {
+		out := cont.Public()
+		out.Continued = true
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
 	s.prepareRun(r.Context(), &in)
 	run, err := s.store.CreateRun(r.Context(), in)
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
+	run = s.placeInTmux(r.Context(), run)
 	s.wakeups.notify(run.RunnerID)
 	writeJSON(w, http.StatusCreated, run.Public())
 }
@@ -592,6 +605,23 @@ func (s *Server) runEvents(w http.ResponseWriter, r *http.Request, u *store.User
 func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request, u *store.User) {
 	id, ok := pathID(w, r)
 	if !ok {
+		return
+	}
+	if cur, err := s.store.RunByID(r.Context(), id); err == nil && cur.TmuxSession != "" && cur.Status == "running" {
+		// A session in tmux is interrupted (Escape), not killed: it stays open
+		// for what comes next, like pressing Esc in the terminal.
+		cc := s.terminals.control(cur.RunnerID)
+		if cc == nil {
+			writeError(w, http.StatusConflict, "runner_offline", cur.RunnerName+" is not connected")
+			return
+		}
+		if _, err := cc.call(r.Context(), map[string]any{"type": "keys", "session": cur.TmuxSession, "text": "\x1b"}, 15*time.Second); err != nil {
+			writeError(w, http.StatusBadGateway, "runner_error", err.Error())
+			return
+		}
+		s.appendSystem(r.Context(), cur, "interrupted from Forge (Esc)")
+		_ = s.store.SetTmuxAwaiting(r.Context(), id, "reply")
+		s.writeRun(w, r, id)
 		return
 	}
 	run, err := s.store.CancelRun(r.Context(), id)

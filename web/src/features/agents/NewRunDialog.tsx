@@ -13,7 +13,7 @@
 import { ShieldAlert, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useCreateRun, useEngine, useProject, useProjects, useRunners, useTasks } from "@/api/hooks";
+import { useCreateRun, useEngine, useProject, useProjects, useRunners, useTaskAgent, useTasks } from "@/api/hooks";
 import type { Engine, RunKind } from "@/api/types";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -46,6 +46,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   const member = useUser().role === "member"; // agents only
   const [mode, setMode] = useState("");
   const [worktree, setWorktree] = useState(resume?.worktree ?? false);
+  const [fresh, setFresh] = useState(false);
   const [model, setModel] = useState(resume?.model ?? "");
   const [customModel, setCustomModel] = useState(false);
   const [effort, setEffort] = useState(resume?.effort ?? "");
@@ -62,6 +63,8 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   const [taskId, setTaskId] = useState<string>(
     resume?.task_id ? String(resume.task_id) : prefill.task_id ? String(prefill.task_id) : "",
   );
+  const taskAgentQuery = useTaskAgent(!resume && kind === "agent" && taskId ? Number(taskId) : null);
+  const taskAgent = !resume && kind === "agent" && taskId ? (taskAgentQuery.data ?? null) : null;
 
   const runnerList = useMemo(() => runners.data ?? [], [runners.data]);
   // Default to the master (the primary machine), else the first online runner.
@@ -125,10 +128,16 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
         worktree: kind === "agent" ? worktree : false,
         task_id: taskId ? Number(taskId) : null,
         resume_run_id: resume?.id ?? null,
+        fresh: taskAgent && fresh ? true : undefined,
       },
       {
         onSuccess: (run) => {
           onClose();
+          if (run.continued) {
+            toast.success(`Sent to ${run.task_ref ?? "the task"}'s agent (run #${run.id}${run.tmux_session ? `, tmux ${run.tmux_session}` : ""})`);
+            navigate(`/agents/runs/${run.id}`);
+            return;
+          }
           // A follow-up continues where the reader already is: go to it. A new
           // run leaves them where they started it (a task, the check-up); the
           // toast links to it.
@@ -381,6 +390,19 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                 onChange={setWorktree}
                 label="Run in a fresh git worktree (keeps your working copy untouched)"
               />
+            ) : null}
+            {taskAgent ? (
+              <div className="space-y-2 rounded-md border border-line bg-surface-2/60 px-3 py-2 text-[12.5px]" role="note">
+                <p className="text-fg-2">
+                  {taskAgent.task_ref ?? "This task"} already has an agent:{" "}
+                  <Link to={`/agents/runs/${taskAgent.id}`} className="text-accent hover:underline">
+                    run #{taskAgent.id}
+                  </Link>
+                  {taskAgent.tmux_session ? <span className="font-mono"> · tmux {taskAgent.tmux_session}</span> : null}.{" "}
+                  {fresh ? "A new, separate agent starts instead." : "This request goes to it as a message — one task, one agent."}
+                </p>
+                <Switch checked={fresh} onChange={setFresh} label="Start a fresh agent instead" />
+              </div>
             ) : null}
           </>
         ) : (

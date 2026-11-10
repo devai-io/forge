@@ -59,6 +59,7 @@ func (s *Server) sendRunMessage(w http.ResponseWriter, r *http.Request, u *store
 		return
 	}
 	s.inboxes.notify(id)
+	s.tmuxNudge(id)
 	if requeued {
 		s.wakeRunner(r.Context(), id)
 	}
@@ -75,6 +76,7 @@ func (s *Server) endRunSession(w http.ResponseWriter, r *http.Request, u *store.
 		return
 	}
 	s.inboxes.notify(id)
+	s.tmuxNudge(id)
 	s.writeRun(w, r, id)
 }
 

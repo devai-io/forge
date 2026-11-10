@@ -55,7 +55,7 @@ const run = (over: Partial<Run> = {}): Run => ({
   finish_requested: false,
   one_turn: false,
   handoff: "",
-  resume_hint: "",
+  resume_hint: "", tmux_session: "", origin: "forge",
   ...over,
 });
 
@@ -188,7 +188,7 @@ describe("runs that stay open until finished", () => {
       session_id: "sess-0042-aaaa",
       result: "Found it.",
       finished_at: AT,
-      resume_hint: "cd /home/ada/shop && claude --resume sess-0042-aaaa",
+      resume_hint: "cd /home/ada/shop && claude --resume sess-0042-aaaa", tmux_session: "", origin: "forge",
     });
     const user = userEvent.setup();
     expect((await screen.findAllByText("Waiting for you")).length).toBeGreaterThan(0);

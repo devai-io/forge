@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { useQueryClient } from "@tanstack/react-query";
 import { Bot, Code, Eye, Lock, Plug, Sparkles, SquareTerminal, Trash2, Users } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { promptElevation } from "@/api/client";
 import { keys, useKillSession } from "@/api/hooks";
 import type { TmuxSession, TmuxWindow } from "@/api/types";
@@ -157,6 +158,20 @@ type SessionCardProps = {
  * the session's current window. A session with exactly one window is one
  * compact row instead (most are: one Claude in one repo).
  */
+/** The agent run that lives in this tmux session: the same Claude Code session, in Forge. */
+function RunLink({ session }: { session: TmuxSession }) {
+  if (!session.run_id) return null;
+  return (
+    <Link
+      to={`/agents/runs/${session.run_id}`}
+      className="inline-flex shrink-0 items-center gap-1 rounded border border-line px-1.5 text-[11px] text-fg-2 hover:border-accent hover:text-accent"
+      title="This session is a Forge agent run: open the run"
+    >
+      <Bot className="size-3" aria-hidden /> run #{session.run_id}
+    </Link>
+  );
+}
+
 export function SessionCard(props: SessionCardProps) {
   const { session: s, hostName, onAttach, onPeek, onKill, edit, compact = false, offline } = props;
   const windows = s.window_list?.length ? [...s.window_list].sort((a, b) => a.index - b.index) : [];
@@ -176,6 +191,7 @@ export function SessionCard(props: SessionCardProps) {
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             <h3 className="truncate font-mono text-[13.5px] font-semibold">{s.name}</h3>
             <AgentBadge item={agent} className={offline ? "opacity-60" : undefined} />
+            <RunLink session={s} />
             {!windows.length && s.project_key ? (
               <Badge tone="outline">
                 <ColorDot color={s.project_color} className="size-2" />
@@ -267,6 +283,7 @@ function SingleWindowCard({ session: s, window: w, hostName, onAttach, onPeek, o
             <SquareTerminal className="size-3.5 shrink-0 text-fg-3" aria-hidden />
           )}
           <h3 className="min-w-0 truncate font-mono text-[13px] font-semibold">{s.name}</h3>
+          <RunLink session={s} />
           <AgentBadge item={agent} className={clsx("h-4.5 px-1.5 text-[10.5px]", offline && "opacity-60")} />
           {hostName ? <span className="text-[11px] text-fg-3">on {hostName}</span> : null}
         </div>

@@ -39,6 +39,8 @@ type TmuxSession struct {
 	RepoID       *int64       `json:"repo_id"`
 	RepoName     *string      `json:"repo_name"`
 	WindowList   []TmuxWindow `json:"window_list"`
+	// RunID is the open agent run living in this session (tmux agents).
+	RunID *int64 `json:"run_id"`
 }
 
 type TerminalHost struct {
@@ -62,6 +64,7 @@ func (s *Store) saveTmux(ctx context.Context, runnerID int64, sessions []TmuxSes
 	}
 	for i := range sessions { // the project fields are ours to fill, not the runner's
 		sessions[i].ProjectKey, sessions[i].ProjectColor, sessions[i].RepoID, sessions[i].RepoName = nil, nil, nil, nil
+		sessions[i].RunID = nil
 		for j := range sessions[i].WindowList {
 			w := &sessions[i].WindowList[j]
 			w.ProjectKey, w.ProjectColor, w.RepoID, w.RepoName = nil, nil, nil, nil
@@ -224,6 +227,10 @@ func (s *Store) TerminalHosts(ctx context.Context) ([]TerminalHost, error) {
 	if err != nil {
 		return nil, err
 	}
+	runIDs, err := s.tmuxRunIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.DB.Query(ctx, `SELECT id, name, role, hostname,
 		coalesce(last_seen_at > ts_add(now(), -`+onlineWindow+`), 0),
 		coalesce(capabilities->>'terminal', 0),
@@ -246,6 +253,9 @@ func (s *Store) TerminalHosts(ctx context.Context) ([]TerminalHost, error) {
 		for i := range h.Sessions {
 			ss := &h.Sessions[i]
 			ss.ProjectKey, ss.ProjectColor, ss.RepoID, ss.RepoName = idx.fields(ss.Path, ss.Name)
+			if id, ok := runIDs[h.RunnerID][ss.Name]; ok {
+				ss.RunID = &id
+			}
 			if ss.WindowList == nil {
 				ss.WindowList = []TmuxWindow{}
 			}

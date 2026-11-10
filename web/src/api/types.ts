@@ -304,6 +304,7 @@ export type RunnerCapabilities = {
   code: boolean; // runner can serve VS Code (web)
   interactive?: boolean; // can keep a session open for questions and follow-ups (older agents: absent)
   approvals?: boolean; // also relays tool permissions and plan approvals ("approvals" in agent.json)
+  tmux_agents?: boolean; // can host agent runs in tmux sessions (agents from v0.1.44)
 };
 export type Runner = {
   id: number;
@@ -370,6 +371,9 @@ export type Run = {
   one_turn: boolean; // finishes once the session has answered (Refresh); a question left open still keeps it waiting
   handoff: string; // where the session continued outside Forge ("desk · tmux run-52"), "" if not
   resume_hint: string; // the shell line that opens the session in Claude Code / Codex on its machine
+  tmux_session: string; // the tmux session on its machine the Claude Code session lives in ("" = headless)
+  origin: "forge" | "tmux"; // tmux: a session started by hand in tmux, registered by its hooks
+  continued?: boolean; // POST /runs answer: the request went to the task's existing agent
 };
 export type RunAwaiting = "" | "answer" | "reply";
 
@@ -695,6 +699,12 @@ export type RunInput = {
   effort?: string; // claude --effort, one of EngineStatus.efforts; omitted = default
   interactive?: boolean; // keep the session open (needs a runner with capabilities.interactive)
   one_turn?: boolean; // the session answers, then the run finishes (no parked run); Continue still works
+  fresh?: boolean; // a new agent although the task has one (default: the task's agent continues)
+};
+
+/** GET/PATCH /api/agent-settings */
+export type AgentSettings = {
+  tmux: boolean; // agent runs live in tmux sessions on machines that support it
 };
 
 export type TaskFilters = {
@@ -749,6 +759,7 @@ export type TmuxSession = {
   project_color: string | null;
   repo_id: number | null;
   repo_name: string | null;
+  run_id?: number | null; // the open agent run living in this session
 };
 
 export type TerminalHost = {

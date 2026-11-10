@@ -353,9 +353,20 @@ func SetupClaude(configPath, claudePath string, out io.Writer) error {
 	if err := addHook(path, "UserPromptSubmit", match, "match --hook"); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Added the SessionStart (context) and UserPromptSubmit (task matching) hooks to %s.\n", path)
+	// The session reports: a Claude Code session in tmux and its Forge run
+	// are one thing (RunHook).
+	report := shellJoin(append([]string{exe}, agentArgs(configPath, "hook", "--report")...))
+	for _, event := range reportEvents {
+		if err := addHook(path, event, report, "hook --report"); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(out, "Added the SessionStart (context), UserPromptSubmit (task matching) and session-report hooks to %s.\n", path)
 	return nil
 }
+
+// reportEvents are the Claude Code events `forge agent hook --report` handles.
+var reportEvents = []string{"SessionStart", "UserPromptSubmit", "Stop", "Notification", "SessionEnd"}
 
 // addHook puts one Forge hook for event into a Claude Code settings file,
 // dropping earlier Forge ones (commands containing marker) and leaving

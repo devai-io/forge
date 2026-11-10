@@ -15,6 +15,7 @@ import {
 import { api, ApiError, isElevationError } from "./client";
 import { lastSeq, mergeMessages, upsertChat } from "@/lib/chats";
 import type {
+  AgentSettings,
   Activity,
   AssistantSettings,
   AssistantStatus,
@@ -866,6 +867,26 @@ export function useHandoffRun() {
   });
 }
 
+/**
+ * A task's agent, as the server picks it for "one task, one agent": its latest
+ * agent run (not an Assistant turn) that is open or has a session to pick up.
+ */
+export function useTaskAgent(taskId: number | null) {
+  return useQuery({
+    queryKey: ["task-agent", taskId],
+    enabled: !!taskId,
+    queryFn: () =>
+      api
+        .get<{ runs: Run[] }>("/runs", { task: taskId ?? undefined, limit: 20 })
+        .then(
+          (r) =>
+            r.runs.find(
+              (x) => x.kind === "agent" && !!x.repo_id && (["queued", "running", "waiting"].includes(x.status) || !!x.session_id),
+            ) ?? null,
+        ),
+  });
+}
+
 export function useCreateRun() {
   const qc = useQueryClient();
   return useMutation({
@@ -1155,6 +1176,18 @@ export function useUpdateProjectSessions() {
       // The first sessions start in the background; show them as they come up.
       setTimeout(() => void qc.invalidateQueries({ queryKey: keys.projectSessions }), 4_000);
     },
+  });
+}
+
+export function useAgentSettings() {
+  return useQuery({ queryKey: ["agent-settings"], queryFn: () => api.get<AgentSettings>("/agent-settings") });
+}
+
+export function useUpdateAgentSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: AgentSettings) => api.patch<AgentSettings>("/agent-settings", v),
+    onSuccess: (v) => qc.setQueryData(["agent-settings"], v),
   });
 }
 

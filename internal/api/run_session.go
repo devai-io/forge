@@ -27,6 +27,7 @@ func (s *Server) finishRun(w http.ResponseWriter, r *http.Request, u *store.User
 		return
 	}
 	s.inboxes.notify(id)
+	s.tmuxNudge(id)
 	writeJSON(w, http.StatusOK, run.Public())
 }
 
@@ -94,6 +95,10 @@ func (s *Server) handoffRun(w http.ResponseWriter, r *http.Request, u *store.Use
 		writeErr(w, r, &store.ValidationError{Field: "id", Message: "the run's machine no longer exists"})
 		return
 	}
+	if cur.TmuxSession != "" {
+		s.openTmuxRun(w, r, rn, cur)
+		return
+	}
 	if !rn.Capabilities.Terminal {
 		writeError(w, http.StatusConflict, "terminal_disabled", "terminals are off on "+rn.Name+" (\"terminal\": true in its agent.json); run `forge resume "+fmt.Sprint(id)+"` there instead")
 		return
@@ -132,6 +137,34 @@ func (s *Server) handoffRun(w http.ResponseWriter, r *http.Request, u *store.Use
 	slog.Info("run handed to a terminal", "run", id, "session", name, "runner", rn.Name, "ip", s.clientIP(r))
 	s.sec(r, "terminal_create", name+" (resume run "+fmt.Sprint(id)+")")
 	writeJSON(w, http.StatusOK, map[string]any{"run": run.Public(), "runner_id": rn.ID, "session": name})
+}
+
+// openTmuxRun is Open in terminal for a run that lives in tmux: its own
+// session, started again first when Claude is no longer open in it.
+func (s *Server) openTmuxRun(w http.ResponseWriter, r *http.Request, rn *store.Runner, run *store.Run) {
+	ctx := context.WithoutCancel(r.Context())
+	cc := s.terminals.control(rn.ID)
+	if cc == nil {
+		writeError(w, http.StatusConflict, "runner_offline", rn.Name+" is not connected")
+		return
+	}
+	if run.Status != "running" && run.Status != "queued" {
+		if err := s.store.ReopenTmux(ctx, run.ID); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
+	s.dispatchTmux(ctx, rn.ID)
+	cur, err := s.store.RunByID(ctx, run.ID)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if cur.Status == "queued" {
+		time.Sleep(time.Second) // the session is starting; the attach shows it come up
+	}
+	s.sec(r, "terminal_attach", cur.TmuxSession+" (run "+fmt.Sprint(cur.ID)+")")
+	writeJSON(w, http.StatusOK, map[string]any{"run": cur.Public(), "runner_id": rn.ID, "session": cur.TmuxSession})
 }
 
 // ── Machine side: `forge resume` ──────────────────────────────────────────
@@ -177,6 +210,10 @@ func (s *Server) runnerHandoff(w http.ResponseWriter, r *http.Request, rn *store
 	}
 	if cur.RunnerID != rn.ID {
 		writeError(w, http.StatusConflict, "wrong_machine", fmt.Sprintf("run #%d ran on %s; resume it there", id, cur.RunnerName))
+		return
+	}
+	if cur.TmuxSession != "" && cur.Status == "running" {
+		writeError(w, http.StatusConflict, "in_tmux", fmt.Sprintf("run #%d is open in tmux session %s: tmux attach -t %s", id, cur.TmuxSession, cur.TmuxSession))
 		return
 	}
 	run, err := s.parkForHandoff(ctx, id)

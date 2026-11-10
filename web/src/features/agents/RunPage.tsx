@@ -74,12 +74,15 @@ function RunView({
   const open = isOpenRun(run);
   const waiting = run.status === "waiting";
   // The run can be taken into Claude Code once it has a session and is not mid-work.
-  const canHandoff = run.kind === "agent" && !!run.session_id && !run.handoff && run.status !== "queued" &&
-    !(run.status === "running" && !run.interactive);
+  // A run living in tmux is always one attach away (its session started again when Claude exited).
+  const inTmux = !!run.tmux_session;
+  const canHandoff = inTmux
+    ? run.status !== "queued"
+    : run.kind === "agent" && !!run.session_id && !run.handoff && run.status !== "queued" && !(run.status === "running" && !run.interactive);
   const openInClaude = () =>
     handoff.mutate(run.id, {
       onSuccess: ({ runner_id, session }) => {
-        toast.success(`Opened in Claude Code on ${run.runner_name} (tmux ${session})`);
+        if (!inTmux) toast.success(`Opened in Claude Code on ${run.runner_name} (tmux ${session})`);
         navigate(`/terminal/${runner_id}/${session}`);
       },
       onError: (e) => toast.error(e),
@@ -166,9 +169,13 @@ function RunView({
                 variant="subtle"
                 loading={handoff.isPending}
                 onClick={openInClaude}
-                title={`Open this session in ${run.engine === "codex" ? "Codex" : "Claude Code"} in a terminal on ${run.runner_name}; Forge hands the run over`}
+                title={
+                  inTmux
+                    ? `Attach to tmux session ${run.tmux_session} on ${run.runner_name}: the same Claude Code session, live`
+                    : `Open this session in ${run.engine === "codex" ? "Codex" : "Claude Code"} in a terminal on ${run.runner_name}; Forge hands the run over`
+                }
               >
-                <SquareTerminal className="size-3.5" aria-hidden /> Open in {run.engine === "codex" ? "Codex" : "Claude Code"}
+                <SquareTerminal className="size-3.5" aria-hidden /> {inTmux ? "Attach" : `Open in ${run.engine === "codex" ? "Codex" : "Claude Code"}`}
               </Button>
             ) : null}
             {open && run.kind === "agent" ? (
@@ -190,8 +197,10 @@ function RunView({
                 disabled={run.cancel_requested}
                 loading={cancel.isPending}
                 onClick={() => cancel.mutate(run.id, { onError: (e) => toast.error(e) })}
+                title={inTmux && run.status === "running" ? "Interrupt what Claude is doing (Esc); the session stays open" : undefined}
               >
-                <Ban className="size-3.5" aria-hidden /> {run.cancel_requested ? "Cancelling…" : "Cancel"}
+                <Ban className="size-3.5" aria-hidden />{" "}
+                {inTmux && run.status === "running" ? "Interrupt" : run.cancel_requested ? "Cancelling…" : "Cancel"}
               </Button>
             ) : null}
           </div>
@@ -253,7 +262,25 @@ function RunView({
               </button>
             </div>
           ) : null}
-          {run.resume_hint ? (
+          {inTmux ? (
+            <div className="col-span-2 sm:col-span-4 lg:col-span-6">
+              <dt className="text-fg-3">
+                Lives in tmux session <span className="font-mono text-fg-2">{run.tmux_session}</span> on {run.runner_name}
+                {run.origin === "tmux" ? " (started there by hand)" : ""} — the same session from any terminal
+              </dt>
+              <dd className="mt-0.5 flex items-center gap-2">
+                <code className="min-w-0 flex-1 truncate rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[11.5px]">tmux attach -t {run.tmux_session}</code>
+                <button
+                  type="button"
+                  aria-label="Copy the attach command"
+                  className="rounded p-0.5 text-fg-3 hover:text-fg"
+                  onClick={() => void navigator.clipboard?.writeText(`tmux attach -t ${run.tmux_session}`).then(() => toast.success("Command copied"))}
+                >
+                  <Copy className="size-3.5" />
+                </button>
+              </dd>
+            </div>
+          ) : run.resume_hint ? (
             <div className="col-span-2 sm:col-span-4 lg:col-span-6">
               <dt className="text-fg-3">
                 In a terminal on {run.runner_name}{" "}
@@ -352,7 +379,9 @@ function RunView({
         {active ? (
           <p className="mt-3 flex items-center gap-2 text-[12px] text-fg-3" role="status">
             <span className="size-1.5 animate-pulse-soft rounded-full bg-accent" aria-hidden />
-            {run.awaiting === "answer"
+            {run.awaiting === "answer" && inTmux
+              ? "Claude is asking something in the terminal — Attach to answer it"
+              : run.awaiting === "answer"
               ? "Waiting for your answer"
               : run.awaiting === "reply"
                 ? "Your turn — reply, or Finish when the work is done"
@@ -363,7 +392,9 @@ function RunView({
         ) : waiting ? (
           <p className="mt-3 flex items-center gap-2 text-[12px] text-fg-3" role="status">
             <span className="size-1.5 rounded-full bg-warning" aria-hidden />
-            Waiting for you — reply and {run.runner_name} picks the session back up in this run, or Finish when the work is done.
+            {inTmux
+              ? `Claude Code is closed in tmux session ${run.tmux_session} — reply (or Attach) and it starts again on this conversation, or Finish when the work is done.`
+              : `Waiting for you — reply and ${run.runner_name} picks the session back up in this run, or Finish when the work is done.`}
           </p>
         ) : null}
         {(active && run.interactive && run.status === "running") || waiting ? <RunInteraction run={run} prompts={prompts} /> : null}

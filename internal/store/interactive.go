@@ -295,6 +295,16 @@ func answerText(p *RunPrompt, a PromptAnswer) string {
 // makes a resumed run finish once it has answered (a live session is not
 // changed: it keeps its own lifecycle).
 func (s *Store) SendRunMessage(ctx context.Context, runID int64, text string, oneTurn bool) (requeued bool, err error) {
+	return s.sendRunMessage(ctx, runID, text, oneTurn, false)
+}
+
+// ReopenWithMessage is SendRunMessage that also picks a finished agent run
+// back up on its session ("one task, one agent": the task's next request).
+func (s *Store) ReopenWithMessage(ctx context.Context, runID int64, text string, oneTurn bool) (requeued bool, err error) {
+	return s.sendRunMessage(ctx, runID, text, oneTurn, true)
+}
+
+func (s *Store) sendRunMessage(ctx context.Context, runID int64, text string, oneTurn, allowReopen bool) (requeued bool, err error) {
 	run, err := s.RunByID(ctx, runID)
 	if err != nil {
 		return false, err
@@ -306,8 +316,11 @@ func (s *Store) SendRunMessage(ctx context.Context, runID int64, text string, on
 	if len(text) > 100000 {
 		return false, invalid("text", "too long")
 	}
+	// A finished agent run with a session reopens on that same session: one
+	// task, one agent, however often it is picked up again.
+	reopen := allowReopen && OneOf(run.Status, RunDoneStatuses) && run.Kind == "agent" && run.ChatTurnID == nil && run.SessionID != ""
 	switch {
-	case run.Status == "waiting":
+	case run.Status == "waiting" || reopen:
 		if !s.resumesInPlace(ctx, run.RunnerID) {
 			return false, invalid("text", "%s runs an older Forge agent that cannot pick this session back up; upgrade it, or use Continue", run.RunnerName)
 		}
@@ -320,7 +333,7 @@ func (s *Store) SendRunMessage(ctx context.Context, runID int64, text string, on
 	}
 	data, _ := json.Marshal(map[string]string{"text": text})
 	err = s.tx(ctx, func(tx pgxTx) error {
-		if run.Status == "waiting" {
+		if run.Status == "waiting" || reopen {
 			var last int64
 			if err := tx.QueryRow(ctx, `SELECT coalesce(max(id), 0) FROM run_inbox WHERE run_id = $1`, runID).Scan(&last); err != nil {
 				return err
@@ -331,12 +344,23 @@ func (s *Store) SendRunMessage(ctx context.Context, runID int64, text string, on
 			if err := requeueTx(ctx, tx, runID, last); err != nil {
 				return err
 			}
+			if reopen {
+				if _, err := tx.Exec(ctx, `UPDATE runs SET finish_requested = false WHERE id = $1`, runID); err != nil {
+					return err
+				}
+				if run.RepoID != 0 {
+					if err := logActivity(ctx, tx, ActivityInput{ProjectID: &run.ProjectID, TaskID: run.TaskID, RunID: &run.ID,
+						Kind: "run.queued", Summary: fmt.Sprintf("Run #%d on %s picked up again: %s", run.ID, run.RepoName, excerpt(text, 80))}); err != nil {
+						return err
+					}
+				}
+			}
 			requeued = true
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO run_inbox (run_id, kind, data) VALUES ($1, 'message', $2)`, runID, string(data)); err != nil {
 			return err
 		}
-		if oneTurn && (run.Status == "waiting" || (run.Status == "queued" && run.Resumes > 0)) {
+		if oneTurn && (run.Status == "waiting" || reopen || (run.Status == "queued" && run.Resumes > 0)) {
 			if _, err := tx.Exec(ctx, `UPDATE runs SET one_turn = true WHERE id = $1`, runID); err != nil {
 				return err
 			}

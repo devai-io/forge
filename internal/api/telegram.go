@@ -506,6 +506,7 @@ func (s *Server) tgCallback(ctx context.Context, set store.TelegramSettings, cq 
 			return
 		}
 		s.inboxes.notify(id)
+		s.tmuxNudge(id)
 		s.tgSecurity(ctx, "telegram_end_run", fmt.Sprintf("run %d", id))
 		done("Ending the session", "Session ending")
 	default:
@@ -613,6 +614,7 @@ func (s *Server) tgReply(ctx context.Context, set store.TelegramSettings, l *sto
 		if requeued {
 			s.wakeRunner(ctx, *l.RunID)
 		}
+		s.tmuxNudge(*l.RunID)
 		s.tgSecurity(ctx, "telegram_run_message", fmt.Sprintf("run %d", *l.RunID))
 		say(fmt.Sprintf("Sent to run #%d.", *l.RunID))
 	case "chat":

@@ -85,6 +85,7 @@ type Server struct {
 
 	// Project sessions (project_sessions.go): what Forge started, and when.
 	projectSessions projectSessionState
+	tmux            tmuxState
 }
 
 // Deps are the optional collaborators; a zero value turns the feature off
@@ -303,6 +304,7 @@ func (s *Server) Handler() http.Handler {
 	h("GET /api/runner/tty/{channel}", s.runnerAuth(s.runnerTTY))
 	h("GET /api/runner/context", s.runnerAuth(s.runnerContext))
 	h("POST /api/runner/match", s.runnerAuth(s.runnerMatch))
+	h("POST /api/runner/hook", s.runnerAuth(s.runnerHook))
 	h("GET /api/runner/projects", s.runnerAuth(s.runnerProjects))
 	h("POST /api/runner/projects", s.runnerAuth(s.runnerCreateProject))
 	h("GET /api/runner/tasks", s.runnerAuth(s.runnerTasks))
@@ -317,6 +319,8 @@ func (s *Server) Handler() http.Handler {
 	h("DELETE /api/runner/memories/{id}", s.runnerAuth(s.runnerForget))
 
 	h("GET /api/terminal/hosts", s.authed(s.terminalHosts))
+	h("GET /api/agent-settings", s.authed(s.getAgentSettings))
+	h("PATCH /api/agent-settings", s.authed(s.putAgentSettings))
 	h("GET /api/project-sessions", s.authed(s.getProjectSessions))
 	h("PATCH /api/project-sessions", s.authed(s.elevated(s.updateProjectSessions)))
 	h("GET /api/terminal/{runner}/attach", s.authed(s.elevated(s.terminalAttach)))

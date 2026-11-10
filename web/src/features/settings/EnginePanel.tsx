@@ -5,11 +5,11 @@
 // the provider key. Also how many runs each machine works on at once.
 
 import { useState } from "react";
-import { useEngine, useFocusUsage, useUpdateEngine } from "@/api/hooks";
+import { useAgentSettings, useEngine, useFocusUsage, useUpdateAgentSettings, useUpdateEngine } from "@/api/hooks";
 import type { Engine, EngineSettings } from "@/api/types";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { Field, Input } from "@/components/ui/Input";
+import { Field, Input, Switch } from "@/components/ui/Input";
 import { Panel } from "@/components/ui/Panel";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { NeedsProviderKey } from "./ProviderPanel";
@@ -43,6 +43,7 @@ export function EnginePanel() {
             Codex supports your eligible ChatGPT plan or an API key. DeepSeek uses Claude Code through OpenRouter,
             paid with the provider key. Each run can choose its engine.
           </p>
+          <AgentsInTmux />
           <p className="text-[13px] text-fg-3">To connect Codex on a paired machine, run <code>codex login</code>, then <code>forge agent setup-codex</code> and restart the Forge agent.</p>
           <div className="flex flex-wrap items-center gap-3">
             <Segmented
@@ -146,5 +147,28 @@ export function EnginePanel() {
         </>
       )}
     </Panel>
+  );
+}
+
+/** One task, one agent, one tmux session: where Claude Code agent runs live. */
+function AgentsInTmux() {
+  const settings = useAgentSettings();
+  const update = useUpdateAgentSettings();
+  const toast = useToast();
+  if (!settings.data) return null;
+  return (
+    <div className="space-y-1">
+      <Switch
+        checked={settings.data.tmux}
+        disabled={update.isPending}
+        onChange={(tmux) => update.mutate({ tmux }, { onError: (e) => toast.error(e) })}
+        label="Run Claude Code agents in tmux sessions"
+      />
+      <p className="text-[12px] text-fg-3">
+        Each agent run is a Claude Code session in a tmux session named after its task (e.g. SHOP-12) on its machine: the same session in
+        Forge, in <span className="font-mono">tmux attach</span> and in the Terminal page. Forge types your follow-ups into it; sessions you
+        start by hand in tmux show up as runs. Needs agents on v0.1.44 or later; others keep running headless.
+      </p>
+    </div>
   );
 }

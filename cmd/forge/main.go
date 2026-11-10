@@ -179,6 +179,11 @@ func runAgent(args []string) error {
 			runner.PrintMatch(cfg, os.Stdin, os.Stdout)
 		}
 		return nil
+	case "hook":
+		if err == nil { // Claude Code's session hooks: report, never fail
+			runner.RunHook(cfg, os.Stdin)
+		}
+		return nil
 	case "secrets":
 		return agentSecrets(cfg, err, fs.Args()[1:])
 	case "resume":
@@ -434,6 +439,7 @@ func serve(ctx context.Context, cfg config.Config, database *db.DB, st *store.St
 	go app.RunFocus(ctx)
 	go app.RunBots(ctx)
 	go app.RunProjectSessions(ctx)
+	go app.RunTmuxAgents(ctx)
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,

@@ -292,6 +292,9 @@ type RunnerCapabilities struct {
 	// terminal session can start as `claude --resume <id>`.
 	ResumeInPlace  bool `json:"resume_in_place"`
 	TerminalResume bool `json:"terminal_resume"`
+	// TmuxAgents: the machine can host agent runs in tmux (claude with a set
+	// session id, pasted follow-ups) and its hooks report them.
+	TmuxAgents bool `json:"tmux_agents"`
 }
 
 type CommandDetail struct {
@@ -406,6 +409,16 @@ type Run struct {
 	// ResumeHint is the shell line that opens this run's session in Claude
 	// Code (or Codex) on its machine; "" when there is no session.
 	ResumeHint string `json:"resume_hint"`
+	// TmuxSession is the tmux session on the run's machine its Claude Code
+	// session lives in ("" = it runs headless). Forge types follow-ups into
+	// it; `tmux attach -t <name>` is the same session.
+	TmuxSession string `json:"tmux_session"`
+	// Origin: "forge" (started from Forge) or "tmux" (a Claude Code session
+	// started by hand in tmux, registered by its hooks).
+	Origin string `json:"origin"`
+	// Continued: set on the answer to POST /api/runs when the request went
+	// to the task's existing agent instead of starting a new run.
+	Continued bool `json:"continued,omitempty"`
 }
 
 type RunEvent struct {

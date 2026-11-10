@@ -137,6 +137,7 @@ func (r *Runner) capabilities() map[string]any {
 		"interactive":      true,
 		"resume_in_place":  true,
 		"terminal_resume":  true,
+		"tmux_agents":      r.terminalEnabled() && err == nil,
 		"approvals":        r.cfg.Approvals,
 	}
 }

@@ -374,7 +374,9 @@ func (r *Runner) stream(ctx context.Context, cmd *exec.Cmd, dir string, run clai
 	onLine func([]byte) event, onErr func([]byte)) (*int, error) {
 	cmd.Dir = dir
 	engineEnv := cmd.Env
-	cmd.Env = append(os.Environ(), "FORGE_RUN_ID="+fmt.Sprint(run.ID), "FORGE_PROJECT="+run.ProjectKey,
+	// FORGE_HEADLESS: the session's hooks (`forge agent hook`) leave it to
+	// this process to report the run.
+	cmd.Env = append(os.Environ(), "FORGE_HEADLESS=1", "FORGE_RUN_ID="+fmt.Sprint(run.ID), "FORGE_PROJECT="+run.ProjectKey,
 		"FORGE_REPO="+run.RepoName, "GIT_TERMINAL_PROMPT=0")
 	for k, v := range r.cfg.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)

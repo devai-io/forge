@@ -1,0 +1,323 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/coder/websocket"
+
+	"github.com/devai-io/forge/internal/store"
+)
+
+// fakeMachine is a paired runner with a control channel that records what
+// the server asks of tmux (create, paste, keys, kill) and says yes to all.
+type fakeMachine struct {
+	t      *testing.T
+	h      *harness
+	runner *harness
+	rn     store.Runner
+	bearer []string
+	mu     sync.Mutex
+	msgs   []map[string]any
+	repoID int64
+	path   string
+}
+
+func newFakeMachine(t *testing.T, h *harness) *fakeMachine {
+	t.Helper()
+	m := &fakeMachine{t: t, h: h, runner: &harness{t: t, srv: h.srv, client: &http.Client{}}}
+	var token string
+	expect(t, "runner", h.newRunner("desk", &m.rn, &token), 201)
+	m.bearer = []string{"Authorization", "Bearer " + token}
+	var hb struct{ Repos []store.RunnerRepo }
+	m.beat(nil, &hb)
+	for _, r := range hb.Repos {
+		if strings.HasSuffix(r.Path, "/shop_api") {
+			m.repoID, m.path = r.ID, r.Path
+		}
+	}
+	if m.repoID == 0 {
+		t.Fatal("no shop_api repo in the seed")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	wsBase := "ws" + strings.TrimPrefix(h.srv.URL, "http")
+	conn, _, err := websocket.Dial(ctx, wsBase+"/api/runner/control", &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + token}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.CloseNow() })
+	go func() {
+		for {
+			_, data, err := conn.Read(ctx)
+			if err != nil {
+				return
+			}
+			var msg map[string]any
+			_ = json.Unmarshal(data, &msg)
+			m.mu.Lock()
+			m.msgs = append(m.msgs, msg)
+			m.mu.Unlock()
+			raw, _ := json.Marshal(map[string]any{"type": "result", "id": msg["id"], "ok": true})
+			_ = conn.Write(ctx, websocket.MessageText, raw)
+		}
+	}()
+	time.Sleep(200 * time.Millisecond)
+	return m
+}
+
+// beat is a heartbeat from a machine that hosts tmux agents, with this tmux list.
+func (m *fakeMachine) beat(tmux []map[string]any, out any) {
+	m.t.Helper()
+	if tmux == nil {
+		tmux = []map[string]any{}
+	}
+	expect(m.t, "heartbeat", m.runner.do("POST", "/api/runner/heartbeat", map[string]any{
+		"hostname": "desk", "os": "linux/amd64", "version": "test",
+		"capabilities": map[string]any{"claude": true, "permission_modes": []string{"plan", "acceptEdits"}, "interactive": true,
+			"resume_in_place": true, "terminal_resume": true, "terminal": true, "tmux_agents": true, "max_concurrent": 2},
+		"tmux": tmux,
+	}, out, m.bearer...), 200)
+}
+
+// wait returns the n-th request of a type the machine got, waiting up to 5 s.
+func (m *fakeMachine) wait(typ string, n int) map[string]any {
+	m.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		m.mu.Lock()
+		seen := 0
+		for _, msg := range m.msgs {
+			if msg["type"] == typ {
+				seen++
+				if seen == n {
+					m.mu.Unlock()
+					return msg
+				}
+			}
+		}
+		m.mu.Unlock()
+		time.Sleep(50 * time.Millisecond)
+	}
+	m.t.Fatalf("no %s request #%d (got %v)", typ, n, m.msgs)
+	return nil
+}
+
+func (m *fakeMachine) hook(body map[string]any) {
+	m.t.Helper()
+	expect(m.t, "hook "+fmt.Sprint(body["event"]), m.runner.do("POST", "/api/runner/hook", body, nil, m.bearer...), 204)
+}
+
+func (m *fakeMachine) run(id int64) store.Run {
+	m.t.Helper()
+	var run store.Run
+	expect(m.t, "run", m.h.do("GET", fmt.Sprintf("/api/runs/%d", id), nil, &run), 200)
+	return run
+}
+
+func TestTmuxAgentLifecycle(t *testing.T) {
+	h := setup(t)
+	h.login()
+	m := newFakeMachine(t, h)
+	var tasks struct{ Tasks []store.Task }
+	expect(t, "tasks", h.do("GET", "/api/tasks?project=SHOP", nil, &tasks), 200)
+	task := tasks.Tasks[0]
+
+	// A task's agent run starts as Claude Code in a tmux session named after the task.
+	var run store.Run
+	expect(t, "queue", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent",
+		"prompt": "Fix the cart", "task_id": task.ID, "permission_mode": "plan"}, &run), 201)
+	if run.TmuxSession != task.Ref {
+		t.Fatalf("tmux session = %q, want %q", run.TmuxSession, task.Ref)
+	}
+	create := m.wait("create", 1)
+	sid, _ := create["session_id"].(string)
+	env, _ := create["env"].(map[string]any)
+	if create["session"] != task.Ref || create["start"] != "claude" || create["prompt"] != "Fix the cart" || !sessionIDRe.MatchString(sid) ||
+		create["permission_mode"] != "plan" || create["cwd"] != m.path || env["FORGE_RUN_ID"] != fmt.Sprint(run.ID) {
+		t.Fatalf("create = %v", create)
+	}
+	if run = m.run(run.ID); run.Status != "running" || run.SessionID != sid {
+		t.Fatalf("started run = %+v", run)
+	}
+	// It is the server's to drive, never a claim for the machine's headless runner.
+	expect(t, "nothing to claim", m.runner.do("POST", "/api/runner/claim", nil, nil, m.bearer...), 204)
+
+	// The session's hooks report its turn.
+	m.hook(map[string]any{"event": "UserPromptSubmit", "session_id": sid, "run_id": run.ID, "tmux_session": task.Ref, "prompt": "Fix the cart"})
+	assistant, _ := json.Marshal(map[string]any{"type": "assistant", "message": map[string]any{"role": "assistant",
+		"content": []map[string]any{{"type": "text", "text": "Fixed the cart."}}}})
+	m.hook(map[string]any{"event": "Stop", "session_id": sid, "run_id": run.ID, "tmux_session": task.Ref,
+		"last_message": "Fixed the cart.", "events": []map[string]any{{"kind": "claude", "data": json.RawMessage(assistant)}}})
+	if run = m.run(run.ID); run.Awaiting != "reply" || run.Result != "Fixed the cart." || run.NumTurns == nil || *run.NumTurns != 1 {
+		t.Fatalf("after the turn = %+v", run)
+	}
+	var ev struct{ Events []store.RunEvent }
+	expect(t, "events", h.do("GET", fmt.Sprintf("/api/runs/%d/events", run.ID), nil, &ev), 200)
+	if !strings.Contains(string(ev.Events[len(ev.Events)-1].Data), "Fixed the cart.") {
+		t.Fatalf("events = %v", ev.Events)
+	}
+
+	// One task, one agent: another run for the task is a message, typed into the session.
+	var again store.Run
+	expect(t, "same task", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent",
+		"prompt": "Also the tests", "task_id": task.ID}, &again), 200)
+	if again.ID != run.ID || !again.Continued {
+		t.Fatalf("continued = %+v", again)
+	}
+	paste := m.wait("paste", 1)
+	if paste["session"] != task.Ref || paste["text"] != "Also the tests" || paste["enter"] != true {
+		t.Fatalf("paste = %v", paste)
+	}
+	if run = m.run(run.ID); run.Awaiting != "" || run.InboxAfter == 0 {
+		t.Fatalf("after the paste = %+v", run)
+	}
+
+	// Claude exits in tmux (gone from the machine's list): the run waits; a reply starts it again with --resume.
+	if _, err := h.store.DB.Exec(context.Background(), `UPDATE runs SET started_at = ts_add(now(), -600) WHERE id = $1`, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	m.beat([]map[string]any{{"name": task.Ref, "windows": 1, "command": "zsh", "claude": false}}, nil)
+	if run = m.run(run.ID); run.Status != "waiting" || run.TmuxSession != task.Ref {
+		t.Fatalf("after Claude exited = %+v", run)
+	}
+	expect(t, "reply", h.do("POST", fmt.Sprintf("/api/runs/%d/messages", run.ID), map[string]string{"text": "carry on"}, nil), 200)
+	resume := m.wait("create", 2)
+	if resume["resume"] != sid || resume["prompt"] != "carry on" || resume["reuse"] != true || resume["session_id"] != nil {
+		t.Fatalf("resume = %v", resume)
+	}
+	if run = m.run(run.ID); run.Status != "running" || run.SessionID != sid {
+		t.Fatalf("resumed = %+v", run)
+	}
+
+	// Interrupt is Esc in the session; Finish closes the tmux session and the run.
+	expect(t, "interrupt", h.do("POST", fmt.Sprintf("/api/runs/%d/cancel", run.ID), nil, nil), 200)
+	if keys := m.wait("keys", 1); keys["text"] != "\x1b" || keys["session"] != task.Ref {
+		t.Fatalf("keys = %v", keys)
+	}
+	if run = m.run(run.ID); run.Status != "running" {
+		t.Fatalf("an interrupt must not end the run: %+v", run)
+	}
+	expect(t, "finish", h.do("POST", fmt.Sprintf("/api/runs/%d/finish", run.ID), nil, nil), 200)
+	if kill := m.wait("kill", 1); kill["session"] != task.Ref {
+		t.Fatalf("kill = %v", kill)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for run = m.run(run.ID); run.Status != "succeeded" && time.Now().Before(deadline); run = m.run(run.ID) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if run.Status != "succeeded" {
+		t.Fatalf("finished = %+v", run)
+	}
+
+	// A finished agent is still the task's agent: a new request reopens it on its session.
+	expect(t, "reopen", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent",
+		"prompt": "One more thing", "task_id": task.ID}, &again), 200)
+	if again.ID != run.ID || !again.Continued {
+		t.Fatalf("reopened = %+v", again)
+	}
+	if third := m.wait("create", 3); third["resume"] != sid || third["prompt"] != "One more thing" {
+		t.Fatalf("reopen create = %v", third)
+	}
+	// Unless the user asks for a fresh agent.
+	var fresh store.Run
+	expect(t, "fresh", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent",
+		"prompt": "Start over", "task_id": task.ID, "fresh": true}, &fresh), 201)
+	if fresh.ID == run.ID || fresh.TmuxSession != fmt.Sprintf("%s-%d", task.Ref, fresh.ID) {
+		t.Fatalf("fresh = %+v (its name must not clash with the open agent's)", fresh)
+	}
+}
+
+func TestTmuxHookRegistersHandStartedSessions(t *testing.T) {
+	h := setup(t)
+	h.login()
+	m := newFakeMachine(t, h)
+	const sid = "0b6e3f4a-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
+
+	// Outside every project's repos: nothing to register.
+	m.hook(map[string]any{"event": "SessionStart", "session_id": sid, "cwd": "/tmp/scratch", "tmux_session": "scratch"})
+	var list struct{ Runs []store.Run }
+	expect(t, "runs", h.do("GET", "/api/runs", nil, &list), 200)
+	if len(list.Runs) != 0 {
+		t.Fatalf("runs = %+v", list.Runs)
+	}
+
+	// In a repo: the session is a run from its first hook on.
+	m.hook(map[string]any{"event": "SessionStart", "session_id": sid, "cwd": m.path + "/pkg", "tmux_session": "work", "source": "startup"})
+	expect(t, "runs", h.do("GET", "/api/runs", nil, &list), 200)
+	if len(list.Runs) != 1 {
+		t.Fatalf("runs = %+v", list.Runs)
+	}
+	run := list.Runs[0]
+	if run.Origin != "tmux" || run.TmuxSession != "work" || run.Status != "running" || run.ProjectKey != "SHOP" ||
+		run.RepoName != "shop_api" || run.SessionID != sid || run.Awaiting != "reply" {
+		t.Fatalf("registered = %+v", run)
+	}
+	m.hook(map[string]any{"event": "UserPromptSubmit", "session_id": sid, "cwd": m.path, "tmux_session": "work", "prompt": "check the logs"})
+	if run = m.run(run.ID); run.Prompt != "check the logs" || run.Awaiting != "" {
+		t.Fatalf("after the prompt = %+v", run)
+	}
+	m.hook(map[string]any{"event": "Notification", "session_id": sid, "tmux_session": "work",
+		"notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash"})
+	if run = m.run(run.ID); run.Awaiting != "answer" {
+		t.Fatalf("waiting for permission = %+v", run)
+	}
+	m.hook(map[string]any{"event": "Stop", "session_id": sid, "tmux_session": "work", "last_message": "The logs are clean."})
+	if run = m.run(run.ID); run.Result != "The logs are clean." || run.Awaiting != "reply" {
+		t.Fatalf("after the turn = %+v", run)
+	}
+
+	// The terminal list says which run each tmux session is.
+	m.beat([]map[string]any{{"name": "work", "windows": 1, "command": "claude", "claude": true, "path": m.path}}, nil)
+	var hosts struct{ Hosts []store.TerminalHost }
+	expect(t, "hosts", h.do("GET", "/api/terminal/hosts", nil, &hosts), 200)
+	if s := hosts.Hosts[0].Sessions[0]; s.RunID == nil || *s.RunID != run.ID {
+		t.Fatalf("session = %+v", s)
+	}
+
+	// /clear in the same tmux session: a new conversation, a new run; the old one is over.
+	const sid2 = "1c7f4a5b-2d3e-4f60-9b0c-1d2e3f4a5b6c"
+	m.hook(map[string]any{"event": "SessionStart", "session_id": sid2, "cwd": m.path, "tmux_session": "work", "source": "clear"})
+	if old := m.run(run.ID); old.Status != "succeeded" {
+		t.Fatalf("the cleared conversation = %+v", old)
+	}
+	expect(t, "runs", h.do("GET", "/api/runs?status=running", nil, &list), 200)
+	if len(list.Runs) != 1 || list.Runs[0].SessionID != sid2 || list.Runs[0].TmuxSession != "work" {
+		t.Fatalf("after /clear = %+v", list.Runs)
+	}
+	// Exiting Claude ends a hand-started run.
+	m.hook(map[string]any{"event": "SessionEnd", "session_id": sid2, "tmux_session": "work", "reason": "prompt_input_exit"})
+	if r := m.run(list.Runs[0].ID); r.Status != "succeeded" {
+		t.Fatalf("after exit = %+v", r)
+	}
+}
+
+func TestHeadlessRunsStayOutOfTmux(t *testing.T) {
+	h := setup(t)
+	h.login()
+	m := newFakeMachine(t, h)
+	off := store.AgentSettings{Tmux: false}
+	expect(t, "setting", h.do("PATCH", "/api/agent-settings", off, nil), 200)
+	var run store.Run
+	expect(t, "queue", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent",
+		"prompt": "Look", "permission_mode": "plan"}, &run), 201)
+	if run.TmuxSession != "" {
+		t.Fatalf("with the setting off the run is headless: %+v", run)
+	}
+	var claim struct{ Run store.Run }
+	expect(t, "claim", m.runner.do("POST", "/api/runner/claim", nil, &claim, m.bearer...), 200)
+	// A headless run's heartbeat reconciliation still fails a lost run, and never a tmux one.
+	if _, err := h.store.DB.Exec(context.Background(), `UPDATE runs SET started_at = ts_add(now(), -600) WHERE id = $1`, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	m.beat(nil, nil)
+	if r := m.run(run.ID); r.Status != "failed" {
+		t.Fatalf("lost headless run = %+v", r)
+	}
+}
