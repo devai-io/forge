@@ -109,15 +109,17 @@ export function ProjectPage() {
         value={tab}
         onChange={setTab}
         className="mb-4"
-        items={[
-          { value: "overview", label: "Overview" },
-          { value: "board", label: "Board", count: s.total - s.done },
-          { value: "list", label: "List", count: s.total },
-          { value: "agents", label: "Agents", count: s.active_runs || undefined },
-          { value: "memory", label: "Memory" },
-          { value: "files", label: "Files" },
-          { value: "activity", label: "Activity" },
-        ].filter((i) => tabs.includes(i.value as Tab))}
+        items={(
+          [
+            { value: "overview", label: "Overview" },
+            { value: "board", label: "Board", count: s.total - s.done },
+            { value: "list", label: "List", count: s.total },
+            { value: "agents", label: "Agents", count: s.active_runs || undefined },
+            { value: "memory", label: "Memory" },
+            { value: "files", label: "Files" },
+            { value: "activity", label: "Activity" },
+          ] as { value: Tab; label: string; count?: number }[]
+        ).filter((i) => tabs.includes(i.value))}
       />
       {tab === "overview" ? <Overview project={p} /> : null}
       {tab === "board" ? <BoardTab project={p} /> : null}
