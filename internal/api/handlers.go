@@ -459,6 +459,9 @@ func (s *Server) listRunners(w http.ResponseWriter, r *http.Request, u *store.Us
 		writeErr(w, r, err)
 		return
 	}
+	if isMember(u) {
+		rs = memberRunners(rs)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"runners": rs})
 }
 

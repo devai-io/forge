@@ -56,6 +56,7 @@ Server (workspace: FORGE_HOME, default ~/.config/forge):
                                          a limited account: tasks, agent prompts and runs in those projects only
   forge grant <username> <KEY>           give a member another project
   forge revoke <username> <KEY>          take a project away from a member
+  forge member-machine <machine> on|off  let members run agents on a machine (off by default)
   forge reset-password <username>        set a new random password
   forge disable-2fa <username>           turn two-factor off
   forge backup                           snapshot the database into backups/ now
@@ -323,6 +324,15 @@ func runServer(args []string) error {
 			return fmt.Errorf("project %q: %w", args[2], err)
 		}
 		fmt.Printf("%s: %s %s\n", args[0], u.Username, strings.ToUpper(args[2]))
+		return nil
+	case "member-machine":
+		if len(args) != 3 || (args[2] != "on" && args[2] != "off") {
+			return errors.New("usage: forge member-machine <machine> on|off")
+		}
+		if err := st.SetRunnerMembersAllowed(ctx, args[1], args[2] == "on"); err != nil {
+			return fmt.Errorf("machine %q: %w", args[1], err)
+		}
+		fmt.Printf("member runs on %s: %s\n", args[1], args[2])
 		return nil
 	case "reset-password":
 		if len(args) != 2 {

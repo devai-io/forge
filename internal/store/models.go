@@ -332,6 +332,8 @@ type Runner struct {
 	CreatedAt    time.Time          `json:"created_at"`
 	// PairExpiresAt is set while a pairing code is outstanding.
 	PairExpiresAt *time.Time `json:"pair_expires_at"`
+	// MembersAllowed: member accounts may run agents here.
+	MembersAllowed bool `json:"members_allowed"`
 }
 
 type Run struct {

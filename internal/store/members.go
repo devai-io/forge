@@ -80,3 +80,22 @@ func (s *Store) RevokeProject(ctx context.Context, userID int64, key string) err
 		AND project_id = (SELECT id FROM projects WHERE key = $2)`, userID, strings.ToUpper(key))
 	return mapErr(err)
 }
+
+// SetRunnerMembersAllowed opens (or closes) a machine to members' agent runs.
+func (s *Store) SetRunnerMembersAllowed(ctx context.Context, name string, allowed bool) error {
+	tag, err := s.DB.Exec(ctx, `UPDATE runners SET members_allowed = $2 WHERE name = $1`, name, allowed)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// RunnerMembersAllowed reports whether members may run agents on the runner.
+func (s *Store) RunnerMembersAllowed(ctx context.Context, runnerID int64) bool {
+	var ok bool
+	err := s.DB.QueryRow(ctx, `SELECT members_allowed FROM runners WHERE id = $1`, runnerID).Scan(&ok)
+	return err == nil && ok
+}

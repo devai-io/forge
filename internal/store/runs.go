@@ -19,14 +19,15 @@ const runnerSelect = `
 SELECT rn.id, rn.name, rn.role, rn.hostname, rn.os, rn.version,
        coalesce(rn.last_seen_at > ts_add(now(), -` + onlineWindow + `), 0),
        rn.last_seen_at, rn.capabilities, rn.created_at, rn.pair_expires_at,
-       (SELECT count(*) FROM runs r WHERE r.runner_id = rn.id AND r.status = 'running')
+       (SELECT count(*) FROM runs r WHERE r.runner_id = rn.id AND r.status = 'running'),
+       rn.members_allowed
 FROM runners rn`
 
 func scanRunner(row interface{ Scan(...any) error }) (*Runner, error) {
 	var r Runner
 	var caps []byte
 	if err := row.Scan(&r.ID, &r.Name, &r.Role, &r.Hostname, &r.OS, &r.Version, &r.Online, &r.LastSeenAt, &caps,
-		&r.CreatedAt, &r.PairExpiresAt, &r.Running); err != nil {
+		&r.CreatedAt, &r.PairExpiresAt, &r.Running, &r.MembersAllowed); err != nil {
 		return nil, mapErr(err)
 	}
 	_ = json.Unmarshal(caps, &r.Capabilities)

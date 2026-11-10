@@ -92,6 +92,11 @@ func (s *Server) memberGuard(w http.ResponseWriter, r *http.Request, u *store.Us
 			if err != nil || !s.store.IsProjectMember(ctx, u.ID, run.ProjectID) {
 				return deny()
 			}
+			// Steering a run (messages, answers, end) types into its
+			// machine: only on machines opened to members.
+			if r.Method != http.MethodGet && !s.store.RunnerMembersAllowed(ctx, run.RunnerID) {
+				return closedMachine(w)
+			}
 		}
 	}
 	switch r.Pattern {
@@ -114,10 +119,13 @@ func (s *Server) memberGuard(w http.ResponseWriter, r *http.Request, u *store.Us
 		}
 	case "POST /api/runs":
 		var b struct {
-			RepoID      int64  `json:"repo_id"`
-			Kind        string `json:"kind"`
-			TaskID      *int64 `json:"task_id"`
-			ResumeRunID *int64 `json:"resume_run_id"`
+			RunnerID       int64  `json:"runner_id"`
+			RepoID         int64  `json:"repo_id"`
+			Kind           string `json:"kind"`
+			TaskID         *int64 `json:"task_id"`
+			ResumeRunID    *int64 `json:"resume_run_id"`
+			Fresh          bool   `json:"fresh"`
+			PermissionMode string `json:"permission_mode"`
 		}
 		raw, ok := peekBody(w, r)
 		if !ok {
@@ -129,11 +137,21 @@ func (s *Server) memberGuard(w http.ResponseWriter, r *http.Request, u *store.Us
 			writeError(w, http.StatusForbidden, "forbidden", "members can only start agent runs")
 			return false
 		}
+		// Claude asks before acting; a member never turns that off.
+		if b.PermissionMode == "bypassPermissions" {
+			writeError(w, http.StatusForbidden, "forbidden", "members cannot skip permission prompts")
+			return false
+		}
+		// The machine the prompt lands on: a resumed run's, the task's
+		// current agent's (the prompt becomes a message to it), or the
+		// one asked for.
+		machine := b.RunnerID
 		if b.ResumeRunID != nil {
 			prev, err := s.store.RunByID(ctx, *b.ResumeRunID)
 			if err != nil || !s.store.IsProjectMember(ctx, u.ID, prev.ProjectID) {
 				return deny()
 			}
+			machine = prev.RunnerID
 		} else {
 			repo, err := s.store.RepoByID(ctx, b.RepoID)
 			if err != nil || !s.store.IsProjectMember(ctx, u.ID, repo.ProjectID) {
@@ -145,9 +163,37 @@ func (s *Server) memberGuard(w http.ResponseWriter, r *http.Request, u *store.Us
 			if err != nil || !s.store.IsProjectMember(ctx, u.ID, t.ProjectID) {
 				return deny()
 			}
+			if b.ResumeRunID == nil && !b.Fresh {
+				if cur, err := s.store.TaskAgent(ctx, *b.TaskID); err == nil {
+					machine = cur.RunnerID
+				}
+			}
+		}
+		if !s.store.RunnerMembersAllowed(ctx, machine) {
+			return closedMachine(w)
 		}
 	}
 	return true
+}
+
+func closedMachine(w http.ResponseWriter) bool {
+	writeError(w, http.StatusForbidden, "forbidden", "that machine is not open to members")
+	return false
+}
+
+// memberRunners is a member's view of the machines: only those open to
+// members, without hostnames.
+func memberRunners(rs []store.Runner) []store.Runner {
+	out := []store.Runner{}
+	for _, rn := range rs {
+		if rn.MembersAllowed {
+			rn.Hostname = ""
+			rn.Capabilities.CommandDetails = []store.CommandDetail{}
+			rn.Capabilities.Commands = []string{}
+			out = append(out, rn)
+		}
+	}
+	return out
 }
 
 func contains(s, sub string) bool { return bytes.Contains([]byte(s), []byte(sub)) }

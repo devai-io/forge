@@ -94,3 +94,59 @@ func TestMemberSeesOnlyGrantedProjects(t *testing.T) {
 	expect(t, "create project", h.do("POST", "/api/projects", map[string]any{"key": "ZZZ", "name": "z"}, nil), 403)
 	expect(t, "delete task", h.do("DELETE", fmt.Sprintf("/api/tasks/%d", own.ID), nil, nil), 403)
 }
+
+func TestMemberRunsOnlyOnOpenMachines(t *testing.T) {
+	h := setup(t)
+	ctx := context.Background()
+	h.login()
+	var created struct {
+		Runner store.Runner
+		Token  string
+	}
+	expect(t, "create runner", h.newRunner("desktop", &created.Runner, &created.Token), 201)
+	var shop store.ProjectDetail
+	expect(t, "shop", h.do("GET", "/api/projects/SHOP", nil, &shop), 200)
+	var task store.Task
+	expect(t, "task", h.do("POST", "/api/tasks", map[string]any{"project_key": "SHOP", "title": "Owner's agent"}, &task), 201)
+	// The owner's agent on the task, on the closed machine.
+	var ownerRun store.Run
+	expect(t, "owner run", h.do("POST", "/api/runs", map[string]any{"runner_id": created.Runner.ID,
+		"repo_id": shop.Repos[0].ID, "kind": "agent", "prompt": "hi", "task_id": task.ID}, &ownerRun), 201)
+
+	hash, _ := auth.HashPassword(testPassword)
+	bob, err := h.store.CreateUser(ctx, "bob", "bob@example.com", "Bob", hash, "UTC", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = h.store.SetUserRole(ctx, bob.ID, store.RoleMember)
+	_ = h.store.GrantProject(ctx, bob.ID, "SHOP")
+	jar, _ := cookiejar.New(nil)
+	h.client.Jar = jar
+	expect(t, "member login", h.do("POST", "/api/auth/login", map[string]string{"username": "bob", "password": testPassword}, nil), 200)
+
+	run := map[string]any{"runner_id": created.Runner.ID, "repo_id": shop.Repos[0].ID, "kind": "agent", "prompt": "hi"}
+	var rs struct{ Runners []store.Runner }
+	expect(t, "runners", h.do("GET", "/api/runners", nil, &rs), 200)
+	if len(rs.Runners) != 0 {
+		t.Fatalf("closed machine listed: %+v", rs.Runners)
+	}
+	expect(t, "closed machine", h.do("POST", "/api/runs", run, nil), 403)
+	expect(t, "message to agent on closed machine", h.do("POST", fmt.Sprintf("/api/runs/%d/messages", ownerRun.ID), map[string]string{"body": "x"}, nil), 403)
+	expect(t, "see owner's run", h.do("GET", fmt.Sprintf("/api/runs/%d", ownerRun.ID), nil, nil), 200)
+
+	if err := h.store.SetRunnerMembersAllowed(ctx, "desktop", true); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, "runners open", h.do("GET", "/api/runners", nil, &rs), 200)
+	if len(rs.Runners) != 1 || rs.Runners[0].Hostname != "" {
+		t.Fatalf("runners = %+v", rs.Runners)
+	}
+	expect(t, "skip permissions", h.do("POST", "/api/runs", map[string]any{"runner_id": created.Runner.ID, "repo_id": shop.Repos[0].ID,
+		"kind": "agent", "prompt": "hi", "permission_mode": "bypassPermissions"}, nil), 403)
+	expect(t, "open machine", h.do("POST", "/api/runs", run, nil), 201)
+	_ = h.store.SetRunnerMembersAllowed(ctx, "desktop", false)
+	// A task's agent stays on its machine: prompting that task again is a
+	// message to it, so it is refused once the machine is closed.
+	expect(t, "task agent on closed machine", h.do("POST", "/api/runs", map[string]any{"repo_id": shop.Repos[0].ID,
+		"kind": "agent", "prompt": "more", "task_id": task.ID}, nil), 403)
+}

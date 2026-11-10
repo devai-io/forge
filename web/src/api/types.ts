@@ -319,6 +319,7 @@ export type Runner = {
   created_at: string;
   role: RunnerRole;
   pair_expires_at: string | null; // non-null = a pairing code is outstanding and unused
+  members_allowed: boolean; // member accounts may run agents on this machine (`forge member-machine`)
 };
 
 /** A one-time code a machine swaps for its token (`forge agent pair <origin> <code>`). */

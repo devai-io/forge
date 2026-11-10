@@ -39,7 +39,13 @@ routes listed in `internal/api/members.go` (own account, projects, tasks, runs,
 machine list); any other route → `403 forbidden`. Projects, tasks and runs
 outside its grants are `404`, lists are filtered, a project's servers,
 endpoints, infra notes and repo paths are blanked, tasks cannot change project,
-and `POST /api/runs` accepts only `kind: "agent"`.
+and `POST /api/runs` accepts only `kind: "agent"` and never
+`permission_mode: "bypassPermissions"`. A member's prompts run only on machines
+opened with `forge member-machine <machine> on` (`Runner.members_allowed`,
+default off): `POST /api/runs` whose machine (the one asked for, the resumed
+run's, or the task's current agent's) is closed → `403`, and so is any
+non-GET on a run whose machine is closed. `GET /api/runners` lists only open
+machines to a member, without hostnames or named commands.
 
 ## Types
 
@@ -1006,6 +1012,7 @@ type Pairing = { code: string;         // e.g. "K7QD-M3XP"
                  expires_at: string };  // 15 minutes after it was issued; single use
 type Runner = { /* … as above, plus */
   pair_expires_at: string | null;  // non-null = a code is outstanding and unused
+  members_allowed: boolean;       // member accounts may run agents here (`forge member-machine NAME on|off`)
 };
 ```
 
