@@ -1,6 +1,5 @@
 import clsx from "clsx";
-import { Copy, Laptop, LogOut, ShieldCheck, ShieldOff } from "lucide-react";
-import QRCode from "qrcode";
+import { Laptop, LogOut, ShieldCheck, ShieldOff } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "@/api/client";
 import {
@@ -28,7 +27,6 @@ import { useTheme, type ThemePref } from "@/lib/theme";
 import { describeAgent } from "@/lib/security";
 import { useHashScroll } from "@/lib/docs";
 import { timezoneOptions } from "@/lib/setup";
-import { groupSecret } from "@/lib/vault";
 import { AccentPicker } from "./AccentPicker";
 import { AssistantPanel } from "./AssistantPanel";
 import { EndpointsPanel } from "./EndpointsPanel";
@@ -38,6 +36,8 @@ import { TokenSavingPanel } from "./TokenSaving";
 import { TelegramPanel } from "./TelegramPanel";
 import { MemoryPanel } from "@/features/memory/MemoryPanel";
 import { RevokeOthersButton, SecurityLogPanel } from "./SecurityLog";
+import { PasskeysPanel } from "./PasskeysPanel";
+import { SetupKey, TotpQrCode } from "@/features/auth/TotpQr";
 
 // The page's groups, in page order, for the "On this page" nav. Ids are the
 // panels' own heading ids (Panel puts `id` on its <h2>), so old deep links
@@ -48,6 +48,7 @@ const GROUPS: { id: string; title: string; panels: { id: string; title: string }
     title: "Account",
     panels: [
       { id: "settings-account", title: "Account" },
+      { id: "settings-passkeys", title: "Passkeys" },
       { id: "settings-password", title: "Password" },
       { id: "settings-2fa", title: "Two-factor" },
     ],
@@ -179,6 +180,7 @@ export function SettingsPage() {
         <section aria-labelledby="settings-group-account" className="space-y-4">
           <GroupHeading id="settings-group-account">Account</GroupHeading>
           <AccountPanel />
+          <PasskeysPanel />
           <PasswordPanel />
           <TwoFactorPanel />
         </section>
@@ -483,8 +485,8 @@ function TwoFactorPanel() {
               on
             </Badge>
           ) : (
-            <Badge tone="warning" dot title="Without it the password alone unlocks sign-in, vault reveals and terminals">
-              off — recommended
+            <Badge tone="warning" dot title="The next sign-in with the password will ask you to set it up">
+              off
             </Badge>
           )}
         </span>
@@ -502,23 +504,8 @@ function SetupTotp() {
   const enable = useTotpEnable();
   // The pending secret lives in this component only — never in the query cache.
   const [setup, setSetup] = useState<{ secret: string; otpauth_url: string } | null>(null);
-  const [qr, setQr] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [code, setCode] = useState("");
-
-  useEffect(() => {
-    if (!setup) return;
-    let cancelled = false;
-    // SVG rather than a canvas PNG: pure JS, crisp at any size, and allowed by
-    // the CSP as a data: image.
-    QRCode.toString(setup.otpauth_url, { type: "svg", margin: 1, errorCorrectionLevel: "M", color: { dark: "#000000", light: "#ffffff" } }).then(
-      (svg) => !cancelled && setQr(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`),
-      () => !cancelled && setQr(null),
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [setup]);
 
   const start = async () => {
     setStarting(true);
@@ -535,8 +522,8 @@ function SetupTotp() {
     return (
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-md text-[13px] text-fg-2">
-          Ask for a code from an authenticator app (1Password, Aegis, Google Authenticator…) at sign-in and before
-          sensitive actions like revealing a vault secret.
+          A password sign-in needs a code from an authenticator app (1Password, Aegis, Google Authenticator…). Set it
+          up here, or at your next sign-in with the password.
         </p>
         <Button variant="primary" onClick={start} loading={starting}>
           <ShieldCheck className="size-4" aria-hidden /> Set up
@@ -549,34 +536,13 @@ function SetupTotp() {
 
   return (
     <div className="grid gap-5 sm:grid-cols-[auto_1fr]">
-      <div className="justify-self-center rounded-lg bg-white p-2 sm:justify-self-start">
-        {qr ? (
-          <img src={qr} alt="QR code for your authenticator app" width={220} height={220} className="block" />
-        ) : (
-          <div className="size-[220px]" />
-        )}
-      </div>
+      <TotpQrCode otpauthUrl={setup.otpauth_url} />
       <div className="space-y-3 text-[13px]">
         <ol className="list-decimal space-y-1 pl-4 text-fg-2">
           <li>Scan the code with your authenticator app, or enter the key below by hand.</li>
           <li>Type the 6-digit code it shows to switch two-factor on.</li>
         </ol>
-        <div>
-          <div className="mb-1 text-fg-3">Setup key</div>
-          <div className="flex items-center gap-2">
-            <code className="rounded-md border border-line bg-surface-2 px-2 py-1 font-mono text-[13px] break-all">
-              {groupSecret(setup.secret)}
-            </code>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label="Copy setup key"
-              onClick={() => void navigator.clipboard?.writeText(setup.secret).then(() => toast.success("Key copied"))}
-            >
-              <Copy className="size-3.5" />
-            </Button>
-          </div>
-        </div>
+        <SetupKey secret={setup.secret} />
         <form
           className="flex flex-wrap items-end gap-2"
           onSubmit={(e) => {
@@ -586,7 +552,6 @@ function SetupTotp() {
               onSuccess: () => {
                 toast.success("Two-factor authentication is on");
                 setSetup(null);
-                setQr(null);
               },
             });
           }}
@@ -633,9 +598,9 @@ function DisableTotp() {
       }}
     >
       <p className="text-[13px] text-fg-2">
-        A browser is asked for a code from your authenticator app the first time it signs in or confirms a sensitive
-        action; after that it is trusted and the password is enough. To turn two-factor off, confirm with your password
-        and a current code.
+        Every sign-in with the password asks for a code from your authenticator app (a passkey does not). To confirm a
+        sensitive action, a browser that has typed a code before is trusted and the password is enough. Turning
+        two-factor off (password and a current code) means the next password sign-in sets it up again.
       </p>
       <TrustedDevices />
       <input type="text" autoComplete="username" value={user.username} className="hidden" readOnly aria-hidden tabIndex={-1} />
@@ -670,7 +635,9 @@ function TrustedDevices() {
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line px-3 py-2 text-[13px]">
       <span className="flex items-center gap-2 text-fg-2">
         <Laptop className="size-3.5 text-fg-3" aria-hidden />
-        {trusted ? "This browser is trusted: no code needed here." : "This browser will be asked for the code."}
+        {trusted
+          ? "This browser is trusted: confirming an action needs no code here."
+          : "This browser will be asked for the code to confirm actions."}
       </span>
       <Button
         size="sm"

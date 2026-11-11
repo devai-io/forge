@@ -116,7 +116,7 @@ func TestAgentRunEngines(t *testing.T) {
 
 	// The machine gets the provider's Anthropic endpoint and key with the
 	// run — and only for DeepSeek runs. Drain the queue in order.
-	runner := &harness{t: t, srv: h.srv, client: &http.Client{}}
+	runner := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}
 	bearer := []string{"Authorization", "Bearer " + created.Token}
 	for {
 		var claimed struct {

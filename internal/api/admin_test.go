@@ -55,10 +55,10 @@ func TestAdminAccounts(t *testing.T) {
 	path := fmt.Sprintf("/api/admin/users/%d", gus)
 
 	// The new account signs in with the password shown once.
-	member := &harness{t: t, srv: h.srv, client: &http.Client{}}
+	member := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}
 	jar, _ := cookiejar.New(nil)
 	member.client.Jar = jar
-	expect(t, "member login", member.do("POST", "/api/auth/login", map[string]string{"username": "gus", "password": created.Password}, nil), 200)
+	expect(t, "member login", member.signIn("gus", created.Password), 200)
 	expect(t, "admin is the owner's", member.do("GET", "/api/admin/users", nil, nil), 403)
 	expect(t, "so is acting as someone", member.do("POST", "/api/admin/impersonate", map[string]any{"user_id": me.ID}, nil), 403)
 
@@ -91,7 +91,7 @@ func TestAdminAccounts(t *testing.T) {
 	}
 	expect(t, "signed out", member.do("GET", "/api/auth/me", nil, nil), 401)
 	expect(t, "old password", member.do("POST", "/api/auth/login", map[string]string{"username": "gus", "password": created.Password}, nil), 401)
-	expect(t, "new password", member.do("POST", "/api/auth/login", map[string]string{"username": "gus", "password": reset.Password}, nil), 200)
+	expect(t, "new password", member.signIn("gus", reset.Password), 200)
 
 	// The owner's own account: not from here.
 	own := fmt.Sprintf("/api/admin/users/%d", me.ID)

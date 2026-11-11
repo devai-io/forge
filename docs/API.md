@@ -28,7 +28,8 @@ Runner: `Authorization: Bearer frg_…` (a runner token). Runner routes live
 under `/api/runner/*` and accept nothing else; browser routes never accept a
 runner token.
 
-Unauthenticated routes: `POST /api/auth/login`, `POST /api/auth/forgot`,
+Unauthenticated routes: `POST /api/auth/login`, `POST /api/auth/passkey/begin`,
+`POST /api/auth/passkey/finish`, `POST /api/auth/forgot`,
 `POST /api/auth/reset`, `GET /api/status`, `GET /api/setup`, `POST /api/setup`.
 Everything else → `401 unauthorized` without a valid session.
 
@@ -60,6 +61,7 @@ every change needs elevation and is logged (`user_created`, `user_updated`,
 ```ts
 type AdminUser = { id: number; username: string; email: string; display_name: string;
                    role: "owner" | "member"; totp_enabled: boolean;
+                   passkeys: number;                   // how many passkeys sign it in
                    password_generated: boolean;        // still the password Forge made up
                    created_at: string; last_seen_at: string | null; sessions: number;
                    projects: string[];                  // a member's project keys
@@ -76,7 +78,8 @@ type AdminView = { users: AdminUser[];
 | POST | /api/admin/users | `{username, email, display_name?, role?, projects?}` (**elevated**) | `201 {user: AdminUser, password}` — the password Forge made up, shown once. `role` defaults to `member`; `projects` are a member's. `422` for a bad or taken username or e-mail, or an unknown project |
 | PATCH | /api/admin/users/{user} | `{display_name?, email?, role?, projects?, agent?}` (**elevated**) | `AdminUser`. `projects` replaces a member's grants; `agent: {machine, model?, effort?, permission_mode?}` sets a member's agent (never `bypassPermissions`), `agent: null` takes it away. The last owner stays an owner; nobody changes their own role; a member made an owner loses its agent |
 | POST | /api/admin/users/{user}/password | – (**elevated**) | `{password}` — a new made-up password, shown once; every session of that account ends. Not for your own account (Settings) |
-| POST | /api/admin/users/{user}/disable-2fa | – (**elevated**) | `204` |
+| POST | /api/admin/users/{user}/disable-2fa | – (**elevated**) | `204` — its next password sign-in sets up an authenticator again |
+| POST | /api/admin/users/{user}/remove-passkeys | – (**elevated**) | `{removed: number}` — logged as `user_updated` |
 | DELETE | /api/admin/users/{user} | – (**elevated**) | `204` — with its sessions, grants and agent; its runs stay. Not yourself, not the last owner |
 | PATCH | /api/admin/machines/{id} | `{members_allowed}` (**elevated**) | `AdminView` |
 | POST | /api/admin/impersonate | `{user_id}` (**elevated**) | `{user: User}` — this session acts as that account until stopped |
@@ -335,7 +338,7 @@ type Dashboard = {
 ### Auth & account
 | Method | Path | Body | Response |
 |---|---|---|---|
-| POST | /api/auth/login | `{username, password}` (username may be the e-mail) | `200 {user: User}` + cookie; `401 unauthorized`; `429 rate_limited` |
+| POST | /api/auth/login | `{username, password, code?}` (username may be the e-mail) | `200 {user: User, elevated_until: null, device_trusted, passkeys}` + cookie; `401 unauthorized`; `401 totp_required` / `totp_setup_required` (see Auth additions); `429 rate_limited` |
 | POST | /api/auth/logout | – | `204` (clears cookie) |
 | GET | /api/auth/me | – | `{user: User}` |
 | PATCH | /api/auth/me | `{email?, display_name?, timezone?, weekly_goal?}` | `{user: User}` |
@@ -664,15 +667,40 @@ type Dashboard = { /* … as above, plus */ checkup: CheckupSummary | null;
 
 ## Auth additions
 
-- `POST /api/auth/login` body gains optional `code` (6-digit TOTP). With 2FA on and
-  no code → `401 {"code":"totp_required"}`; wrong code → `401 unauthorized`.
+- **A password sign-in always needs the authenticator code** (6-digit TOTP in
+  `code`), on every browser — a trusted device (below) only skips the code when
+  it *confirms* an action. Right password, 2FA on, no code →
+  `401 {"code":"totp_required"}`; wrong code → `401 unauthorized`.
+- **An account without 2FA sets it up at sign-in.** Right password, no code →
+  `401 {"error":{"code":"totp_setup_required","message","secret","otpauth_url"}}`;
+  the same secret comes back until it is confirmed. The same request with a
+  `code` from that secret turns 2FA on (`totp_enabled`, detail "at sign-in")
+  and signs in. (A server with no vault key has no 2FA: the password alone
+  signs in there.) `forge disable-2fa <user>` therefore means "set it up again
+  at the next sign-in".
+- **Passkeys** (WebAuthn) are the main way in: a passkey signs in on its own
+  (discoverable credential, user verification required — no username,
+  password or code) and confirms sensitive actions. The relying party is the
+  host of the public URL (`PUBLIC_URL`; an IP address cannot have passkeys —
+  those routes then answer `503 passkeys_unavailable`). Every ceremony is
+  `…/begin` → `{ceremony, publicKey}` (`publicKey` is the
+  `PublicKeyCredentialCreationOptions` / `…RequestOptions` JSON, binary fields
+  base64url) and `…/finish` with `{ceremony, credential}` (the
+  `PublicKeyCredential` as JSON, base64url). A ceremony is good for 5 minutes,
+  once, on the session that began it; an unknown or used one → `400
+  ceremony_expired`. A passkey whose signature counter goes backwards (a
+  copied key) is refused and logged as `passkey_refused`. `login` and `me`
+  answer `passkeys: number` — on `me`, the signed-in person's own (the
+  owner's, while acting as another account). `forge remove-passkeys <user>`
+  deletes an account's passkeys.
 - **Elevation** (step-up): some actions need the password (and TOTP code when on)
   re-entered within the last 10 minutes. Without it they answer
   `403 {"code":"elevation_required"}`; the UI then asks and retries.
 - **Trusted devices**: a correct TOTP code (at login, elevation or enrolment)
   sets a `forge_device` cookie (HttpOnly, SameSite=Strict, path `/api/auth`,
   400 days; only its hash is stored). While it is valid — used within 180
-  days — that browser signs in and elevates with the password alone. Changing
+  days — that browser elevates with the password alone (signing in still
+  needs the code). Changing
   the password or "sign out everywhere else" forgets every other device; a
   reset by e-mail, turning 2FA off and `DELETE /api/auth/trusted-devices`
   forget them all. `login` and `me` answer `device_trusted: boolean`.
@@ -680,10 +708,29 @@ type Dashboard = { /* … as above, plus */ checkup: CheckupSummary | null;
 | Method | Path | Body | Response |
 |---|---|---|---|
 | POST | /api/auth/elevate | `{password, code?}` | `{elevated_until}` |
+| POST | /api/auth/passkey/begin | – (no session) | `{ceremony, publicKey}` — a discoverable sign-in |
+| POST | /api/auth/passkey/finish | `{ceremony, credential}` | as `login`; `401 unauthorized` for a passkey not accepted (logged `login_failed`); `429 rate_limited` |
+| POST | /api/auth/elevate/passkey/begin | – | `{ceremony, publicKey}` (the account's own passkeys allowed); `400 no_passkeys` |
+| POST | /api/auth/elevate/passkey/finish | `{ceremony, credential}` | `{elevated_until}`; `422` (field `passkey`) when not accepted |
+| GET | /api/auth/passkeys | – | `{passkeys: Passkey[], available: boolean}` newest first |
+| POST | /api/auth/passkeys/begin | – (elevation required) | `{ceremony, publicKey}` — registration: resident key and user verification required, no attestation, the account's passkeys excluded |
+| POST | /api/auth/passkeys/finish | `{ceremony, credential, name?}` | `201 Passkey` (logged `passkey_added`); `422` (field `credential`) when it does not verify; `409` for a passkey already on file |
+| PATCH | /api/auth/passkeys/{id} | `{name}` | `Passkey` |
+| DELETE | /api/auth/passkeys/{id} | – (elevation required) | `204` (logged `passkey_removed`) |
 | POST | /api/auth/totp/setup | – (elevation required) | `{secret, otpauth_url}` — pending until enabled |
 | POST | /api/auth/totp/enable | `{code}` | `204` |
 | POST | /api/auth/totp/disable | `{password, code}` | `204` |
 | DELETE | /api/auth/trusted-devices | – (elevation required) | `{forgotten: number}` — every browser, this one too, is asked for the code again. Logged as `devices_forgotten` |
+
+```ts
+type Passkey = {
+  id: number;
+  name: string;              // "Passkey" when none was given; at most 60 characters
+  created_at: string;
+  last_used_at: string | null;
+  synced: boolean;           // backed up by its provider (iCloud Keychain, Google Password Manager…)
+};
+```
 | PATCH | /api/auth/me | also `checkup_time`, `checkup_email` | `{user}` |
 
 ## Vault — encrypted secrets and files
@@ -1042,7 +1089,8 @@ type SecurityEvent = {
     | "password_changed" | "password_reset" | "totp_enabled" | "totp_disabled" | "session_revoked"
     | "sessions_revoked_others" | "vault_reveal" | "vault_download" | "vault_bundle"
     | "vault_setup_code" | "vault_setup_used" | "vault_push" | "terminal_attach"
-    | "terminal_keys" | "terminal_create" | "code_open" | "runner_created" | "runner_rotated";
+    | "terminal_keys" | "terminal_create" | "code_open" | "runner_created" | "runner_rotated"
+    | "passkey_added" | "passkey_removed" | "passkey_refused";
   detail: string; ip: string; user_agent: string; session_id: number | null; at: string;
 };
 ```

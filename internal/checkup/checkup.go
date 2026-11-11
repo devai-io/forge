@@ -689,13 +689,17 @@ func (r *Runner) security(ctx context.Context) []store.CheckItem {
 		out = append(out, item("security:totp", "security", "warn", "Two-factor authentication is off", "",
 			"Enrol an authenticator app under Settings → Two-factor", "/settings", ""))
 	}
+	if n, err := r.store.CountPasskeys(ctx, u.ID); err == nil && n == 0 {
+		out = append(out, item("security:passkey", "security", "warn", "No passkey yet", "Passkeys are the main way into Forge; the password needs the authenticator code every time",
+			"Add one under Settings → Passkeys", "/settings#settings-passkeys", ""))
+	}
 	if n, err := r.store.NewDeviceLogins(ctx, 7*24*time.Hour); err == nil && n > 0 {
 		out = append(out, withFixes(item("security:new-devices", "security", "warn",
 			fmt.Sprintf("%d sign-in(s) from new devices in the last 7 days", n), "",
 			"Check Settings → Security; if one is not yours, change the password (signs the others out). If they were all you, say so: only later ones count then", "/settings", ""), fixAck))
 	}
 	if len(out) == 0 {
-		out = append(out, allClear("security", "Password changed, two-factor on, no new devices this week"))
+		out = append(out, allClear("security", "Password changed, two-factor on, a passkey, no new devices this week"))
 	}
 	return out
 }

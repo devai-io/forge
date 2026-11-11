@@ -110,7 +110,7 @@ func TestRunnerMemoryAndRecall(t *testing.T) {
 	var rn store.Runner
 	var token string
 	expect(t, "machine", h.newRunner("desk", &rn, &token), 201)
-	machine := &harness{t: t, srv: h.srv, client: &http.Client{}}
+	machine := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}
 	auth := []string{"Authorization", "Bearer " + token}
 
 	// Claude saves from a repo directory: the project comes from the path.

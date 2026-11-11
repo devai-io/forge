@@ -207,6 +207,27 @@ func (s *Server) adminDisableTOTP(w http.ResponseWriter, r *http.Request, u *sto
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// adminRemovePasskeys: an account that lost its passkeys (or one that may
+// have been copied) signs in with its password and code until it adds new ones.
+func (s *Server) adminRemovePasskeys(w http.ResponseWriter, r *http.Request, u *store.User) {
+	id, ok := pathUserID(w, r)
+	if !ok {
+		return
+	}
+	target, err := s.store.UserByID(r.Context(), id)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	n, err := s.store.DeletePasskeys(r.Context(), id)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	s.sec(r, "user_updated", fmt.Sprintf("%s (%d passkey(s) removed)", target.Username, n))
+	writeJSON(w, http.StatusOK, map[string]int{"removed": n})
+}
+
 func (s *Server) adminDeleteUser(w http.ResponseWriter, r *http.Request, u *store.User) {
 	id, ok := pathUserID(w, r)
 	if !ok {

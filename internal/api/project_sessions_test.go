@@ -50,7 +50,7 @@ func TestProjectSessions(t *testing.T) {
 	expect(t, "runner", h.newRunner("desk", &rn, &token), 201)
 	expect(t, "make master", h.do("PATCH", fmt.Sprintf("/api/runners/%d", rn.ID), map[string]string{"role": "master"}, nil), 200)
 	bearer := []string{"Authorization", "Bearer " + token}
-	machine := &harness{t: t, srv: h.srv, client: &http.Client{}}
+	machine := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}
 	beat := func(tmux []map[string]any) {
 		t.Helper()
 		expect(t, "heartbeat", machine.do("POST", "/api/runner/heartbeat", map[string]any{

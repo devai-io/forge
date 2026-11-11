@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
+
 	"github.com/devai-io/forge/internal/assistant"
 	"github.com/devai-io/forge/internal/checkup"
 	"github.com/devai-io/forge/internal/config"
@@ -47,6 +49,11 @@ type Server struct {
 	codes     *codeSessions
 
 	vaultSetups *setupCodes // one-time machine-setup codes (vault_files.go)
+
+	// Passkeys (passkeys.go): the WebAuthn relying party (nil when the public
+	// URL has no host) and the challenges of ceremonies in progress.
+	wa         *webauthn.WebAuthn
+	ceremonies *ceremonies
 
 	logins  *limiter // failed logins / password checks / setup tokens
 	resets  *limiter // reset e-mails requested
@@ -111,6 +118,7 @@ func New(cfg config.Config, st *store.Store, m *mail.Mailer, mon *monitor.Monito
 		terminals:     newTerminalHub(),
 		codes:         newCodeSessions(),
 		vaultSetups:   newSetupCodes(),
+		ceremonies:    newCeremonies(),
 		claimWait:     25 * time.Second,
 		jevCache:      map[string]relevanceEntry{},
 		tgPoll:        25 * time.Second,
@@ -119,6 +127,11 @@ func New(cfg config.Config, st *store.Store, m *mail.Mailer, mon *monitor.Monito
 		focusSettle:   focusSettle,
 		botTick:       botTick,
 		botSettle:     botSettle,
+	}
+	if wa, err := newWebAuthn(cfg.PublicURL); err != nil {
+		slog.Warn("passkeys off", "err", err)
+	} else {
+		s.wa = wa
 	}
 	s.tgs.following = map[int64]bool{}
 	s.projectSessions.started = map[string]time.Time{}
@@ -147,6 +160,8 @@ func (s *Server) Handler() http.Handler {
 	h("POST /api/auth/login", s.web(s.login))
 	h("POST /api/auth/forgot", s.web(s.forgot))
 	h("POST /api/auth/reset", s.web(s.reset))
+	h("POST /api/auth/passkey/begin", s.web(s.passkeyLoginBegin))
+	h("POST /api/auth/passkey/finish", s.web(s.passkeyLoginFinish))
 
 	// Session routes.
 	h("POST /api/auth/logout", s.web(s.logout))
@@ -196,6 +211,13 @@ func (s *Server) Handler() http.Handler {
 	h("DELETE /api/auth/sessions/{id}", s.authed(s.deleteSession))
 
 	h("POST /api/auth/elevate", s.authed(s.elevate))
+	h("POST /api/auth/elevate/passkey/begin", s.authed(s.passkeyElevateBegin))
+	h("POST /api/auth/elevate/passkey/finish", s.authed(s.passkeyElevateFinish))
+	h("GET /api/auth/passkeys", s.authed(s.listPasskeys))
+	h("POST /api/auth/passkeys/begin", s.authed(s.elevated(s.passkeyRegisterBegin)))
+	h("POST /api/auth/passkeys/finish", s.authed(s.passkeyRegisterFinish))
+	h("PATCH /api/auth/passkeys/{id}", s.authed(s.renamePasskey))
+	h("DELETE /api/auth/passkeys/{id}", s.authed(s.elevated(s.deletePasskey)))
 	h("POST /api/auth/totp/setup", s.authed(s.totpSetup))
 	h("POST /api/auth/totp/enable", s.authed(s.totpEnable))
 	h("POST /api/auth/totp/disable", s.authed(s.totpDisable))
@@ -291,6 +313,7 @@ func (s *Server) Handler() http.Handler {
 	h("PATCH /api/admin/users/{user}", s.authed(s.elevated(s.adminUpdateUser)))
 	h("POST /api/admin/users/{user}/password", s.authed(s.elevated(s.adminResetPassword)))
 	h("POST /api/admin/users/{user}/disable-2fa", s.authed(s.elevated(s.adminDisableTOTP)))
+	h("POST /api/admin/users/{user}/remove-passkeys", s.authed(s.elevated(s.adminRemovePasskeys)))
 	h("DELETE /api/admin/users/{user}", s.authed(s.elevated(s.adminDeleteUser)))
 	h("PATCH /api/admin/machines/{id}", s.authed(s.elevated(s.adminUpdateMachine)))
 	h("POST /api/admin/impersonate", s.authed(s.elevated(s.impersonate)))
@@ -460,6 +483,10 @@ var signInRoutes = map[string]bool{
 	"POST /api/auth/totp/setup":             true,
 	"POST /api/auth/totp/enable":            true,
 	"POST /api/auth/totp/disable":           true,
+	"POST /api/auth/passkeys/begin":         true,
+	"POST /api/auth/passkeys/finish":        true,
+	"PATCH /api/auth/passkeys/{id}":         true,
+	"DELETE /api/auth/passkeys/{id}":        true,
 }
 
 // realUser is the account that signed in — the owner, while it acts as

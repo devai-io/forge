@@ -26,6 +26,8 @@ export type MeResponse = {
   user: User;
   elevated_until: string | null;
   device_trusted?: boolean;
+  /** How many passkeys the person signed in has (the owner's own, while impersonating). */
+  passkeys?: number;
   /** The owner behind this session, while it acts as `user` (impersonation). */
   impersonator?: { id: number; username: string; display_name: string };
 };
@@ -39,6 +41,7 @@ export type AdminUser = {
   display_name: string;
   role: "owner" | "member";
   totp_enabled: boolean;
+  passkeys: number; // how many passkeys sign it in
   password_generated: boolean; // still the password Forge made up
   created_at: string;
   last_seen_at: string | null;
@@ -882,7 +885,20 @@ export type CodeOpenResult = { url: string; workspace: string; expires_at: strin
 
 // ── Security log & system facts ────────────────────────────────────────────
 
+/** A passkey the account signs in with (Settings → Passkeys). */
+export type Passkey = {
+  id: number;
+  name: string;
+  created_at: string;
+  last_used_at: string | null;
+  /** Backed up by its provider (iCloud Keychain, Google Password Manager…). */
+  synced: boolean;
+};
+
 export type SecurityKind =
+  | "passkey_added"
+  | "passkey_removed"
+  | "passkey_refused"
   | "login"
   | "login_failed"
   | "login_new_device"

@@ -62,7 +62,7 @@ func TestVaultRepoFilesAndMachineSetup(t *testing.T) {
 	var rn store.Runner
 	var token string
 	expect(t, "add machine", h.newRunner("laptop", &rn, &token), 201)
-	machine := &harness{t: t, srv: h.srv, client: &http.Client{}}
+	machine := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}
 	auth := []string{"Authorization", "Bearer " + token}
 	body := map[string]any{"cwd": "/home/demo/dev/shop/shop_api", "dry_run": true,
 		"files": []map[string]string{{"path": ".env", "content_base64": base64.StdEncoding.EncodeToString([]byte("KEY=s3cret\n"))}}}

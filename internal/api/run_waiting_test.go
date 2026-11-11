@@ -19,7 +19,7 @@ func TestRunStaysOpenUntilFinished(t *testing.T) {
 	var rn store.Runner
 	var token string
 	expect(t, "create runner", h.newRunner("desktop", &rn, &token), 201)
-	runner := &harness{t: t, srv: h.srv, client: &http.Client{}}
+	runner := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}
 	bearer := []string{"Authorization", "Bearer " + token}
 	var hb struct{ Repos []store.RunnerRepo }
 	beat := func(running []int64, resumeInPlace bool) {
@@ -142,7 +142,7 @@ func TestAnswerAfterPark(t *testing.T) {
 	var rn store.Runner
 	var token string
 	expect(t, "create runner", h.newRunner("desktop", &rn, &token), 201)
-	runner := &harness{t: t, srv: h.srv, client: &http.Client{}}
+	runner := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}
 	bearer := []string{"Authorization", "Bearer " + token}
 	var hb struct{ Repos []store.RunnerRepo }
 	expect(t, "heartbeat", runner.do("POST", "/api/runner/heartbeat", map[string]any{
@@ -202,7 +202,7 @@ func TestOneTurnRunFinishesAfterItsTurn(t *testing.T) {
 	var rn store.Runner
 	var token string
 	expect(t, "create runner", h.newRunner("desktop", &rn, &token), 201)
-	runner := &harness{t: t, srv: h.srv, client: &http.Client{}}
+	runner := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}
 	bearer := []string{"Authorization", "Bearer " + token}
 	var hb struct{ Repos []store.RunnerRepo }
 	expect(t, "heartbeat", runner.do("POST", "/api/runner/heartbeat", map[string]any{

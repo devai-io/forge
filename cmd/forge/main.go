@@ -62,7 +62,8 @@ Server (workspace: FORGE_HOME, default ~/.config/forge):
                                          (mode: acceptEdits by default, never bypassPermissions)
   forge member-agent <username> off      take it away (forge member-agent <username> shows it)
   forge reset-password <username>        set a new random password
-  forge disable-2fa <username>           turn two-factor off
+  forge disable-2fa <username>           turn two-factor off (the next password sign-in sets it up again)
+  forge remove-passkeys <username>       delete every passkey of an account
   forge backup                           snapshot the database into backups/ now
   forge openrouter status | test         the AI provider (OpenRouter): key, URL, one tiny call
   forge openrouter set-key < key.txt     store the one provider key (DeepSeek engine, Jev)
@@ -425,7 +426,21 @@ func runServer(args []string) error {
 		if err := st.DisableTOTP(ctx, u.ID); err != nil {
 			return err
 		}
-		fmt.Printf("two-factor disabled for %s; enrol again under Settings.\n", u.Username)
+		fmt.Printf("two-factor disabled for %s; the next password sign-in sets up an authenticator again.\n", u.Username)
+		return nil
+	case "remove-passkeys":
+		if len(args) != 2 {
+			return errors.New("usage: forge remove-passkeys <username>")
+		}
+		u, err := st.UserByLogin(ctx, args[1])
+		if err != nil {
+			return fmt.Errorf("user %q: %w", args[1], err)
+		}
+		n, err := st.DeletePasskeys(ctx, u.ID)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%d passkey(s) removed from %s.\n", n, u.Username)
 		return nil
 	default:
 		return fmt.Errorf("unknown command %q (see forge help)", args[0])

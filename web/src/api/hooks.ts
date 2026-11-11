@@ -14,6 +14,7 @@ import {
 } from "@tanstack/react-query";
 import { api, ApiError, isElevationError } from "./client";
 import { lastSeq, mergeMessages, upsertChat } from "@/lib/chats";
+import { createPasskey, getPasskey, type CeremonyStart } from "@/lib/webauthn";
 import type {
   AgentSettings,
   Activity,
@@ -29,6 +30,7 @@ import type {
   Checkup,
   CheckupSummary,
   MeResponse,
+  Passkey,
   Monitoring,
   Pairing,
   ProjectFile,
@@ -105,6 +107,7 @@ export const keys = {
   me: ["me"] as const,
   setup: ["setup"] as const,
   sessions: ["sessions"] as const,
+  passkeys: ["passkeys"] as const,
   dashboard: ["dashboard"] as const,
   projects: (includeArchived = false) => ["projects", { includeArchived }] as const,
   project: (key: string) => ["project", key] as const,
@@ -219,6 +222,78 @@ export function useElevate() {
       api.post<{ elevated_until: string }>("/auth/elevate", body),
     onSuccess: ({ elevated_until }) =>
       qc.setQueryData<MeResponse | null>(keys.me, (old) => (old ? { ...old, elevated_until } : old)),
+  });
+}
+
+/** Sign in with a passkey: the browser offers the ones it has for this site. */
+export function usePasskeyLogin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const start = await api.post<CeremonyStart>("/auth/passkey/begin");
+      const credential = await getPasskey(start.publicKey);
+      return api.post<MeResponse>("/auth/passkey/finish", { ceremony: start.ceremony, credential });
+    },
+    onSuccess: (me) => {
+      qc.clear();
+      qc.setQueryData(keys.me, me);
+    },
+  });
+}
+
+/** Confirm it's you with a passkey instead of the password. */
+export function usePasskeyElevate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const start = await api.post<CeremonyStart>("/auth/elevate/passkey/begin");
+      const credential = await getPasskey(start.publicKey);
+      return api.post<{ elevated_until: string }>("/auth/elevate/passkey/finish", { ceremony: start.ceremony, credential });
+    },
+    onSuccess: ({ elevated_until }) =>
+      qc.setQueryData<MeResponse | null>(keys.me, (old) => (old ? { ...old, elevated_until } : old)),
+  });
+}
+
+export function usePasskeys() {
+  return useQuery({
+    queryKey: keys.passkeys,
+    queryFn: () => api.get<{ passkeys: Passkey[]; available: boolean }>("/auth/passkeys"),
+  });
+}
+
+/** Register a passkey on this device (asks for the password first when not elevated). */
+export function useAddPasskey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (name: string) => {
+      const start = await api.post<CeremonyStart>("/auth/passkeys/begin");
+      const credential = await createPasskey(start.publicKey);
+      return api.post<Passkey>("/auth/passkeys/finish", { ceremony: start.ceremony, credential, name });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.passkeys });
+      void qc.invalidateQueries({ queryKey: keys.me });
+    },
+  });
+}
+
+export function useRenamePasskey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name }: { id: number; name: string }) => api.patch<Passkey>(`/auth/passkeys/${id}`, { name }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.passkeys }),
+  });
+}
+
+export function useDeletePasskey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.del(`/auth/passkeys/${id}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.passkeys });
+      void qc.invalidateQueries({ queryKey: keys.me });
+    },
   });
 }
 
@@ -1249,6 +1324,14 @@ export function useDisableAccountTotp() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => api.post<void>(`/admin/users/${id}/disable-2fa`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["admin"] }),
+  });
+}
+
+export function useRemoveAccountPasskeys() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.post<{ removed: number }>(`/admin/users/${id}/remove-passkeys`),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["admin"] }),
   });
 }

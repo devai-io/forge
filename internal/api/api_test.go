@@ -130,9 +130,45 @@ func (h *harness) do(method, path string, body any, out any, headers ...string) 
 
 func (h *harness) login() {
 	h.t.Helper()
-	if code := h.do("POST", "/api/auth/login", map[string]string{"username": "ada", "password": testPassword}, nil); code != 200 {
+	if code := h.signIn("ada", testPassword); code != 200 {
 		h.t.Fatalf("login: %d", code)
 	}
+}
+
+// signIn is a password sign-in the way the login page does it: the password,
+// then the authenticator code — setting the authenticator up first when the
+// account has none. Test sign-ins come faster than one per 30-second code, so
+// the account's last-used code is forgotten first (replay is tested on its own).
+func (h *harness) signIn(login, password string) int {
+	h.t.Helper()
+	var e struct {
+		Error struct {
+			Code   string
+			Secret string
+		}
+	}
+	status := h.do("POST", "/api/auth/login", map[string]string{"username": login, "password": password}, &e)
+	if status != http.StatusUnauthorized || (e.Error.Code != "totp_required" && e.Error.Code != "totp_setup_required") {
+		return status
+	}
+	secret := e.Error.Secret
+	ctx := context.Background()
+	u, err := h.api.store.UserByLogin(ctx, login)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if secret == "" {
+		raw, err := h.api.box.Open(u.TOTPSecret, totpAAD(u.ID))
+		if err != nil {
+			h.t.Fatal(err)
+		}
+		secret = string(raw)
+		if _, err := h.api.store.DB.Exec(ctx, `UPDATE users SET totp_last_counter = 0 WHERE id = $1`, u.ID); err != nil {
+			h.t.Fatal(err)
+		}
+	}
+	code, _ := auth.TOTPCode(secret, time.Now())
+	return h.do("POST", "/api/auth/login", map[string]string{"username": login, "password": password, "code": code}, nil)
 }
 
 // newRunner adds a machine the way the Agents page does and pairs it the way
@@ -170,7 +206,7 @@ func TestAuthGuards(t *testing.T) {
 	expect(t, "login from another origin",
 		h.do("POST", "/api/auth/login", map[string]string{"username": "ada", "password": testPassword}, nil, "Origin", "https://evil.example"), 403)
 	expect(t, "wrong password", h.do("POST", "/api/auth/login", map[string]string{"username": "ada", "password": "nope-nope-nope"}, nil), 401)
-	expect(t, "e-mail works as login", h.do("POST", "/api/auth/login", map[string]string{"username": "ADA@example.com", "password": testPassword}, nil), 200)
+	expect(t, "e-mail works as login", h.signIn("ADA@example.com", testPassword), 200)
 
 	var me struct{ User store.User }
 	expect(t, "me", h.do("GET", "/api/auth/me", nil, &me), 200)
@@ -185,7 +221,7 @@ func TestAuthGuards(t *testing.T) {
 		Token  string
 	}
 	expect(t, "create runner", h.newRunner("box", &created.Runner, &created.Token), 201)
-	anon := &harness{t: t, srv: h.srv, client: &http.Client{}}
+	anon := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}
 	expect(t, "runner token on a browser route", anon.do("GET", "/api/dashboard", nil, nil, "Authorization", "Bearer "+created.Token), 401)
 	expect(t, "session on a runner route", h.do("POST", "/api/runner/heartbeat", map[string]any{}, nil), 401)
 
@@ -204,7 +240,7 @@ func TestLoginRateLimit(t *testing.T) {
 func TestPasswordChangeRevokesOtherSessions(t *testing.T) {
 	h := setup(t)
 	h.login()
-	other := &harness{t: t, srv: h.srv, client: &http.Client{Jar: mustJar()}}
+	other := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{Jar: mustJar()}}
 	other.login()
 
 	expect(t, "weak new password", h.do("POST", "/api/auth/password",
@@ -298,7 +334,7 @@ func TestRunnerProtocol(t *testing.T) {
 		Token  string
 	}
 	expect(t, "create runner", h.newRunner("desktop", &created.Runner, &created.Token), 201)
-	runner := &harness{t: t, srv: h.srv, client: &http.Client{}}
+	runner := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}
 	bearer := []string{"Authorization", "Bearer " + created.Token}
 
 	var hb struct {
@@ -489,60 +525,101 @@ func TestVaultNeedsElevationAndRoundTrips(t *testing.T) {
 	expect(t, "delete", h.do("DELETE", fmt.Sprintf("/api/vault/%d", item.ID), nil, nil), 204)
 }
 
-func TestTwoFactorLogin(t *testing.T) {
+func TestPasswordLoginAlwaysNeedsTheCode(t *testing.T) {
 	h := setup(t)
-	h.login()
-	expect(t, "setup needs elevation", h.do("POST", "/api/auth/totp/setup", nil, nil), 403)
-	expect(t, "elevate", h.do("POST", "/api/auth/elevate", map[string]string{"password": testPassword}, nil), 200)
-	var setup struct {
-		Secret     string
-		OtpauthURL string `json:"otpauth_url"`
+	type errBody struct {
+		Error struct {
+			Code       string
+			Secret     string
+			OtpauthURL string `json:"otpauth_url"`
+		}
 	}
-	expect(t, "setup", h.do("POST", "/api/auth/totp/setup", nil, &setup), 200)
-	if !strings.HasPrefix(setup.OtpauthURL, "otpauth://totp/Forge") {
-		t.Fatalf("setup = %+v", setup)
+	login := func(c *harness, code string, out any) int {
+		if e, ok := out.(*errBody); ok {
+			*e = errBody{}
+		}
+		body := map[string]string{"username": "ada", "password": testPassword}
+		if code != "" {
+			body["code"] = code
+		}
+		return c.do("POST", "/api/auth/login", body, out)
 	}
-	expect(t, "enable with a wrong code", h.do("POST", "/api/auth/totp/enable", map[string]string{"code": "000000"}, nil), 422)
-	code, _ := auth.TOTPCode(setup.Secret, time.Now())
-	expect(t, "enable", h.do("POST", "/api/auth/totp/enable", map[string]string{"code": code}, nil), 204)
-
-	fresh := &harness{t: t, srv: h.srv, client: &http.Client{Jar: mustJar()}}
-	var e map[string]map[string]string
-	expect(t, "password only", fresh.do("POST", "/api/auth/login", map[string]string{"username": "ada", "password": testPassword}, &e), 401)
-	if e["error"]["code"] != "totp_required" {
-		t.Fatalf("error = %v", e)
+	// An account without an authenticator sets one up before it gets in.
+	var e errBody
+	expect(t, "password only, no authenticator yet", login(h, "", &e), 401)
+	if e.Error.Code != "totp_setup_required" || e.Error.Secret == "" || !strings.HasPrefix(e.Error.OtpauthURL, "otpauth://totp/Forge") {
+		t.Fatalf("error = %+v", e)
 	}
-	expect(t, "replayed enrolment code", fresh.do("POST", "/api/auth/login",
-		map[string]string{"username": "ada", "password": testPassword, "code": code}, nil), 401)
-	next, _ := auth.TOTPCode(setup.Secret, time.Now().Add(30*time.Second))
-	expect(t, "next code", fresh.do("POST", "/api/auth/login",
-		map[string]string{"username": "ada", "password": testPassword, "code": next}, nil), 200)
-
-	// That browser is trusted now: the password alone signs in and confirms.
-	expect(t, "logout", fresh.do("POST", "/api/auth/logout", nil, nil), 204)
-	expect(t, "trusted device, password only", fresh.do("POST", "/api/auth/login",
-		map[string]string{"username": "ada", "password": testPassword}, nil), 200)
-	expect(t, "elevate without a code", fresh.do("POST", "/api/auth/elevate", map[string]string{"password": testPassword}, nil), 200)
+	secret := e.Error.Secret
+	expect(t, "again: the same secret", login(h, "", &e), 401)
+	if e.Error.Secret != secret {
+		t.Fatal("the secret to scan changed between two tries")
+	}
+	expect(t, "anonymous still", h.do("GET", "/api/auth/me", nil, nil), 401)
+	expect(t, "wrong enrolment code", login(h, "000000", &e), 401)
+	code, _ := auth.TOTPCode(secret, time.Now())
 	var me struct {
+		User          store.User
 		DeviceTrusted bool `json:"device_trusted"`
 	}
-	expect(t, "me", fresh.do("GET", "/api/auth/me", nil, &me), 200)
-	if !me.DeviceTrusted {
-		t.Fatal("me: device_trusted should be true")
+	expect(t, "enrol and sign in", login(h, code, &me), 200)
+	if !me.User.TOTPEnabled || !me.DeviceTrusted {
+		t.Fatalf("me = %+v", me)
 	}
-	// The browser that enrolled is trusted too (it typed the code).
-	expect(t, "enrolling browser elevates without a code", h.do("POST", "/api/auth/elevate", map[string]string{"password": testPassword}, nil), 200)
 
-	// "Sign out everywhere else" forgets the other browsers, not this one.
-	expect(t, "revoke others", h.do("POST", "/api/auth/sessions/revoke-others", nil, nil), 200)
-	expect(t, "forgotten device asks again", fresh.do("POST", "/api/auth/login",
-		map[string]string{"username": "ada", "password": testPassword}, &e), 401)
-	if e["error"]["code"] != "totp_required" {
-		t.Fatalf("error = %v", e)
+	// From now on the password alone never signs in — not even on a browser
+	// that passed two-factor before.
+	expect(t, "logout", h.do("POST", "/api/auth/logout", nil, nil), 204)
+	expect(t, "trusted browser, password only", login(h, "", &e), 401)
+	if e.Error.Code != "totp_required" || e.Error.Secret != "" {
+		t.Fatalf("error = %+v", e)
 	}
+	expect(t, "replayed enrolment code", login(h, code, nil), 401)
+	next, _ := auth.TOTPCode(secret, time.Now().Add(30*time.Second))
+	expect(t, "next code", login(h, next, nil), 200)
+	// Confirming an action on a browser that passed the code: the password is enough.
+	expect(t, "elevate without a code", h.do("POST", "/api/auth/elevate", map[string]string{"password": testPassword}, nil), 200)
+
+	// Another browser: asked for the code to sign in, and again to confirm
+	// until it has typed one (signIn types one, so it is trusted after).
+	other := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{Jar: mustJar()}}
+	expect(t, "other browser, password only", login(other, "", &e), 401)
+	if e.Error.Code != "totp_required" {
+		t.Fatalf("error = %+v", e)
+	}
+	expect(t, "other browser signs in", other.signIn("ada", testPassword), 200)
+
+	// "Sign out everywhere else" forgets the other browsers, not this one;
+	// "ask for the code everywhere" forgets this one too.
+	expect(t, "revoke others", h.do("POST", "/api/auth/sessions/revoke-others", nil, nil), 200)
 	expect(t, "kept device", h.do("POST", "/api/auth/elevate", map[string]string{"password": testPassword}, nil), 200)
 	expect(t, "forget all", h.do("DELETE", "/api/auth/trusted-devices", nil, nil), 200)
 	expect(t, "now this one asks too", h.do("POST", "/api/auth/elevate", map[string]string{"password": testPassword}, nil), 422)
+
+	// Two-factor turned off (lost phone, `forge disable-2fa`): the next
+	// password sign-in sets an authenticator up again.
+	u, _ := h.store.UserByLogin(context.Background(), "ada")
+	if err := h.store.DisableTOTP(context.Background(), u.ID); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, "logout", h.do("POST", "/api/auth/logout", nil, nil), 204)
+	expect(t, "set up again", login(h, "", &e), 401)
+	if e.Error.Code != "totp_setup_required" || e.Error.Secret == secret {
+		t.Fatalf("error = %+v", e)
+	}
+
+	// Settings → Two-factor still works for an account that turned it off.
+	expect(t, "sign in", h.signIn("ada", testPassword), 200)
+	_ = h.store.DisableTOTP(context.Background(), u.ID)
+	expect(t, "setup needs elevation", h.do("POST", "/api/auth/totp/setup", nil, nil), 403)
+	expect(t, "elevate", h.do("POST", "/api/auth/elevate", map[string]string{"password": testPassword}, nil), 200)
+	var setup struct {
+		Secret string
+	}
+	expect(t, "setup", h.do("POST", "/api/auth/totp/setup", nil, &setup), 200)
+	expect(t, "enable with a wrong code", h.do("POST", "/api/auth/totp/enable", map[string]string{"code": "000000"}, nil), 422)
+	code, _ = auth.TOTPCode(setup.Secret, time.Now())
+	expect(t, "enable", h.do("POST", "/api/auth/totp/enable", map[string]string{"code": code}, nil), 204)
 }
 
 func TestCheckupAndItemTask(t *testing.T) {
@@ -627,7 +704,7 @@ func TestScopedAndConfirmedCommands(t *testing.T) {
 		Token  string
 	}
 	expect(t, "runner", h.newRunner("mac", &created.Runner, &created.Token), 201)
-	runner := &harness{t: t, srv: h.srv, client: &http.Client{}}
+	runner := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}
 	var hb struct{ Repos []store.RunnerRepo }
 	expect(t, "heartbeat", runner.do("POST", "/api/runner/heartbeat", map[string]any{
 		"capabilities": map[string]any{"commands": []string{"release-ios", "git-status"},
@@ -663,7 +740,7 @@ func TestTerminalRelay(t *testing.T) {
 	}
 	expect(t, "runner", h.newRunner("desk", &created.Runner, &created.Token), 201)
 	bearer := []string{"Authorization", "Bearer " + created.Token}
-	runner := &harness{t: t, srv: h.srv, client: &http.Client{}}
+	runner := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}
 	expect(t, "heartbeat", runner.do("POST", "/api/runner/heartbeat", map[string]any{
 		"capabilities": map[string]any{"terminal": true},
 		"tmux": []map[string]any{{"name": "Shop", "windows": 2, "attached": 0, "path": "/home/demo/dev/shop",
@@ -861,7 +938,9 @@ func TestMasterRunnerAndCodeProxy(t *testing.T) {
 	}))
 	defer gw.Close()
 
-	runner := func(c created) *harness { return &harness{t: t, srv: h.srv, client: &http.Client{}} }
+	runner := func(c created) *harness {
+		return &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}
+	}
 	var hb struct {
 		Role  string
 		Scan  bool
@@ -949,7 +1028,7 @@ func TestSecurityLogAndSystemFacts(t *testing.T) {
 	h := setup(t)
 	expect(t, "wrong password", h.do("POST", "/api/auth/login", map[string]string{"username": "ada", "password": "nope-nope-nope"}, nil), 401)
 	h.login()
-	other := &harness{t: t, srv: h.srv, client: &http.Client{Jar: mustJar()}}
+	other := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{Jar: mustJar()}}
 	other.login()
 	expect(t, "elevate", h.do("POST", "/api/auth/elevate", map[string]string{"password": testPassword}, nil), 200)
 
@@ -1000,13 +1079,14 @@ func TestCheckupFlagsSecurityPosture(t *testing.T) {
 			seen[it.Key] = true
 		}
 	}
-	if !seen["security:initial-password"] || !seen["security:totp"] {
+	// Signing in with the password turned two-factor on; there is no passkey yet.
+	if !seen["security:initial-password"] || seen["security:totp"] || !seen["security:passkey"] {
 		t.Fatalf("security items = %v", seen)
 	}
 
 	// A sign-in from a device Forge has not seen is a finding until it is
 	// acknowledged ("these were me"); only later ones count after that.
-	other := &harness{t: t, srv: h.srv, client: &http.Client{Jar: mustJar()}}
+	other := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{Jar: mustJar()}}
 	other.login()
 	expect(t, "run again", h.do("POST", "/api/checkups", nil, &c), 201)
 	var target *store.CheckItem

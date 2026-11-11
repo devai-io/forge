@@ -103,7 +103,7 @@ func TestFocusDirtyAfterRunFinishes(t *testing.T) {
 		Token  string
 	}
 	expect(t, "create runner", h.newRunner("desktop", &created.Runner, &created.Token), 201)
-	runner := &harness{t: t, srv: h.srv, client: &http.Client{}}
+	runner := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}
 	bearer := []string{"Authorization", "Bearer " + created.Token}
 	var hb struct{ Repos []store.RunnerRepo }
 	expect(t, "heartbeat", runner.do("POST", "/api/runner/heartbeat", map[string]any{

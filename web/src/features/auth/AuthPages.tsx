@@ -1,13 +1,18 @@
 // Sign-in, forgot-password and reset-password: three small centred cards
 // (first-run setup, in SetupPage.tsx, uses the same card).
 //
+// Sign-in leads with a passkey (it signs in on its own). The password is the
+// fallback and always needs the authenticator code too; an account without
+// an authenticator sets one up right there.
+//
 // The forgot form always answers the same way, whether or not the login
 // exists — that is the API's contract, and the copy here does not undo it.
 
+import { KeyRound } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError } from "@/api/client";
-import { useForgotPassword, useLogin, useResetPassword, useSetupStatus } from "@/api/hooks";
+import { useForgotPassword, useLogin, usePasskeyLogin, useResetPassword, useSetupStatus } from "@/api/hooks";
 import { Button } from "@/components/ui/Button";
 import { CodeInput } from "@/components/ui/CodeInput";
 import { Field, Input } from "@/components/ui/Input";
@@ -15,6 +20,8 @@ import { FullPageSpinner } from "@/components/ui/Spinner";
 import { safeNext, useCurrentUser } from "@/lib/auth";
 import { passwordStrength } from "@/lib/password";
 import { setupRedirect } from "@/lib/setup";
+import { isPasskeyCancel, passkeysSupported } from "@/lib/webauthn";
+import { SetupKey, TotpQrCode } from "./TotpQr";
 
 export function AuthCard({
   title,
@@ -53,106 +60,173 @@ export function FormError({ children }: { children: ReactNode }) {
   );
 }
 
+type TotpSetup = { secret: string; otpauth_url: string };
+
 export function LoginPage() {
   const { user, loading } = useCurrentUser();
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const login = useLogin();
+  const passkey = usePasskeyLogin();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
-  // Revealed once the API says this account has 2FA on; stays for the retry.
-  const [needsCode, setNeedsCode] = useState(false);
+  // The password was right: now the code (2FA on), or setting up an
+  // authenticator first (an account without one). Stays for the retry.
+  const [step, setStep] = useState<"password" | "code" | "setup">("password");
+  const [setup, setSetup] = useState<TotpSetup | null>(null);
   const next = safeNext(params.get("next"));
   // A server without an account has nobody to sign in: first-run setup instead.
-  const setup = useSetupStatus();
+  const setupStatus = useSetupStatus();
   const location = useLocation();
+  const canPasskey = passkeysSupported();
 
-  if (loading || setup.isPending) return <FullPageSpinner />;
+  if (loading || setupStatus.isPending) return <FullPageSpinner />;
   if (user) return <Navigate to={next} replace />;
-  const toSetup = setupRedirect(setup.data?.needed, location.search);
+  const toSetup = setupRedirect(setupStatus.data?.needed, location.search);
   if (toSetup) return <Navigate to={toSetup} replace />;
 
   const err = login.error instanceof ApiError ? login.error : null;
   const error = err
-    ? err.code === "totp_required"
-      ? null // not a failure: the code field has just appeared
+    ? err.code === "totp_required" || err.code === "totp_setup_required"
+      ? null // not a failure: the next step has just appeared
       : err.code === "rate_limited"
         ? "Too many attempts. Wait a few minutes and try again."
         : err.status === 401
-          ? needsCode
-            ? "Wrong password or code."
-            : "Wrong username or password."
+          ? step === "password"
+            ? "Wrong username or password."
+            : "Wrong code — try the next one."
           : err.message
     : login.error
       ? "Sign-in failed."
       : null;
+  const passkeyError =
+    passkey.error && !isPasskeyCancel(passkey.error)
+      ? passkey.error instanceof ApiError
+        ? passkey.error.code === "rate_limited"
+          ? "Too many attempts. Wait a few minutes and try again."
+          : passkey.error.code === "passkeys_unavailable"
+            ? "Passkeys are not available on this server. Use your password and code."
+            : passkey.error.status === 401
+              ? "That passkey was not accepted."
+              : passkey.error.message
+        : "The passkey could not be used here. Try again, or use your password and code."
+      : null;
+
+  const signInWithPasskey = () => passkey.mutate(undefined, { onSuccess: () => navigate(next, { replace: true }) });
 
   return (
     <AuthCard title="Sign in" subtitle="Your projects, tasks and agents.">
-      <form
-        className="space-y-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (needsCode && code.length !== 6) return;
-          login.mutate(
-            { username: username.trim(), password, code: needsCode ? code : undefined },
-            {
-              onSuccess: () => navigate(next, { replace: true }),
-              onError: (e) => {
-                if (e instanceof ApiError && e.code === "totp_required") setNeedsCode(true);
-              },
-            },
-          );
-        }}
-      >
-        <FormError>{error}</FormError>
-        <Field label="Username or e-mail">
-          {(id) => (
-            <Input
-              id={id}
-              autoFocus
-              autoComplete="username"
-              autoCapitalize="none"
-              spellCheck={false}
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-            />
-          )}
-        </Field>
-        <Field label="Password">
-          {(id) => (
-            <Input
-              id={id}
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-          )}
-        </Field>
-        {needsCode ? (
-          <Field label="Authenticator code" hint="The 6-digit code from your authenticator app">
-            {(id, desc) => <CodeInput id={id} aria-describedby={desc} autoFocus value={code} onChange={setCode} required />}
-          </Field>
+      <div className="space-y-4">
+        {canPasskey && step === "password" ? (
+          <>
+            <FormError>{passkeyError}</FormError>
+            <Button type="button" variant="primary" className="w-full justify-center" loading={passkey.isPending} onClick={signInWithPasskey}>
+              <KeyRound className="size-4" aria-hidden /> Sign in with a passkey
+            </Button>
+            <div className="flex items-center gap-3 text-[12px] text-fg-3" aria-hidden>
+              <span className="h-px flex-1 bg-line" /> or with your password and code <span className="h-px flex-1 bg-line" />
+            </div>
+          </>
         ) : null}
-        <Button
-          type="submit"
-          variant="primary"
-          className="w-full justify-center"
-          loading={login.isPending}
-          disabled={needsCode && code.length !== 6}
+        <form
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (step !== "password" && code.length !== 6) return;
+            login.mutate(
+              { username: username.trim(), password, code: step !== "password" ? code : undefined },
+              {
+                onSuccess: () => navigate(next, { replace: true }),
+                onError: (e) => {
+                  if (!(e instanceof ApiError)) return;
+                  if (e.code === "totp_required") setStep("code");
+                  if (e.code === "totp_setup_required") {
+                    const d = e.details ?? {};
+                    setSetup({ secret: String(d.secret ?? ""), otpauth_url: String(d.otpauth_url ?? "") });
+                    setStep("setup");
+                  }
+                  if (e.code === "totp_required" || e.code === "totp_setup_required") setCode("");
+                },
+              },
+            );
+          }}
         >
-          {needsCode ? "Verify and sign in" : "Sign in"}
-        </Button>
-        <p className="text-center text-[13px]">
-          <Link to="/forgot" className="text-fg-3 hover:text-fg">
-            Forgot your password?
-          </Link>
-        </p>
-      </form>
+          <FormError>{error}</FormError>
+          <div className={step === "password" ? "space-y-4" : "hidden"}>
+            <Field label="Username or e-mail">
+              {(id) => (
+                <Input
+                  id={id}
+                  autoFocus={!canPasskey}
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  required
+                />
+              )}
+            </Field>
+            <Field label="Password">
+              {(id) => (
+                <Input
+                  id={id}
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              )}
+            </Field>
+          </div>
+          {step === "setup" && setup ? (
+            <div className="space-y-3 text-[13px]">
+              <p className="text-fg-2">
+                A password sign-in needs a code from an authenticator app (1Password, Aegis, Google Authenticator…).
+                Scan this once, then type the code it shows.
+              </p>
+              <div className="grid justify-items-center">
+                <TotpQrCode otpauthUrl={setup.otpauth_url} size={180} centered />
+              </div>
+              <SetupKey secret={setup.secret} />
+            </div>
+          ) : null}
+          {step !== "password" ? (
+            <Field label="Authenticator code" hint="The 6-digit code from your authenticator app">
+              {(id, desc) => <CodeInput id={id} aria-describedby={desc} autoFocus value={code} onChange={setCode} required />}
+            </Field>
+          ) : null}
+          <Button
+            type="submit"
+            variant={canPasskey && step === "password" ? "secondary" : "primary"}
+            className="w-full justify-center"
+            loading={login.isPending}
+            disabled={step !== "password" && code.length !== 6}
+          >
+            {step === "password" ? "Continue" : step === "setup" ? "Turn on two-factor and sign in" : "Verify and sign in"}
+          </Button>
+          <p className="flex justify-center gap-4 text-center text-[13px]">
+            {step !== "password" ? (
+              <button
+                type="button"
+                className="text-fg-3 hover:text-fg"
+                onClick={() => {
+                  setStep("password");
+                  setCode("");
+                  login.reset();
+                }}
+              >
+                Back
+              </button>
+            ) : null}
+            <Link to="/forgot" className="text-fg-3 hover:text-fg">
+              Forgot your password?
+            </Link>
+          </p>
+        </form>
+      </div>
     </AuthCard>
   );
 }

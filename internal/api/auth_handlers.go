@@ -44,12 +44,22 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "wrong username or password")
 		return
 	}
-	// A browser that passed two-factor before skips the code.
-	trusted := u.TOTPEnabled && s.deviceTrusted(r, u)
-	if u.TOTPEnabled && !trusted {
+	// A password sign-in always needs the authenticator code too — on every
+	// browser, trusted or not. An account without an authenticator sets one
+	// up here, before it gets in. (Passkeys sign in on their own: passkeys.go.)
+	switch {
+	case !u.TOTPEnabled && !s.box.Available():
+		// No vault key, so no two-factor on this server at all (its secret is
+		// sealed with that key): the password is all there is.
+		slog.Warn("password sign-in without a code: no vault key on this server", "user", u.Username)
+	case !u.TOTPEnabled:
+		if !s.enrolAtLogin(w, r, u, in.Code) {
+			return
+		}
+	default:
 		if strings.TrimSpace(in.Code) == "" {
 			// The password was right; say what is missing. Not counted as a
-			// failure, or the first half of every 2FA login would be one.
+			// failure, or the first half of every sign-in would be one.
 			writeError(w, http.StatusUnauthorized, "totp_required", "enter the 6-digit code from your authenticator")
 			return
 		}
@@ -60,10 +70,67 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "wrong code")
 			return
 		}
-		s.trustDevice(w, r, u)
 	}
+	s.trustDevice(w, r, u) // for confirming actions later with the password alone
 	s.logins.Reset(ip)
+	s.startSession(w, r, u, "password and authenticator code", true)
+}
 
+// enrolAtLogin is the sign-in of an account that has no authenticator yet
+// (a new member, or after two-factor was turned off): with no code it answers
+// totp_setup_required and the secret to scan; with a code that matches that
+// secret, two-factor is on and the sign-in goes ahead. The secret stays the
+// same until it is confirmed, so a reload shows the same QR code.
+func (s *Server) enrolAtLogin(w http.ResponseWriter, r *http.Request, u *store.User, code string) bool {
+	ip := s.clientIP(r)
+	var secret string
+	if len(u.TOTPPending) > 0 {
+		if raw, err := s.box.Open(u.TOTPPending, totpAAD(u.ID)); err == nil {
+			secret = string(raw)
+		}
+	}
+	if secret == "" {
+		secret = auth.NewTOTPSecret()
+		sealed, err := s.box.Seal([]byte(secret), totpAAD(u.ID))
+		if err == nil {
+			err = s.store.SetTOTPPending(r.Context(), u.ID, sealed)
+		}
+		if err != nil {
+			writeErr(w, r, err)
+			return false
+		}
+		code = "" // a code cannot match a secret made just now
+	}
+	if strings.TrimSpace(code) == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]any{
+			"code":        "totp_setup_required",
+			"message":     "set up an authenticator app to finish signing in",
+			"secret":      secret,
+			"otpauth_url": auth.TOTPURL(secret, u.Username, "Forge"),
+		}})
+		return false
+	}
+	counter, ok := auth.VerifyTOTP(secret, code, time.Now(), 0)
+	if !ok {
+		s.logins.Record(ip)
+		s.sec(r, "login_failed", "wrong code while setting up two-factor")
+		writeError(w, http.StatusUnauthorized, "unauthorized", "wrong code — check the phone's clock")
+		return false
+	}
+	if err := s.store.EnableTOTP(r.Context(), u.ID, counter); err != nil {
+		writeErr(w, r, err)
+		return false
+	}
+	slog.Info("two-factor enabled at sign-in", "user", u.Username)
+	s.sec(r, "totp_enabled", "at sign-in")
+	return true
+}
+
+// startSession signs u in on this browser — after a password and code, or
+// a passkey — and answers what /api/auth/me would.
+// trusted: this browser skips the code when it confirms with the password.
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, u *store.User, how string, trusted bool) {
+	ip := s.clientIP(r)
 	token, hash := auth.Token("")
 	sid, err := s.store.CreateSession(r.Context(), u.ID, hash, r.UserAgent(), ip, sessionTTL)
 	if err != nil {
@@ -71,23 +138,33 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setCookie(w, token)
-	slog.Info("login", "user", u.Username, "ip", ip)
+	slog.Info("login", "user", u.Username, "ip", ip, "with", how)
 	known, err := s.store.SeenDevice(r.Context(), ip, r.UserAgent())
 	if err != nil {
 		slog.Error("known devices", "err", err)
 	}
-	kind, detail := "login", ""
+	kind := "login"
 	if !known && err == nil {
 		kind = "login_new_device"
 	}
-	if trusted {
-		detail = "trusted device, no two-factor code"
-	}
-	_ = s.store.LogSecurity(r.Context(), kind, detail, ip, r.UserAgent(), sid)
+	_ = s.store.LogSecurity(r.Context(), kind, "with "+how, ip, r.UserAgent(), sid)
 	if kind == "login_new_device" {
 		s.notifyNewDevice(u, ip, r.UserAgent())
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": u, "elevated_until": nil, "device_trusted": u.TOTPEnabled})
+	// Re-read: two-factor may have been switched on by this very sign-in.
+	if fresh, err := s.store.UserByID(r.Context(), u.ID); err == nil {
+		u = fresh
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user": u, "elevated_until": nil,
+		"device_trusted": u.TOTPEnabled && trusted, "passkeys": s.passkeyCount(r, u)})
+}
+
+func (s *Server) passkeyCount(r *http.Request, u *store.User) int {
+	n, err := s.store.CountPasskeys(r.Context(), u.ID)
+	if err != nil {
+		slog.Error("count passkeys", "err", err)
+	}
+	return n
 }
 
 // notifyNewDevice e-mails the account about a sign-in from an address and
@@ -294,8 +371,10 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request, u *store.User) {
 	if info := sessionInfo(r); info.Elevated() {
 		until = info.ElevatedUntil
 	}
+	// passkeys: the signed-in person's own (the owner's, while acting as
+	// another account), for the "Confirm it's you" dialog.
 	out := map[string]any{"user": u, "elevated_until": until,
-		"device_trusted": u.TOTPEnabled && s.deviceTrusted(r, u)}
+		"device_trusted": u.TOTPEnabled && s.deviceTrusted(r, u), "passkeys": s.passkeyCount(r, realUser(r))}
 	if real := realUser(r); real != nil && real.ID != u.ID {
 		// The owner behind this session, while it acts as u.
 		out["impersonator"] = map[string]any{"id": real.ID, "username": real.Username, "display_name": real.DisplayName}

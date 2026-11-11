@@ -9,11 +9,14 @@ export const SECURITY_KINDS: Record<SecurityKind, KindMeta> = {
   login_new_device: { label: "Signed in from a new device", tone: "warning", group: "sign-in" },
   login_failed: { label: "Failed sign-in", tone: "critical", group: "sign-in" },
   logout: { label: "Signed out", tone: "neutral", group: "sign-in" },
-  elevate: { label: "Confirmed password", tone: "accent", group: "sign-in" },
+  elevate: { label: "Confirmed it's you", tone: "accent", group: "sign-in" },
   elevate_failed: { label: "Wrong password at confirmation", tone: "critical", group: "sign-in" },
   password_changed: { label: "Password changed", tone: "accent", group: "account" },
   password_reset: { label: "Password reset by e-mail link", tone: "accent", group: "account" },
   totp_enabled: { label: "Two-factor turned on", tone: "good", group: "account" },
+  passkey_added: { label: "Passkey added", tone: "good", group: "account" },
+  passkey_removed: { label: "Passkey removed", tone: "warning", group: "account" },
+  passkey_refused: { label: "Passkey refused (copied key?)", tone: "critical", group: "sign-in" },
   totp_disabled: { label: "Two-factor turned off", tone: "warning", group: "account" },
   session_revoked: { label: "Session signed out", tone: "neutral", group: "account" },
   sessions_revoked_others: { label: "Other sessions signed out", tone: "neutral", group: "account" },
@@ -62,7 +65,8 @@ export function kindLabel(kind: string): string {
 }
 
 /** Rows worth a second look: someone new got in, or someone tried. */
-export const isAlarming = (kind: string) => kind === "login_new_device" || kind === "login_failed" || kind === "elevate_failed";
+export const isAlarming = (kind: string) =>
+  kind === "login_new_device" || kind === "login_failed" || kind === "elevate_failed" || kind === "passkey_refused";
 
 /** Filter options for the log: every known kind, grouped. */
 export const KIND_GROUPS: { label: string; kinds: SecurityKind[] }[] = (["sign-in", "account", "sensitive", "machines"] as const).map((group) => ({

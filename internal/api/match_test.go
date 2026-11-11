@@ -18,7 +18,7 @@ func TestPromptMatchesTasks(t *testing.T) {
 		Token  string
 	}
 	expect(t, "machine", h.newRunner("desk", &created.Runner, &created.Token), 201)
-	runner := &harness{t: t, srv: h.srv, client: &http.Client{}}
+	runner := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}
 	bearer := []string{"Authorization", "Bearer " + created.Token}
 	refOf := func(title string) string {
 		tasks, err := h.store.ListTasks(ctx, store.TaskFilter{ProjectKey: "SHOP", Query: title, Limit: 5})

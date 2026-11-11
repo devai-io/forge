@@ -31,7 +31,7 @@ type fakeMachine struct {
 
 func newFakeMachine(t *testing.T, h *harness) *fakeMachine {
 	t.Helper()
-	m := &fakeMachine{t: t, h: h, runner: &harness{t: t, srv: h.srv, client: &http.Client{}}}
+	m := &fakeMachine{t: t, h: h, runner: &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}}
 	var token string
 	expect(t, "runner", h.newRunner("desk", &m.rn, &token), 201)
 	m.bearer = []string{"Authorization", "Bearer " + token}

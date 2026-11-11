@@ -21,6 +21,7 @@ type AdminUser struct {
 	DisplayName       string       `json:"display_name"`
 	Role              string       `json:"role"`
 	TOTPEnabled       bool         `json:"totp_enabled"`
+	Passkeys          int          `json:"passkeys"`           // how many passkeys sign it in
 	PasswordGenerated bool         `json:"password_generated"` // still the one Forge made up
 	CreatedAt         time.Time    `json:"created_at"`
 	LastSeenAt        *time.Time   `json:"last_seen_at"` // its most recent session's last request
@@ -32,7 +33,8 @@ type AdminUser struct {
 func (s *Store) ListAdminUsers(ctx context.Context) ([]AdminUser, error) {
 	rows, err := s.DB.Query(ctx, `SELECT u.id, u.username, u.email, u.display_name, u.role, u.totp_enabled, u.password_generated,
 		u.created_at, (SELECT max(last_seen_at) FROM sessions se WHERE se.user_id = u.id AND se.expires_at > now()),
-		(SELECT count(*) FROM sessions se WHERE se.user_id = u.id AND se.expires_at > now())
+		(SELECT count(*) FROM sessions se WHERE se.user_id = u.id AND se.expires_at > now()),
+		(SELECT count(*) FROM passkeys p WHERE p.user_id = u.id)
 		FROM users u ORDER BY (u.role = 'owner') DESC, lower(u.username)`)
 	if err != nil {
 		return nil, err
@@ -41,7 +43,7 @@ func (s *Store) ListAdminUsers(ctx context.Context) ([]AdminUser, error) {
 	for rows.Next() {
 		var u AdminUser
 		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.Role, &u.TOTPEnabled, &u.PasswordGenerated,
-			&u.CreatedAt, &u.LastSeenAt, &u.Sessions); err != nil {
+			&u.CreatedAt, &u.LastSeenAt, &u.Sessions, &u.Passkeys); err != nil {
 			rows.Close()
 			return nil, err
 		}

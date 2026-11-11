@@ -35,7 +35,7 @@ describe("LoginPage two-factor step", () => {
     const user = userEvent.setup();
     await user.type(await screen.findByLabelText("Username or e-mail"), "ada");
     await user.type(screen.getByLabelText("Password"), "correct horse battery");
-    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
 
     const code = await screen.findByLabelText("Authenticator code");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument(); // not shown as a failure
@@ -47,6 +47,89 @@ describe("LoginPage two-factor step", () => {
     await waitFor(() => expect(bodies).toHaveLength(2));
     expect(bodies[0]).toEqual({ username: "ada", password: "correct horse battery" });
     expect(bodies[1]).toEqual({ username: "ada", password: "correct horse battery", code: "123456" });
+  });
+
+  it("sets up an authenticator on totp_setup_required before signing in", async () => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      routeFetch({
+        "GET /auth/me": () => jsonResponse(401, { error: { code: "unauthorized", message: "no session" } }),
+        "POST /auth/login": (init) => {
+          const body = JSON.parse(String(init.body));
+          bodies.push(body);
+          return body.code
+            ? jsonResponse(200, { user: makeUser({ totp_enabled: true }), elevated_until: null })
+            : jsonResponse(401, {
+                error: {
+                  code: "totp_setup_required",
+                  message: "set up",
+                  secret: "JBSWY3DPEHPK3PXP",
+                  otpauth_url: "otpauth://totp/Forge:ada?secret=JBSWY3DPEHPK3PXP&issuer=Forge",
+                },
+              });
+        },
+      }),
+    );
+    renderWithProviders(<LoginPage />, { qc: testClient(null), route: "/login" });
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText("Username or e-mail"), "gus");
+    await user.type(screen.getByLabelText("Password"), "made-up password");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(await screen.findByText("JBSW Y3DP EHPK 3PXP")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText("Authenticator code"), "654321");
+    await user.click(screen.getByRole("button", { name: "Turn on two-factor and sign in" }));
+    await waitFor(() => expect(bodies).toHaveLength(2));
+    expect(bodies[1]).toEqual({ username: "gus", password: "made-up password", code: "654321" });
+  });
+});
+
+describe("LoginPage passkey", () => {
+  it("signs in with a passkey: begin, the browser's answer, finish", async () => {
+    const finish: unknown[] = [];
+    vi.stubGlobal("PublicKeyCredential", function PublicKeyCredential() {});
+    const bytes = (...b: number[]) => new Uint8Array(b).buffer;
+    const get = vi.fn(async (opts: CredentialRequestOptions) => {
+      expect(new Uint8Array(opts.publicKey!.challenge as ArrayBuffer)).toEqual(new Uint8Array([1, 2, 3]));
+      return {
+        id: "AQI",
+        rawId: bytes(1, 2),
+        type: "public-key",
+        authenticatorAttachment: "platform",
+        response: { clientDataJSON: bytes(4), authenticatorData: bytes(5), signature: bytes(6), userHandle: bytes(7) },
+        getClientExtensionResults: () => ({}),
+      };
+    });
+    vi.stubGlobal("navigator", { ...navigator, credentials: { get, create: vi.fn() } });
+    vi.stubGlobal(
+      "fetch",
+      routeFetch({
+        "GET /auth/me": () => jsonResponse(401, { error: { code: "unauthorized", message: "no session" } }),
+        "POST /auth/passkey/begin": () =>
+          jsonResponse(200, { ceremony: "c1", publicKey: { challenge: "AQID", rpId: "forge.example.com", userVerification: "required" } }),
+        "POST /auth/passkey/finish": (init) => {
+          finish.push(JSON.parse(String(init.body)));
+          return jsonResponse(200, { user: makeUser(), elevated_until: null, passkeys: 1 });
+        },
+      }),
+    );
+    renderWithProviders(<LoginPage />, { qc: testClient(null), route: "/login" });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Sign in with a passkey" }));
+    await waitFor(() => expect(finish).toHaveLength(1));
+    expect(finish[0]).toEqual({
+      ceremony: "c1",
+      credential: {
+        id: "AQI",
+        rawId: "AQI",
+        type: "public-key",
+        authenticatorAttachment: "platform",
+        response: { clientDataJSON: "BA", authenticatorData: "BQ", signature: "Bg", userHandle: "Bw" },
+        clientExtensionResults: {},
+      },
+    });
   });
 });
 

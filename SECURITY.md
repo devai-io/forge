@@ -11,7 +11,9 @@ vulnerability) on this repository. Do not open a public issue.
 ## Running it safely
 
 - Serve it over HTTPS only (reverse proxy), set `PUBLIC_URL` to the https URL,
-  and enable two-factor authentication right after the first sign-in.
+  (a domain name — passkeys cannot use an IP address) and add a passkey
+  right after the first sign-in. Two-factor is set up at the first password
+  sign-in; it cannot be skipped.
 - Keep metrics, Nomad and VS Code gateways on a private network; the server
   only needs to be reachable by browsers and agents.
 - Back up `vault.key` (in the workspace, `FORGE_HOME`) separately from the
@@ -29,8 +31,12 @@ vulnerability) on this repository. Do not open a public issue.
   slide for 30 days and expire 90 days after sign-in.
 - Writes require a custom header and a matching Origin (CSRF); WebSockets
   check Origin.
+- Passkeys (WebAuthn: discoverable, user verification required, no
+  attestation) sign in on their own; only their public keys are stored. A
+  password sign-in always needs the TOTP code as well.
 - Sensitive actions (vault reveal/download/delete, terminals, VS Code,
-  two-factor enrolment) need the password (and code) again within 10 minutes.
+  two-factor enrolment, adding or removing a passkey) need a passkey or the
+  password (and code) again within 10 minutes.
 - Vault values and files: AES-256-GCM, key outside the database, each blob
   bound to its row.
 - Agents authenticate with a token (stored hashed) and can only do what their

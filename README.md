@@ -58,7 +58,8 @@ One binary, one SQLite file, one folder. MIT licensed.
   OpenRouter) picks the model for agent runs (DeepSeek's heavy model only for
   heavy tasks; Haiku/Sonnet for light Claude runs), trims the context Claude
   sessions start with, and matches requests to your open tasks.
-- **Security** — password + optional TOTP, step-up confirmation for sensitive
+- **Security** — passkeys as the main sign-in; the password always needs a
+  TOTP code too; step-up confirmation (passkey or password) for sensitive
   actions, security log, new-device sign-in e-mails.
 
 The in-app **Docs** page explains exactly what is automated, what is read live,

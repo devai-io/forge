@@ -10,13 +10,16 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly field?: string;
+  /** The whole `error` object, for the few errors that carry more (totp_setup_required's secret). */
+  readonly details?: Record<string, unknown>;
 
-  constructor(status: number, code: string, message: string, field?: string) {
+  constructor(status: number, code: string, message: string, field?: string, details?: Record<string, unknown>) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.field = field;
+    this.details = details;
   }
 }
 
@@ -44,17 +47,19 @@ async function parseError(res: Response): Promise<ApiError> {
   let code = res.status === 401 ? "unauthorized" : "internal";
   let message = res.statusText || `HTTP ${res.status}`;
   let field: string | undefined;
+  let details: Record<string, unknown> | undefined;
   try {
     const body = await res.json();
     if (body && typeof body === "object" && body.error) {
       code = body.error.code ?? code;
       message = body.error.message ?? message;
       field = body.error.field;
+      details = body.error;
     }
   } catch {
     /* non-JSON error body (proxy page, empty): keep the status-derived defaults */
   }
-  return new ApiError(res.status, code, message, field);
+  return new ApiError(res.status, code, message, field, details);
 }
 
 // ── Elevation (step-up auth) ────────────────────────────────────────────────
@@ -128,7 +133,7 @@ async function send(method: string, path: string, options: RequestOptions, accep
     error.code === "elevation_required" &&
     !retried &&
     options.elevate !== false &&
-    path !== "/auth/elevate"
+    !path.startsWith("/auth/elevate")
   ) {
     if (await requestElevation()) return send(method, path, options, accept, true);
   }

@@ -7,7 +7,7 @@ import { jsonResponse, makeUser, renderWithProviders, testClient } from "@/test/
 
 const AT = "2026-11-10T09:00:00Z";
 const account = (over: Partial<AdminUser> = {}): AdminUser => ({
-  id: 2, username: "gus", email: "gus@example.com", display_name: "Gus", role: "member", totp_enabled: false, password_generated: true,
+  id: 2, username: "gus", email: "gus@example.com", display_name: "Gus", role: "member", totp_enabled: false, passkeys: 0, password_generated: true,
   created_at: AT, last_seen_at: null, sessions: 0, projects: ["SHOP"], agent: null, ...over,
 });
 const owner = account({ id: 1, username: "ada", email: "ada@example.com", display_name: "Ada", role: "owner", password_generated: false, projects: [], last_seen_at: AT });

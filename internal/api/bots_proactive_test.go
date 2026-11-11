@@ -67,7 +67,7 @@ func TestBotRunsClaudeInTheProjectFolder(t *testing.T) {
 	if _, err := h.store.SetRunnerRole(context.Background(), created.Runner.ID, "master"); err != nil {
 		t.Fatal(err)
 	}
-	runner := &harness{t: t, srv: h.srv, client: &http.Client{}}
+	runner := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}
 	bearer := []string{"Authorization", "Bearer " + created.Token}
 	expect(t, "heartbeat", runner.do("POST", "/api/runner/heartbeat", map[string]any{
 		"hostname": "desk", "os": "linux/amd64", "version": "test",

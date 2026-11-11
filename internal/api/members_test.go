@@ -43,7 +43,7 @@ func TestMemberSeesOnlyGrantedProjects(t *testing.T) {
 
 	jar, _ := cookiejar.New(nil)
 	h.client.Jar = jar
-	expect(t, "member login", h.do("POST", "/api/auth/login", map[string]string{"username": "bob", "password": testPassword}, nil), 200)
+	expect(t, "member login", h.signIn("bob", testPassword), 200)
 
 	var me struct{ User store.User }
 	expect(t, "me", h.do("GET", "/api/auth/me", nil, &me), 200)
@@ -122,7 +122,7 @@ func TestMemberRunsOnlyOnOpenMachines(t *testing.T) {
 	_ = h.store.GrantProject(ctx, bob.ID, "SHOP")
 	jar, _ := cookiejar.New(nil)
 	h.client.Jar = jar
-	expect(t, "member login", h.do("POST", "/api/auth/login", map[string]string{"username": "bob", "password": testPassword}, nil), 200)
+	expect(t, "member login", h.signIn("bob", testPassword), 200)
 
 	run := map[string]any{"runner_id": created.Runner.ID, "repo_id": shop.Repos[0].ID, "kind": "agent", "prompt": "hi"}
 	var rs struct{ Runners []store.Runner }
@@ -180,7 +180,7 @@ func TestMemberStaysOutOfProjectAgents(t *testing.T) {
 
 	jar, _ := cookiejar.New(nil)
 	h.client.Jar = jar
-	expect(t, "member login", h.do("POST", "/api/auth/login", map[string]string{"username": "bob", "password": testPassword}, nil), 200)
+	expect(t, "member login", h.signIn("bob", testPassword), 200)
 	expect(t, "sessions", h.do("GET", "/api/project-sessions", nil, nil), 403)
 	expect(t, "open", h.do("POST", "/api/project-sessions/SHOP", map[string]any{"prompt": "hello"}, nil), 403)
 	expect(t, "close", h.do("DELETE", "/api/project-sessions/SHOP/F-Shop", nil, nil), 403)
@@ -238,7 +238,7 @@ func TestMemberAgent(t *testing.T) {
 
 	jar, _ := cookiejar.New(nil)
 	h.client.Jar = jar
-	expect(t, "member login", h.do("POST", "/api/auth/login", map[string]string{"username": "bob", "password": testPassword}, nil), 200)
+	expect(t, "member login", h.signIn("bob", testPassword), 200)
 	// No agent yet, and the machine is closed to members.
 	expect(t, "no agent", h.do("GET", "/api/agent", nil, &view), 200)
 	if view.Agent != nil {

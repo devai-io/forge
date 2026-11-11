@@ -129,8 +129,9 @@ docker compose exec forge forge setup-token                    # …in Docker
 ```
 
 Open it, choose a username and password (12+ characters), your time zone,
-and whether to load demo data. Then, in **Settings**, turn on **two-factor
-authentication** — Forge can open shells on your machines.
+and whether to load demo data. Then, in **Settings → Passkeys**, add a
+**passkey** — Forge can open shells on your machines. (A password sign-in
+always needs an authenticator code; the first one sets it up.)
 
 Check: you land on the dashboard, signed in.
 
@@ -427,7 +428,8 @@ the new version; each machine's version is on the Machines page.
 | Runs fail with "outside allowed roots" | add the repo's folder to `allowed_roots` in that machine's `agent.json` |
 | "VS Code is not enabled on …" | set `code.enabled` + `code.listen` on the master and install the `code` CLI |
 | Lost the password | `forge reset-password <username>` on the server (Docker: `docker compose exec forge forge reset-password <username>`) |
-| Lost the authenticator | `forge disable-2fa <username>` |
+| Lost the authenticator | `forge disable-2fa <username>` (the next password sign-in sets a new one up) |
+| Lost or suspect a passkey | sign in with password and code and remove it in Settings → Passkeys, or `forge remove-passkeys <username>` |
 
 ---
 
@@ -439,7 +441,7 @@ the new version; each machine's version is on the Machines page.
    `curl -s <PUBLIC_URL>/api/status` → `"status":"ok"`.
 3. Give the person the setup link (`forge setup-token`) — they create the
    account themselves; do not choose their password.
-4. Remind them to turn on two-factor and to store `vault.key` somewhere safe.
+4. Remind them to add a passkey and to store `vault.key` somewhere safe.
 5. For each machine: they create the pairing code on the Machines page; you run
    the install command on that machine. Verify it shows as connected.
 6. On the master: set `"terminal": true` if they want terminals, and `code`

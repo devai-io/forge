@@ -12,6 +12,7 @@ import {
   useCreateAccount,
   useDeleteAccount,
   useDisableAccountTotp,
+  useRemoveAccountPasskeys,
   useImpersonate,
   useResetAccountPassword,
   useSetMachineMembers,
@@ -117,6 +118,7 @@ function UserRow({
   const impersonate = useImpersonate();
   const reset = useResetAccountPassword();
   const totp = useDisableAccountTotp();
+  const passkeys = useRemoveAccountPasskeys();
   const del = useDeleteAccount();
   const [confirm, setConfirm] = useState<"reset" | "delete" | null>(null);
   const member = user.role === "member";
@@ -140,6 +142,11 @@ function UserRow({
           <span className="font-mono text-[12px] text-fg-3">{user.username}</span>
           <Badge tone={member ? "outline" : "accent"}>{member ? "Member" : "Owner"}</Badge>
           {self ? <Badge tone="neutral">You</Badge> : null}
+          {user.passkeys ? (
+            <Badge tone="good" title={`${user.passkeys} passkey(s)`}>
+              Passkey
+            </Badge>
+          ) : null}
           {user.totp_enabled ? (
             <Badge tone="good" title="Two-factor is on">
               2FA
@@ -200,7 +207,24 @@ function UserRow({
                     {
                       label: "Turn two-factor off",
                       icon: <ShieldCheck />,
-                      onSelect: () => totp.mutate(user.id, { onSuccess: () => toast.success(`Two-factor is off for ${user.username}`), onError: (e) => toast.error(e) }),
+                      onSelect: () =>
+                        totp.mutate(user.id, {
+                          onSuccess: () => toast.success(`Two-factor is off for ${user.username}: set up again at the next sign-in`),
+                          onError: (e) => toast.error(e),
+                        }),
+                    },
+                  ]
+                : []),
+              ...(user.passkeys
+                ? [
+                    {
+                      label: `Remove passkeys (${user.passkeys})`,
+                      icon: <KeyRound />,
+                      onSelect: () =>
+                        passkeys.mutate(user.id, {
+                          onSuccess: ({ removed }) => toast.success(`${removed} passkey(s) removed from ${user.username}`),
+                          onError: (e) => toast.error(e),
+                        }),
                     },
                   ]
                 : []),
