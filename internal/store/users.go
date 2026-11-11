@@ -134,9 +134,9 @@ func (s *Store) SessionUser(ctx context.Context, tokenHash []byte, ttl time.Dura
 	var uid int64
 	var lastSeen time.Time
 	err := s.DB.QueryRow(ctx, `
-		SELECT id, user_id, elevated_until, last_seen_at FROM sessions
+		SELECT id, user_id, elevated_until, last_seen_at, impersonate_user_id FROM sessions
 		WHERE token_hash = $1 AND expires_at > now() AND created_at > ts_add(now(), -7776000)`,
-		tokenHash).Scan(&info.ID, &uid, &info.ElevatedUntil, &lastSeen)
+		tokenHash).Scan(&info.ID, &uid, &info.ElevatedUntil, &lastSeen, &info.ImpersonateUserID)
 	if err != nil {
 		return nil, nil, mapErr(err)
 	}
@@ -157,6 +157,15 @@ func (s *Store) SessionUser(ctx context.Context, tokenHash []byte, ttl time.Dura
 type SessionInfo struct {
 	ID            int64
 	ElevatedUntil *time.Time
+	// ImpersonateUserID: the account this (owner's) session acts as, if any.
+	ImpersonateUserID *int64
+}
+
+// SetSessionImpersonation makes a session act as another account (nil: as
+// itself again).
+func (s *Store) SetSessionImpersonation(ctx context.Context, sessionID int64, userID *int64) error {
+	_, err := s.DB.Exec(ctx, `UPDATE sessions SET impersonate_user_id = $2 WHERE id = $1`, sessionID, userID)
+	return mapErr(err)
 }
 
 // Elevated reports whether the session re-confirmed the password recently.

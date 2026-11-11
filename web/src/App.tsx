@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { FullPageSpinner } from "@/components/ui/Spinner";
+import { AdminPage } from "@/features/admin/AdminPage";
 import { AgentsPage } from "@/features/agents/AgentsPage";
 import { MemberAgentPage } from "@/features/agents/MemberAgentPage";
 import { MachinesPage } from "@/features/agents/MachinesPage";
@@ -68,6 +69,7 @@ export function App() {
           <Route path="editor" element={page(<EditorPage />)} />
           <Route path="checkup" element={<CheckupPage />} />
           <Route path="agent" element={<MemberAgentPage />} />
+          <Route path="admin" element={<AdminPage />} />
           <Route path="tasks" element={<TasksPage />} />
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="p/:key" element={<ProjectPage />} />

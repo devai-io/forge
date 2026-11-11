@@ -43,6 +43,10 @@ import type {
   RunnerRole,
   NewSessionInput,
   TerminalHosts,
+  AdminUser,
+  AdminUserInput,
+  AdminUserPatch,
+  AdminView,
   MemberAgentView,
   OpenProjectSessionInput,
   OpenProjectSessionResult,
@@ -1210,6 +1214,74 @@ export function useCloseProjectSession() {
   });
 }
 
+// ── Admin (owners): accounts, what they may do, acting as one ─────────────
+
+export function useAdmin() {
+  return useQuery({ queryKey: ["admin"], queryFn: () => api.get<AdminView>("/admin/users") });
+}
+
+export function useCreateAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: AdminUserInput) => api.post<{ user: AdminUser; password: string }>("/admin/users", body),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["admin"] }),
+  });
+}
+
+export function useUpdateAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...patch }: AdminUserPatch & { id: number }) => api.patch<AdminUser>(`/admin/users/${id}`, patch),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["admin"] }),
+  });
+}
+
+/** A new random password for an account: shown once; that account's sessions end. */
+export function useResetAccountPassword() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.post<{ password: string }>(`/admin/users/${id}/password`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["admin"] }),
+  });
+}
+
+export function useDisableAccountTotp() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.post<void>(`/admin/users/${id}/disable-2fa`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["admin"] }),
+  });
+}
+
+export function useDeleteAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.del(`/admin/users/${id}`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["admin"] }),
+  });
+}
+
+export function useSetMachineMembers() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, members_allowed }: { id: number; members_allowed: boolean }) =>
+      api.patch<AdminView>(`/admin/machines/${id}`, { members_allowed }),
+    onSuccess: (v) => {
+      qc.setQueryData(["admin"], v);
+      void qc.invalidateQueries({ queryKey: keys.runners });
+    },
+  });
+}
+
+/** Act as another account (owners; needs a password confirmation). The page reloads as that account. */
+export function useImpersonate() {
+  return useMutation({ mutationFn: (userId: number) => api.post<{ user: User }>("/admin/impersonate", { user_id: userId }) });
+}
+
+export function useStopImpersonating() {
+  return useMutation({ mutationFn: () => api.del("/admin/impersonate") });
+}
+
 /** A member's own agent (GET /api/agent); `agent` is null for an account without one. */
 export function useMemberAgent(enabled = true, refetchInterval: number | false = false) {
   return useQuery({
@@ -1224,7 +1296,8 @@ export function useMemberAgent(enabled = true, refetchInterval: number | false =
 export function useAskMemberAgent() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { prompt: string; project_key?: string; task_id?: number; fresh?: boolean }) => api.post<Run>("/agent", body),
+    mutationFn: (body: { prompt: string; project_key?: string; task_id?: number; fresh?: boolean; continue_run_id?: number }) =>
+      api.post<Run>("/agent", body),
     onSuccess: (run) => {
       void qc.invalidateQueries({ queryKey: ["member-agent"] });
       void qc.invalidateQueries({ queryKey: ["runs"] });

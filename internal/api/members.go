@@ -337,6 +337,9 @@ func (s *Server) askMemberAgent(w http.ResponseWriter, r *http.Request, u *store
 		// its project (and its repo, when it names one).
 		TaskID *int64 `json:"task_id"`
 		Fresh  bool   `json:"fresh"`
+		// ContinueRunID picks one of the member's own earlier conversations
+		// back up on its session (one that finished, failed or was cut off).
+		ContinueRunID *int64 `json:"continue_run_id"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -366,6 +369,34 @@ func (s *Server) askMemberAgent(w http.ResponseWriter, r *http.Request, u *store
 	cur, err := s.store.MemberAgentRun(ctx, u.ID)
 	if err != nil {
 		cur = nil
+	}
+	if in.ContinueRunID != nil {
+		prev, err := s.store.RunByID(ctx, *in.ContinueRunID)
+		if err != nil || prev.UserID == nil || *prev.UserID != u.ID || prev.Kind != "agent" {
+			writeError(w, http.StatusNotFound, "not_found", "not found")
+			return
+		}
+		if prev.RunnerID != agent.RunnerID || prev.SessionID == "" {
+			writeErr(w, r, &store.ValidationError{Field: "continue_run_id", Message: "that conversation cannot be picked up again; start a new one"})
+			return
+		}
+		if cur != nil && cur.ID != prev.ID { // one conversation at a time
+			if _, err := s.store.FinishRunByUser(ctx, cur.ID); err == nil {
+				s.inboxes.notify(cur.ID)
+			}
+		}
+		run, ok, err := s.sendToAgent(ctx, prev, in.Prompt, false)
+		if err != nil || !ok {
+			if err == nil {
+				err = &store.ValidationError{Field: "continue_run_id", Message: "that conversation cannot be picked up again; start a new one"}
+			}
+			writeErr(w, r, err)
+			return
+		}
+		out := run.Public()
+		out.Continued = true
+		writeJSON(w, http.StatusOK, out)
+		return
 	}
 	if cur != nil && !in.Fresh {
 		run, ok, err := s.sendToAgent(ctx, cur, in.Prompt, false)

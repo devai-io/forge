@@ -377,3 +377,61 @@ func TestHeadlessRunsStayOutOfTmux(t *testing.T) {
 		t.Fatalf("lost headless run = %+v", r)
 	}
 }
+
+// A machine that was only out of reach (its connection died, not the agent)
+// must not cost a run: failed as lost after ten silent minutes, the run is
+// what the machine says once it reports again.
+func TestOrphanedRunComesBackWithItsMachine(t *testing.T) {
+	h := setup(t)
+	h.login()
+	m := newFakeMachine(t, h)
+	ctx := context.Background()
+	expect(t, "headless", h.do("PATCH", "/api/agent-settings", map[string]any{"tmux": false}, nil), 200)
+	var run store.Run
+	expect(t, "queue", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent",
+		"prompt": "Look", "permission_mode": "plan", "interactive": true}, &run), 201)
+	var claim struct{ Run store.Run }
+	expect(t, "claim", m.runner.do("POST", "/api/runner/claim", nil, &claim, m.bearer...), 200)
+	orphan := func() {
+		t.Helper()
+		if _, err := h.store.DB.Exec(ctx, `UPDATE runners SET last_seen_at = ts_add(now(), -900) WHERE id = $1`, m.rn.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.store.FailOrphanedRuns(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if r := m.run(run.ID); r.Status != "failed" || r.Error != "runner went offline" {
+			t.Fatalf("silent for 15 minutes = %+v", r)
+		}
+	}
+	beat := func(running []int64) {
+		t.Helper()
+		expect(t, "heartbeat", m.runner.do("POST", "/api/runner/heartbeat", map[string]any{"hostname": "desk", "version": "test", "running": running,
+			"capabilities": map[string]any{"claude": true, "permission_modes": []string{"plan"}, "interactive": true, "resume_in_place": true}}, nil, m.bearer...), 200)
+	}
+
+	// Back, and still working on it: the run is running again.
+	orphan()
+	beat([]int64{run.ID})
+	if r := m.run(run.ID); r.Status != "running" || r.Error != "" || r.FinishedAt != nil {
+		t.Fatalf("the machine still runs it = %+v", r)
+	}
+	// Back with the run's end (it finished while out of reach): the report counts.
+	orphan()
+	expect(t, "late finish", m.runner.do("POST", fmt.Sprintf("/api/runner/runs/%d/finish", run.ID),
+		map[string]any{"status": "waiting", "session_id": "0b6e3f4a-1c2d-4e5f-8a9b-0c1d2e3f4a5b", "result": "Looked."}, nil, m.bearer...), 204)
+	if r := m.run(run.ID); r.Status != "waiting" || r.Error != "" || r.Result != "Looked." {
+		t.Fatalf("after the late report = %+v", r)
+	}
+	// A run the machine no longer has is still lost.
+	var other store.Run
+	expect(t, "queue", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent",
+		"prompt": "Another", "permission_mode": "plan", "fresh": true}, &other), 201)
+	expect(t, "claim", m.runner.do("POST", "/api/runner/claim", nil, &claim, m.bearer...), 200)
+	run = other
+	orphan()
+	beat([]int64{})
+	if r := m.run(run.ID); r.Status != "failed" {
+		t.Fatalf("a run the machine lost = %+v", r)
+	}
+}

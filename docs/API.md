@@ -53,6 +53,45 @@ terminal — and never join the project agent's conversation.
 `GET /api/runners` lists only open machines to a member, without hostnames or
 named commands.
 
+**Admin (owners).** The accounts and what each may do. Not open to members;
+every change needs elevation and is logged (`user_created`, `user_updated`,
+`user_password_reset`, `user_deleted`).
+
+```ts
+type AdminUser = { id: number; username: string; email: string; display_name: string;
+                   role: "owner" | "member"; totp_enabled: boolean;
+                   password_generated: boolean;        // still the password Forge made up
+                   created_at: string; last_seen_at: string | null; sessions: number;
+                   projects: string[];                  // a member's project keys
+                   agent: MemberAgent | null };         // a member's own agent
+type AdminView = { users: AdminUser[];
+                   machines: { id: number; name: string; role: string; online: boolean;
+                               members_allowed: boolean; permission_modes: string[] }[];
+                   projects: { key: string; name: string; color: string }[] };
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | /api/admin/users | – | `AdminView` |
+| POST | /api/admin/users | `{username, email, display_name?, role?, projects?}` (**elevated**) | `201 {user: AdminUser, password}` — the password Forge made up, shown once. `role` defaults to `member`; `projects` are a member's. `422` for a bad or taken username or e-mail, or an unknown project |
+| PATCH | /api/admin/users/{user} | `{display_name?, email?, role?, projects?, agent?}` (**elevated**) | `AdminUser`. `projects` replaces a member's grants; `agent: {machine, model?, effort?, permission_mode?}` sets a member's agent (never `bypassPermissions`), `agent: null` takes it away. The last owner stays an owner; nobody changes their own role; a member made an owner loses its agent |
+| POST | /api/admin/users/{user}/password | – (**elevated**) | `{password}` — a new made-up password, shown once; every session of that account ends. Not for your own account (Settings) |
+| POST | /api/admin/users/{user}/disable-2fa | – (**elevated**) | `204` |
+| DELETE | /api/admin/users/{user} | – (**elevated**) | `204` — with its sessions, grants and agent; its runs stay. Not yourself, not the last owner |
+| PATCH | /api/admin/machines/{id} | `{members_allowed}` (**elevated**) | `AdminView` |
+| POST | /api/admin/impersonate | `{user_id}` (**elevated**) | `{user: User}` — this session acts as that account until stopped |
+| DELETE | /api/admin/impersonate | – | `204` — always allowed, whatever the account acted as may do |
+
+**Impersonation.** While an owner's session acts as another account, every
+request is answered as that account — a member's limits included, and what it
+does (tasks, runs) is that account's. `GET /api/auth/me` answers with that
+`user` plus `impersonator: {id, username, display_name}` (the owner). The
+account's sign-in settings stay out of reach (`403 impersonating` on
+`PATCH /api/auth/me`, the password, two-factor and session routes), and
+`POST /api/auth/elevate` checks the owner's own password. Starting and
+stopping are logged as `impersonate`. If the account is deleted, or the
+session's user stops being an owner, the session is itself again.
+
 **A member's agent.** `forge member-agent <username> <machine> [model] [effort] [mode]`
 gives a member one agent: Claude Code on that machine only, with that model
 and effort (empty = Claude Code's defaults) and permission mode (default
@@ -76,6 +115,12 @@ type MemberAgentView = {
 |---|---|---|---|
 | GET | /api/agent | – | `MemberAgentView` |
 | POST | /api/agent | `{prompt, project_key?, task_id?, fresh?}` | With a conversation open and no `fresh`: one more message to it → `200 Run` with `continued: true`. Otherwise every run the member still has open is finished and a new one is queued on the agent's machine with its model, effort and mode (interactive, headless) in `project_key` (default: the member's first project) → `201 Run`. `task_id` (Run agent on a task, a comment handed to the agent) links the new run to that task and runs it in the task's project — and its repo, when the task names one with a path. `403` without an agent, `404` for a task outside the member's projects, `422` for an empty prompt or a project that is not the member's |
+
+`continue_run_id` (with `prompt`) picks one of the member's own earlier
+conversations back up on its session — one that finished, failed or was cut
+off — as its next message (`200 Run`, `continued: true`); a different
+conversation still open is finished first. `404` for a run that is not the
+member's, `422` when it has no session or ran on another machine.
 
 In the web app a member with an agent gets its own **Run agent** dialog (the
 prompt, and — with a conversation open — whether to start a new one; a request
@@ -564,7 +609,12 @@ type PromptAnswer = {
 
 A runner only ever sees runs addressed to it. Runs stuck `running` on a runner
 that has been offline for 10 minutes are marked `failed` with
-`error = "runner went offline"`.
+`error = "runner went offline"`. That is not final: the machine may only have
+been out of reach. When it reports again, a run it still lists in its
+heartbeat's `running` is `running` again, and its `finish` report for such a
+run is taken as usual. The agent keeps reporting a run's end for about half
+an hour, and talks HTTP/1.1 so that one dead connection cannot stall every
+request (v0.1.50).
 
 ### Misc
 | GET | /health | – | `{"status":"ok"}` (health check, no DB) |

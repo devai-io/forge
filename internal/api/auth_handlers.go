@@ -148,6 +148,7 @@ const elevationTTL = 10 * time.Minute
 // passed two-factor before) and opens a 10-minute window for sensitive
 // actions on this session only.
 func (s *Server) elevate(w http.ResponseWriter, r *http.Request, u *store.User) {
+	u = realUser(r) // it is the person at the keyboard who confirms: the owner, also while acting as another account
 	var in struct {
 		Password string `json:"password"`
 		Code     string `json:"code"`
@@ -293,8 +294,13 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request, u *store.User) {
 	if info := sessionInfo(r); info.Elevated() {
 		until = info.ElevatedUntil
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": u, "elevated_until": until,
-		"device_trusted": u.TOTPEnabled && s.deviceTrusted(r, u)})
+	out := map[string]any{"user": u, "elevated_until": until,
+		"device_trusted": u.TOTPEnabled && s.deviceTrusted(r, u)}
+	if real := realUser(r); real != nil && real.ID != u.ID {
+		// The owner behind this session, while it acts as u.
+		out["impersonator"] = map[string]any{"id": real.ID, "username": real.Username, "display_name": real.DisplayName}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) updateMe(w http.ResponseWriter, r *http.Request, u *store.User) {

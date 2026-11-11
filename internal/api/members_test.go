@@ -329,6 +329,22 @@ func TestMemberAgent(t *testing.T) {
 	}
 	fresh = onTask
 
+	// A conversation that was cut off (its machine went out of reach) is picked up again on its session.
+	expect(t, "the machine takes it", m.runner.do("POST", "/api/runner/claim", nil, &claim, m.bearer...), 200)
+	expect(t, "it ends badly", m.runner.do("POST", fmt.Sprintf("/api/runner/runs/%d/finish", onTask.ID),
+		map[string]any{"status": "failed", "error": "cut off", "session_id": "0b6e3f4a-1c2d-4e5f-8a9b-0c1d2e3f4a5b"}, nil, m.bearer...), 204)
+	expect(t, "agent", h.do("GET", "/api/agent", nil, &view), 200)
+	if view.Run != nil || len(view.Recent) == 0 || view.Recent[0].ID != onTask.ID || view.Recent[0].Status != "failed" {
+		t.Fatalf("after it was cut off: run %+v, recent %+v", view.Run, view.Recent)
+	}
+	expect(t, "not its own", h.do("POST", "/api/agent", map[string]any{"prompt": "go on", "continue_run_id": 999999}, nil), 404)
+	var picked store.Run
+	expect(t, "pick it up", h.do("POST", "/api/agent", map[string]any{"prompt": "go on", "continue_run_id": onTask.ID}, &picked), 200)
+	if picked.ID != onTask.ID || !picked.Continued || picked.Status != "queued" || picked.Resumes != 1 {
+		t.Fatalf("picked up = %+v", picked)
+	}
+	fresh = picked
+
 	// Taken away: the machine is closed to it again.
 	if err := h.store.ClearMemberAgent(ctx, bob.ID); err != nil {
 		t.Fatal(err)

@@ -3,15 +3,16 @@
 // (task drawer, command palette, new-task / new-run dialogs).
 
 import clsx from "clsx";
-import { Ellipsis, LogOut, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Sun } from "lucide-react";
+import { Ellipsis, LogOut, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Sun, VenetianMask } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useLogout, useProjects, useWaitingRuns } from "@/api/hooks";
+import { useLogout, useMe, useProjects, useStopImpersonating, useWaitingRuns } from "@/api/hooks";
 import { ColorDot, Kbd } from "@/components/ui/Badge";
 import { HealthDot } from "@/features/infra/HealthDot";
 import { Button } from "@/components/ui/Button";
 import { Menu } from "@/components/ui/Menu";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { useToast } from "@/components/ui/Toast";
 import { ProjectDialog } from "@/features/projects/ProjectDialog";
 import { TaskDrawer } from "@/features/tasks/TaskDrawer";
 import { useUser } from "@/lib/auth";
@@ -107,6 +108,46 @@ function ShellFrame() {
       <PullToRefresh />
       <TaskDrawer />
       <CommandPalette />
+      <ImpersonationBar />
+    </div>
+  );
+}
+
+/**
+ * While an owner acts as another account: a pill that stays at the top of
+ * the screen and says so, with the way back. Everything else on the page is that account's.
+ */
+export function ImpersonationBar() {
+  const me = useMe().data;
+  const stop = useStopImpersonating();
+  const toast = useToast();
+  if (!me?.impersonator) return null;
+  const name = me.user.display_name || me.user.username;
+  return (
+    <div
+      role="status"
+      className="fixed top-[calc(0.45rem+env(safe-area-inset-top))] left-1/2 z-40 flex max-w-[calc(100vw-9rem)] -translate-x-1/2 items-center gap-2 rounded-full border border-warning/60 bg-surface py-1 pr-1 pl-3 text-[12.5px] shadow-pop md:left-[calc(50%+7.5rem)]"
+    >
+      <VenetianMask className="size-4 shrink-0 text-warning" aria-hidden />
+      <span className="min-w-0 truncate">
+        Acting as <strong className="font-semibold">{name}</strong>
+        <span className="text-fg-3"> · {me.user.role === "member" ? "member" : "owner"}</span>
+      </span>
+      <Button
+        size="sm"
+        variant="primary"
+        className="rounded-full"
+        loading={stop.isPending}
+        onClick={() =>
+          stop.mutate(undefined, {
+            // A full reload: everything on screen was fetched as that account.
+            onSuccess: () => window.location.assign("/admin"),
+            onError: (e) => toast.error(e),
+          })
+        }
+      >
+        Stop
+      </Button>
     </div>
   );
 }

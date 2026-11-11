@@ -286,6 +286,15 @@ func (s *Server) Handler() http.Handler {
 	h("POST /api/runs/{id}/end", s.authed(s.endRunSession))
 	h("POST /api/runs/{id}/finish", s.authed(s.finishRun))
 	h("POST /api/runs/{id}/handoff", s.authed(s.elevated(s.handoffRun)))
+	h("GET /api/admin/users", s.authed(s.adminUsers))
+	h("POST /api/admin/users", s.authed(s.elevated(s.adminCreateUser)))
+	h("PATCH /api/admin/users/{user}", s.authed(s.elevated(s.adminUpdateUser)))
+	h("POST /api/admin/users/{user}/password", s.authed(s.elevated(s.adminResetPassword)))
+	h("POST /api/admin/users/{user}/disable-2fa", s.authed(s.elevated(s.adminDisableTOTP)))
+	h("DELETE /api/admin/users/{user}", s.authed(s.elevated(s.adminDeleteUser)))
+	h("PATCH /api/admin/machines/{id}", s.authed(s.elevated(s.adminUpdateMachine)))
+	h("POST /api/admin/impersonate", s.authed(s.elevated(s.impersonate)))
+	h("DELETE /api/admin/impersonate", s.authed(s.stopImpersonating))
 	h("GET /api/agent", s.authed(s.getMemberAgent))
 	h("POST /api/agent", s.authed(s.askMemberAgent))
 
@@ -365,6 +374,7 @@ type ctxKey int
 const (
 	ctxUser ctxKey = iota
 	ctxSession
+	ctxRealUser
 )
 
 type userHandler func(w http.ResponseWriter, r *http.Request, u *store.User)
@@ -405,14 +415,67 @@ func (s *Server) authed(next userHandler) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "your session has ended")
 			return
 		}
+		// An owner's session may act as another account (impersonation):
+		// from here on the request is that account's, with its limits.
+		real := u
+		if info.ImpersonateUserID != nil {
+			if real.Role == store.RoleOwner {
+				if target, err := s.store.UserByID(r.Context(), *info.ImpersonateUserID); err == nil && target.ID != real.ID {
+					u = target
+				}
+			}
+			if u == real { // the account is gone, or this is no owner any more
+				_ = s.store.SetSessionImpersonation(r.Context(), info.ID, nil)
+				info.ImpersonateUserID = nil
+			}
+		}
 		ctx := context.WithValue(r.Context(), ctxSession, info)
 		ctx = context.WithValue(ctx, ctxUser, u)
+		ctx = context.WithValue(ctx, ctxRealUser, real)
 		r = r.WithContext(ctx)
+		if u != real {
+			if r.Pattern == "DELETE /api/admin/impersonate" {
+				next(w, r, u) // stopping is always within reach
+				return
+			}
+			if signInRoutes[r.Pattern] {
+				writeError(w, http.StatusForbidden, "impersonating", "not while acting as "+u.Username+": an account's sign-in settings are its own")
+				return
+			}
+		}
 		if isMember(u) && !s.memberGuard(w, r, u) {
 			return
 		}
 		next(w, r, u)
 	})
+}
+
+// signInRoutes are an account's own sign-in settings: out of reach for an
+// owner acting as that account.
+var signInRoutes = map[string]bool{
+	"PATCH /api/auth/me":                    true,
+	"POST /api/auth/password":               true,
+	"POST /api/auth/sessions/revoke-others": true,
+	"DELETE /api/auth/sessions/{id}":        true,
+	"POST /api/auth/totp/setup":             true,
+	"POST /api/auth/totp/enable":            true,
+	"POST /api/auth/totp/disable":           true,
+}
+
+// realUser is the account that signed in — the owner, while it acts as
+// another account; otherwise the request's user.
+func realUser(r *http.Request) *store.User {
+	if u, ok := r.Context().Value(ctxRealUser).(*store.User); ok && u != nil {
+		return u
+	}
+	u, _ := r.Context().Value(ctxUser).(*store.User)
+	return u
+}
+
+// impersonating: this request's session acts as another account.
+func impersonating(r *http.Request) bool {
+	info := sessionInfo(r)
+	return info != nil && info.ImpersonateUserID != nil
 }
 
 // elevated additionally requires a recent password re-confirmation on this

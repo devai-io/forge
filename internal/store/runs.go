@@ -202,6 +202,13 @@ func (s *Store) Heartbeat(ctx context.Context, runnerID int64, in HeartbeatInput
 	if err := s.saveTmux(ctx, runnerID, in.Tmux); err != nil {
 		return nil, err
 	}
+	// The machine was only out of reach: a run failed as lost that it still
+	// reports is running after all.
+	if _, err := s.DB.Exec(ctx, `UPDATE runs SET status = 'running', finished_at = NULL, error = ''
+		WHERE runner_id = $1 AND status = 'failed' AND error = $3 AND tmux_session = ''
+		  AND id IN (SELECT value FROM json_each($2))`, runnerID, running, orphanError); err != nil {
+		return nil, err
+	}
 	if _, err := s.DB.Exec(ctx, `UPDATE runs SET status = 'failed', finished_at = now(),
 		error = 'the runner restarted and lost this run'
 		WHERE runner_id = $1 AND status = 'running' AND started_at < ts_add(now(), -60) AND tmux_session = ''
@@ -230,11 +237,16 @@ func (s *Store) Heartbeat(ctx context.Context, runnerID int64, in HeartbeatInput
 	return cancel, rows.Err()
 }
 
+// orphanError marks a run failed only because its machine stopped answering.
+// The machine may well be fine (its connection was not): when it reports
+// again — the run still going, or its end — the run is what the machine says.
+const orphanError = "runner went offline"
+
 // FailOrphanedRuns ends runs whose runner has gone silent for ten minutes.
 func (s *Store) FailOrphanedRuns(ctx context.Context) error {
-	_, err := s.DB.Exec(ctx, `UPDATE runs SET status = 'failed', finished_at = now(), error = 'runner went offline'
+	_, err := s.DB.Exec(ctx, `UPDATE runs SET status = 'failed', finished_at = now(), error = $1
 		WHERE status = 'running' AND tmux_session = '' AND runner_id IN (
-			SELECT id FROM runners WHERE last_seen_at IS NULL OR last_seen_at < ts_add(now(), -600))`)
+			SELECT id FROM runners WHERE last_seen_at IS NULL OR last_seen_at < ts_add(now(), -600))`, orphanError)
 	// A run in tmux outlives its machine's agent: its session is still there
 	// when the machine reports again (reconcileTmuxRuns), so it is not failed.
 	return err
@@ -741,7 +753,10 @@ func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishI
 	if err != nil {
 		return false, err
 	}
-	if cur.RunnerID != runnerID || cur.Status != "running" {
+	// A run failed as lost while its machine was out of reach still takes
+	// the machine's own report of how it ended.
+	orphaned := cur.Status == "failed" && cur.Error == orphanError
+	if cur.RunnerID != runnerID || (cur.Status != "running" && !orphaned) {
 		return false, ErrNotFound
 	}
 	if in.SessionID != "" {
@@ -776,7 +791,7 @@ func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishI
 			UPDATE runs SET status = $3, exit_code = $4, session_id = CASE WHEN $5 = '' THEN session_id ELSE $5 END,
 			       result = $6, error = $7, cost_usd = $8, num_turns = $9, duration_ms = $10, finished_at = now(),
 			       usage = $11, awaiting = '', inbox_after = $12
-			WHERE id = $1 AND runner_id = $2 AND status = 'running'
+			WHERE id = $1 AND runner_id = $2 AND (status = 'running' OR (status = 'failed' AND error = '`+orphanError+`'))
 			RETURNING project_id, task_id, repo_id`,
 			runID, runnerID, status, in.ExitCode, truncate(in.SessionID, 200), truncate(in.Result, 200000),
 			truncate(in.Error, 5000), in.CostUSD, in.NumTurns, in.DurationMS, usage, inboxAfter).Scan(&projectID, &taskID, &repoID)

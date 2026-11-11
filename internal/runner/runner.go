@@ -234,6 +234,10 @@ func (r *Runner) heartbeat(ctx context.Context) error {
 	return nil
 }
 
+// finishAttempts: how often a run's end is reported before giving up — with
+// the waits in between, about half an hour.
+const finishAttempts = 45
+
 func (r *Runner) heartbeatLoop(ctx context.Context) {
 	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
@@ -308,8 +312,11 @@ func (r *Runner) handle(parent context.Context, run claimedRun) {
 	}
 	slog.Info("run finished", "run", run.ID, "status", rep.Status)
 
-	// Report even while shutting down: a fresh context, a few tries.
-	for attempt := 0; attempt < 5; attempt++ {
+	// Report even while shutting down: a fresh context, a few tries — and,
+	// while the agent keeps running, for as long as half an hour: a run whose
+	// end never reaches the server is failed there as lost ("runner went
+	// offline") although its work is done and its session is fine.
+	for attempt := 0; attempt < finishAttempts; attempt++ {
 		fctx, fcancel := context.WithTimeout(context.Background(), 20*time.Second)
 		_, err := r.client.post(fctx, fmt.Sprintf("/api/runner/runs/%d/finish", run.ID), rep, nil)
 		fcancel()
@@ -325,7 +332,11 @@ func (r *Runner) handle(parent context.Context, run claimedRun) {
 			slog.Error("finish rejected", "run", run.ID, "err", err)
 			break
 		}
-		time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+		if parent.Err() != nil && attempt >= 4 {
+			break // shutting down: a few tries is all there is time for
+		}
+		slog.Warn("finish not reported yet; trying again", "run", run.ID, "attempt", attempt+1, "err", err)
+		time.Sleep(min(time.Duration(attempt+1)*2*time.Second, 30*time.Second))
 	}
 	// A finished run may have committed; refresh the repo states soon.
 	select {

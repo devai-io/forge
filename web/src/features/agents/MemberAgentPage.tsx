@@ -11,11 +11,11 @@ import { isActiveRun, useAskMemberAgent, useMemberAgent, useRunEvents } from "@/
 import type { MemberAgentView, Run } from "@/api/types";
 import { Button } from "@/components/ui/Button";
 import { ErrorState } from "@/components/ui/EmptyState";
-import { Field, Select, Textarea } from "@/components/ui/Input";
+import { Field, Select, Switch, Textarea } from "@/components/ui/Input";
 import { PageHeader, Panel } from "@/components/ui/Panel";
 import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import { useToast } from "@/components/ui/Toast";
-import { agentLine } from "@/lib/agents";
+import { agentLine, runTitle } from "@/lib/agents";
 import { mapRunEvents } from "@/lib/runlog";
 import { RunRow, RunStatusBadge } from "./RunBits";
 import { RunInteraction } from "./RunInteraction";
@@ -62,7 +62,14 @@ export function MemberAgentPage() {
       {run && !starting ? (
         <Conversation run={run} machine={v.agent.runner_name} />
       ) : (
-        <StartForm view={v} fresh={!!run} onDone={() => setStarting(false)} onCancel={run ? () => setStarting(false) : undefined} />
+        <StartForm
+          view={v}
+          fresh={!!run}
+          // With nothing open, the last conversation can be picked up where it stopped.
+          last={!run && v.recent[0]?.session_id ? v.recent[0] : null}
+          onDone={() => setStarting(false)}
+          onCancel={run ? () => setStarting(false) : undefined}
+        />
       )}
 
       {v.recent.length ? (
@@ -79,11 +86,26 @@ export function MemberAgentPage() {
 }
 
 /** What to ask, and — with more than one project — where. */
-function StartForm({ view, fresh, onDone, onCancel }: { view: MemberAgentView; fresh: boolean; onDone: () => void; onCancel?: () => void }) {
+function StartForm({
+  view,
+  fresh,
+  last,
+  onDone,
+  onCancel,
+}: {
+  view: MemberAgentView;
+  fresh: boolean;
+  last?: Run | null;
+  onDone: () => void;
+  onCancel?: () => void;
+}) {
   const ask = useAskMemberAgent();
   const toast = useToast();
   const [prompt, setPrompt] = useState("");
   const [project, setProject] = useState(view.projects[0]?.key ?? "");
+  // A conversation that was cut off (it failed) is the one to go on with, unless told otherwise.
+  const [resume, setResume] = useState(() => last?.status === "failed");
+  const continues = !!last && resume;
   const text = prompt.trim();
   const nowhere = view.projects.length === 0;
 
@@ -91,7 +113,9 @@ function StartForm({ view, fresh, onDone, onCancel }: { view: MemberAgentView; f
     e?.preventDefault();
     if (!text || ask.isPending || nowhere) return;
     ask.mutate(
-      { prompt: text, project_key: project || undefined, fresh: fresh || undefined },
+      continues
+        ? { prompt: text, continue_run_id: last.id }
+        : { prompt: text, project_key: project || undefined, fresh: fresh || undefined },
       {
         onSuccess: () => {
           setPrompt("");
@@ -107,7 +131,17 @@ function StartForm({ view, fresh, onDone, onCancel }: { view: MemberAgentView; f
       {nowhere ? (
         <p className="text-[13px] text-fg-2">None of your projects has a repository the agent can work in yet. Ask the owner to add one.</p>
       ) : null}
-      {view.projects.length > 1 ? (
+      {last ? (
+        <div className="space-y-2 rounded-md border border-line bg-surface-2/60 px-3 py-2 text-[12.5px]" role="note">
+          <p className="text-fg-2">
+            Your last conversation{last.task_ref ? ` (${last.task_ref})` : ""}: <span className="text-fg">{runTitle(last)}</span>
+            {last.status === "failed" ? <> — it stopped{last.error ? `: ${last.error}` : ""}.</> : "."}{" "}
+            {continues ? "Your reply picks it up where it stopped." : "This starts a new one."}
+          </p>
+          <Switch checked={resume} onChange={setResume} label="Continue that conversation" />
+        </div>
+      ) : null}
+      {view.projects.length > 1 && !continues ? (
         <Field label="Project">
           {(id) => (
             <Select id={id} value={project} onChange={(e) => setProject(e.target.value)} className="sm:w-72">
@@ -121,9 +155,11 @@ function StartForm({ view, fresh, onDone, onCancel }: { view: MemberAgentView; f
         </Field>
       ) : null}
       <Field
-        label={fresh ? "What should it do next?" : "What should the agent do?"}
+        label={continues ? "Your reply" : fresh ? "What should it do next?" : "What should the agent do?"}
         hint={
-          fresh
+          continues
+            ? "The agent goes on from where that conversation stopped. ⌘/Ctrl+Enter to send."
+            : fresh
             ? "The conversation that is open is finished first; it stays under Earlier conversations. ⌘/Ctrl+Enter to start."
             : `It works in ${view.projects.length === 1 ? view.projects[0].name : "the project you pick"}, and asks you before it runs commands. ⌘/Ctrl+Enter to start.`
         }
@@ -152,7 +188,7 @@ function StartForm({ view, fresh, onDone, onCancel }: { view: MemberAgentView; f
           </Button>
         ) : null}
         <Button variant="primary" type="submit" loading={ask.isPending} disabled={!text || nowhere}>
-          {fresh ? "Start a new conversation" : "Start"}
+          {continues ? "Continue" : fresh ? "Start a new conversation" : "Start"}
         </Button>
       </div>
     </form>

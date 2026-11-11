@@ -22,7 +22,40 @@ export type User = {
 
 /** GET /api/auth/me, POST /api/auth/login and POST /api/setup. */
 /** device_trusted: this browser passed two-factor before, so it is not asked for the code again. */
-export type MeResponse = { user: User; elevated_until: string | null; device_trusted?: boolean };
+export type MeResponse = {
+  user: User;
+  elevated_until: string | null;
+  device_trusted?: boolean;
+  /** The owner behind this session, while it acts as `user` (impersonation). */
+  impersonator?: { id: number; username: string; display_name: string };
+};
+
+// ── Admin: accounts and what they may do (owners only) ─────────────────────
+
+export type AdminUser = {
+  id: number;
+  username: string;
+  email: string;
+  display_name: string;
+  role: "owner" | "member";
+  totp_enabled: boolean;
+  password_generated: boolean; // still the password Forge made up
+  created_at: string;
+  last_seen_at: string | null;
+  sessions: number;
+  projects: string[]; // a member's project keys
+  agent: MemberAgent | null; // a member's own agent
+};
+export type AdminMachine = { id: number; name: string; role: string; online: boolean; members_allowed: boolean; permission_modes: string[] };
+export type AdminView = { users: AdminUser[]; machines: AdminMachine[]; projects: { key: string; name: string; color: string }[] };
+export type AdminUserInput = { username: string; email: string; display_name?: string; role?: "owner" | "member"; projects?: string[] };
+export type AdminUserPatch = {
+  display_name?: string;
+  email?: string;
+  role?: "owner" | "member";
+  projects?: string[];
+  agent?: { machine: string; model?: string; effort?: string; permission_mode?: string } | null;
+};
 
 /** GET /api/setup (no auth): true until the server has its one account. */
 export type SetupStatus = { needed: boolean };
@@ -877,6 +910,11 @@ export type SecurityKind =
   | "code_open"
   | "setup"
   | "runner_created"
+  | "user_created"
+  | "user_updated"
+  | "user_password_reset"
+  | "user_deleted"
+  | "impersonate"
   | "runner_pair_code"
   | "runner_paired"
   | "runner_rotated"

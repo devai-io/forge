@@ -178,4 +178,29 @@ describe("a member's agent", () => {
     await waitFor(() => expect(comments).toEqual([{ body: "Also round the tax" }]));
     await waitFor(() => expect(asked[1]).toEqual({ prompt: "New comment on SHOP-5:\n\nAlso round the tax", task_id: 5 }));
   });
+
+  it("a conversation that was cut off can be picked up from the Agent page", async () => {
+    const asked: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit = {}) => {
+        const path = url.split("?")[0].replace(/^\/api/, "");
+        if (path === "/agent" && (init.method ?? "GET") === "GET")
+          return jsonResponse(200, view({ recent: [run({ id: 9, status: "failed", error: "runner went offline", task_ref: "SHOP-5", task_id: 5 })] }));
+        if (path === "/agent" && init.method === "POST") {
+          asked.push(JSON.parse(String(init.body)));
+          return jsonResponse(200, run({ id: 9, status: "queued" }));
+        }
+        return jsonResponse(404, { error: { code: "not_found", message: path } });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<MemberAgentPage />, { qc: member() });
+    // It stopped by itself: going on with it is what is on offer first.
+    expect(await screen.findByText(/it stopped: runner went offline/)).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Continue that conversation" })).toHaveAttribute("aria-checked", "true");
+    await user.type(screen.getByLabelText("Your reply"), "Go on");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(asked).toEqual([{ prompt: "Go on", continue_run_id: 9 }]));
+  });
 });

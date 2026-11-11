@@ -1,5 +1,5 @@
 import { useMe, useMemberAgent } from "@/api/hooks";
-import { BookOpen, Bot, ClipboardCheck, Code, Cpu, FolderKanban, Gauge, LayoutDashboard, ListTodo, Lock, Server, Sparkles, SquareTerminal } from "lucide-react";
+import { BookOpen, Bot, ClipboardCheck, Code, Cpu, FolderKanban, Gauge, LayoutDashboard, ListTodo, Lock, Server, Sparkles, SquareTerminal, UserCog } from "lucide-react";
 
 // `mobile`: gets its own slot in the phone tab bar — five at most, beside "More"
 // (AppShell's grid-cols-6); the rest live under "More".
@@ -18,6 +18,7 @@ export const NAV = [
   // A member's own agent (the owner gave it one): its page instead of Agents.
   { to: "/agent", label: "Agent", short: "Agent", icon: Bot, end: false, mobile: true, keywords: "claude ask chat agent" },
   { to: "/machines", label: "Machines", short: "Machines", icon: Cpu, end: false, mobile: false, keywords: "runners agents pair add machine master worker" },
+  { to: "/admin", label: "Admin", short: "Admin", icon: UserCog, end: false, mobile: false, keywords: "users accounts members permissions roles impersonate password" },
   { to: "/docs", label: "Docs", short: "Docs", icon: BookOpen, end: false, mobile: false, keywords: "documentation help how it works what forge does security" },
 ] as const;
 

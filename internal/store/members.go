@@ -182,10 +182,11 @@ func (s *Store) MemberMachineOpen(ctx context.Context, userID, runnerID int64) b
 }
 
 // MemberAgentRun is the conversation a member's agent has open: the latest
-// open agent run that member started (ErrNotFound when there is none).
+// open agent run that member started and has not finished (one that is only
+// still closing does not count). ErrNotFound when there is none.
 func (s *Store) MemberAgentRun(ctx context.Context, userID int64) (*Run, error) {
 	runs, err := s.listRunsWhere(ctx, `r.user_id = $1 AND r.kind = 'agent' AND r.chat_turn_id IS NULL
-		AND r.status IN ('queued', 'running', 'waiting') ORDER BY r.id DESC LIMIT 1`, userID)
+		AND r.status IN ('queued', 'running', 'waiting') AND NOT r.finish_requested ORDER BY r.id DESC LIMIT 1`, userID)
 	if err != nil {
 		return nil, err
 	}
