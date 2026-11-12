@@ -2,6 +2,7 @@
 
 import type { CommandDetail, Engine, Pairing, Run, Runner, RunnerCapabilities, RunnerRole } from "@/api/types";
 import { addDays, todayInTz } from "./format";
+import { stripImageMarkers } from "@/lib/images";
 
 // Mirrors deploy/runner.example.json, which is the machine's ~/.config/forge/agent.json:
 // the keys an agent needs to start (api_url, token, allowed_roots) plus safe
@@ -77,7 +78,7 @@ const plainInline = (s: string) =>
  */
 export function runTag(run: Pick<Run, "kind" | "prompt">): "status check" | "continue" | null {
   if (run.kind !== "agent") return null;
-  const p = run.prompt.trim();
+  const p = stripImageMarkers(run.prompt);
   if (/^Forge status check\b/i.test(p)) return "status check";
   if (/^(continue|carry on|go on|keep going|resume)[.!]?$/i.test(p)) return "continue";
   return null;
@@ -102,7 +103,9 @@ export function runTitle(run: TitledRun): string {
     const line = answered ? result.split("\n").find((l) => l.trim()) : "";
     return line ? clipTitle(plainInline(line.replace(/^[#>\-*\s]+/, ""))) : tag === "continue" ? "Continue" : "Status check";
   }
-  const first = run.prompt.split("\n").find((l) => l.trim()) ?? "";
+  const prompt = stripImageMarkers(run.prompt);
+  const first = prompt.split("\n").find((l) => l.trim()) ?? "";
+  if (!first && prompt !== run.prompt.trim()) return "(images)";
   return clipTitle(first) || "(empty prompt)";
 }
 

@@ -447,6 +447,8 @@ top = first − 1000).
 | POST | /api/runs/{id}/cancel | – | `Run` (queued → cancelled immediately; running → `cancel_requested`, the runner kills it) |
 | POST | /api/runs/{id}/prompts/{pid}/answer | `PromptAnswer` | `{prompt: RunPrompt}`; `409` if already answered, `422` for a decision the prompt's kind does not take or a run that is not a running interactive one |
 | POST | /api/runs/{id}/messages | `{text, one_turn?}` | `Run` — a follow-up for the session (read when it finishes what it is doing). On a `waiting` run: the same run is queued again to resume its session in place (`resumes` + 1), and `one_turn: true` makes it finish once it has answered; `422` if its machine's agent cannot (then use Continue). `one_turn` is ignored for a live session |
+| POST | /api/uploads | multipart field `file`: one PNG, JPEG, GIF or WebP image, ≤ 10 MB (type sniffed) | `201 Upload` — `413 too_large`, `415 unsupported_type`. See "Images for agents" |
+| GET | /api/uploads/{token} | – | the image (`Content-Type` as stored); only for the account that uploaded it and owners, else `404` |
 | POST | /api/runs/{id}/end | – | `Run` — same as `finish` |
 | POST | /api/runs/{id}/finish | – | `Run` — the work is done: a `waiting` (or resume-`queued`) run becomes `succeeded` at once; a running one gets `finish_requested` (an interactive session ends after its current turn) and then finishes as `succeeded`; `422` for a run that is already over |
 | POST | /api/runs/{id}/handoff | – | **elevation**. `{run: Run, runner_id, session}` — opens the run's session in Claude Code (Codex: `codex resume`) in a tmux session `run-<id>` on its machine, in the run's folder, with the run's skip-permissions setting where the machine allows it. A live interactive session is parked first (up to 45 s). The run then ends (`waiting` → `succeeded`) with `handoff` saying where it went. `409 terminal_disabled` / `runner_offline` / `agent_outdated`; `422` while the run is queued or a one-shot run is still working |
@@ -1008,6 +1010,27 @@ type ProjectSessions = {
 | POST | /api/project-sessions/{key} | `{model?, effort?, prompt?, extra?, skip_permissions?}` | `{session, runner_id, run: Run \| null, started: boolean}`. Opens the project's agent — with `extra: true` a new extra one. **Not open** (no session, or Claude exited in it): it starts with `model` (an alias or id), `effort` (`low`…`max`) and `skip_permissions` (default: the setting; only where the master allows it); with a `prompt` it starts as a run with that request (`run`), without one as a plain session (`run: null`) that becomes a run with its first request. **Open, a conversation going**: `prompt` is one more message to that run (`run`), model and effort are ignored; no `prompt` just answers where it is. **Open, no conversation yet**: `prompt` is typed into it and is a run from then on. `started` says whether a session was started. A conversation that had stopped with its session (`waiting`) is finished first — Continue picks it up again. `409 runner_offline` (no connected master with terminals), `409 starting` (a request within 15 s of the session's start), `409 agent_outdated` (a request on an agent older than v0.1.44), `422` for a bad model or effort or a project without a repo path, `502 runner_error`. Logged as `terminal_create` |
 | DELETE | /api/project-sessions/{key}/{name} | – | `204`. Closes one of the project's sessions: its conversation is finished (`succeeded`) and the tmux session killed. `404` for a name that is not this project's |
 
+## Images for agents
+
+A prompt (`POST /api/runs`, `POST /api/agent`) or a message
+(`POST /api/runs/{id}/messages`) can carry images: the web app uploads each
+one first (`POST /api/uploads`, from drag and drop anywhere on the page,
+paste, or the image button) and adds its marker after the text, one per line:
+`[image: NAME](forge-upload:TOKEN)`. The token (24 random characters) is the
+only handle on the image. Before the text reaches Claude Code or Codex — a
+run's prompt, a follow-up, a paste into a tmux session, a tmux session's first
+prompt — the machine's agent fetches each image
+(`GET /api/runner/uploads/{token}`), keeps it in its cache folder
+(`<user cache dir>/forge/uploads/<token>.<ext>`, 30 days) and puts
+`[image: NAME] <local path>` where the marker was; Claude reads the file.
+Claude Code is started with `--add-dir <that folder>` so it may read it (a
+tmux session started before v0.1.52 asks once). Uploads are kept 30 days.
+
+```ts
+type Upload = { token: string; name: string; content_type: string; size: number; created_at: string;
+                marker: string };   // "[image: NAME](forge-upload:TOKEN)"
+```
+
 ## Runner side (Bearer runner token)
 
 | Method | Path | Notes |
@@ -1016,6 +1039,7 @@ type ProjectSessions = {
 | POST | /api/runner/hook | `forge agent hook --report` (Claude Code's SessionStart, UserPromptSubmit, Stop, Notification and SessionEnd hooks): `{event, session_id, cwd, tmux_session, run_id, source?, prompt?, message?, notification_type?, reason?, last_message?, events?: EventInput[]}` → `204`. See *Agents in tmux* |
 | GET (WebSocket) | /api/runner/control | server → runner JSON: `{"type":"open","channel","session","cols","rows"}`, `{"type":"create","id","session","cwd","start","context","prompt","skip_permissions","resume","remote_control"}` (`remote_control`: start Claude with `--remote-control <name>`), `{"type":"rc_url","id","session"}` (result `text`: the first `https://claude.ai/code/session_…` in the pane's scrollback, or ""), `{"type":"capture","id","session","lines"}`, `{"type":"keys","id","session","text","enter"}`, `{"type":"paste","id","session","text","enter"}` (one bracketed paste, then Enter: a message with line breaks stays one message), `{"type":"kill","id","session"}`; `create` for an agent run in tmux also carries `session_id` (new session: `--session-id`), `permission_mode`, `model`, `effort`, `worktree`, `env` (`FORGE_*` variables only) and `reuse` (type the command into the existing session, whose Claude has exited) — each checked against the machine's own config before it becomes a flag; runner → server `{"type":"result","id","ok","error","text"}` |
 | GET (WebSocket) | /api/runner/tty/{channel} | the runner's end of one terminal: binary = bytes, text = the same JSON control frames |
+| GET | /api/runner/uploads/{token} | – | an attached image's bytes (`Content-Type`, `X-Upload-Name`); `404` for an unknown token |
 | GET | /api/runner/context | query `cwd`; `{project_key, repo_name, markdown}` — compact Forge context for a Claude session started in that directory (404 when the path belongs to no project) |
 | GET | /api/runner/projects | `{projects: [{key, name, status, summary}]}` |
 | POST | /api/runner/projects | `{key, name, category?, status?, priority?, color?, summary?, description?, infra_notes?, target_date?, links?, repo?: {name, path?, remote_url?, default_branch?, kind?, deploy?, notes?}}` → `201 {key, repo?: Repo}` |

@@ -12,7 +12,10 @@ import type { PromptAnswer, Run, RunPrompt } from "@/api/types";
 import { Button } from "@/components/ui/Button";
 import { Markdown } from "@/components/ui/Markdown";
 import { useToast } from "@/components/ui/Toast";
+import { withImageMarkers } from "@/lib/images";
 import { toolSummary } from "@/lib/runlog";
+import { AttachImageButton, AttachmentStrip, DropOverlay } from "./ImageAttachments";
+import { useImageAttachments, usePageImageDrop } from "./imageHooks";
 
 const MAX_HEIGHT = 200;
 
@@ -234,6 +237,10 @@ function RunComposer({ run }: { run: Run }) {
   const toast = useToast();
   const [text, setText] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
+  // Images dropped anywhere on the page, pasted or picked go with the message.
+  const images = useImageAttachments();
+  const dragging = usePageImageDrop(images.add);
+  const agentName = run.engine === "codex" ? "Codex" : "Claude";
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -243,10 +250,16 @@ function RunComposer({ run }: { run: Run }) {
     el.style.overflowY = el.scrollHeight > MAX_HEIGHT ? "auto" : "hidden";
   }, [text]);
 
+  const canSend = (!!text.trim() || images.markers.length > 0) && !images.busy;
   const submit = () => {
-    const t = text.trim();
-    if (!t || send.isPending) return;
-    send.mutate(t, { onSuccess: () => setText(""), onError: (e) => toast.error(e) });
+    if (!canSend || send.isPending) return;
+    send.mutate(withImageMarkers(text, images.markers), {
+      onSuccess: () => {
+        setText("");
+        images.clear();
+      },
+      onError: (e) => toast.error(e),
+    });
   };
 
   return (
@@ -256,38 +269,49 @@ function RunComposer({ run }: { run: Run }) {
         submit();
       }}
     >
-      <div className="flex items-end gap-2 rounded-xl border border-line-strong bg-surface p-1.5 transition-colors focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/25">
-        <textarea
-          ref={ref}
-          rows={1}
-          aria-label="Message"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={
-            run.status === "waiting"
-              ? `Reply to ${run.engine === "codex" ? "Codex" : "Claude"} — the session picks back up…`
-              : run.engine === "codex"
-                ? run.awaiting === "reply"
-                  ? "Reply to Codex…"
-                  : "Send a message to Codex…"
-                : run.awaiting === "reply"
-                  ? "Reply to Claude…"
-                  : "Send a message — Claude reads it when it can…"
-          }
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              submit();
+      <DropOverlay show={dragging} label={`Drop images to send them to ${agentName}`} />
+      <div
+        className={clsx(
+          "rounded-xl border border-line-strong bg-surface p-1.5 transition-colors focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/25",
+          dragging && "border-accent ring-2 ring-accent/25",
+        )}
+      >
+        <AttachmentStrip items={images.items} onRemove={images.remove} className="px-1.5 pt-1.5 pb-2" />
+        <div className="flex items-end gap-2">
+          <AttachImageButton onFiles={images.add} />
+          <textarea
+            ref={ref}
+            rows={1}
+            aria-label="Message"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onPaste={images.onPaste}
+            placeholder={
+              run.status === "waiting"
+                ? `Reply to ${run.engine === "codex" ? "Codex" : "Claude"} — the session picks back up…`
+                : run.engine === "codex"
+                  ? run.awaiting === "reply"
+                    ? "Reply to Codex…"
+                    : "Send a message to Codex…"
+                  : run.awaiting === "reply"
+                    ? "Reply to Claude…"
+                    : "Send a message — Claude reads it when it can…"
             }
-          }}
-          className="min-h-8 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm leading-relaxed text-fg placeholder:text-fg-3 focus:outline-none"
-        />
-        <Button type="submit" variant="primary" size="icon" aria-label="Send" disabled={!text.trim()} loading={send.isPending}>
-          <ArrowUp className="size-4" />
-        </Button>
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            className="min-h-8 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm leading-relaxed text-fg placeholder:text-fg-3 focus:outline-none"
+          />
+          <Button type="submit" variant="primary" size="icon" aria-label="Send" disabled={!canSend} loading={send.isPending}>
+            <ArrowUp className="size-4" />
+          </Button>
+        </div>
       </div>
       <div className="mt-1 flex items-center justify-between gap-2 px-1 text-[11px] text-fg-3">
-        <span className="hidden sm:inline">Enter to send · Shift+Enter for a new line</span>
+        <span className="hidden sm:inline">Enter to send · Shift+Enter for a new line · drop or paste images</span>
         <button
           type="button"
           disabled={end.isPending}

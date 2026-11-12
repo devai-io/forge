@@ -419,6 +419,9 @@ func (r *Runner) createSession(ctx context.Context, m controlMsg) error {
 		return errors.New("invalid ssh target")
 	}
 	agent := m.Start == "claude" || m.Start == "codex"
+	if agent {
+		m.Prompt = r.resolveUploads(ctx, m.Prompt) // attached images: local files
+	}
 	if m.SkipPermissions && (!agent || !contains(r.cfg.PermissionModes, "bypassPermissions")) {
 		return errors.New("skipping permissions is not enabled on this runner (bypassPermissions in its permission_modes)")
 	}
@@ -569,6 +572,10 @@ func (r *Runner) claudeLine(m controlMsg, dir string) (string, error) {
 		b.WriteString(k + "=" + shellQuote(m.Env[k]) + " ")
 	}
 	b.WriteString(r.cfg.ClaudePath)
+	// Images attached in Forge are kept outside the repo: Claude may read them.
+	if dir, err := uploadsDir(); err == nil {
+		b.WriteString(" --add-dir " + shellQuote(dir))
+	}
 	switch {
 	case m.Resume != "":
 		b.WriteString(" --resume " + m.Resume)
@@ -615,7 +622,7 @@ func (r *Runner) claudeLine(m controlMsg, dir string) (string, error) {
 			}
 			prompt = "Your request is in " + path + " — read it and do what it says."
 		}
-		b.WriteString(" " + shellQuote(prompt))
+		b.WriteString(" -- " + shellQuote(prompt)) // "--": --add-dir takes several values
 	}
 	return b.String(), nil
 }
@@ -647,6 +654,7 @@ func (r *Runner) paste(ctx context.Context, m controlMsg) error {
 	if m.Text == "" {
 		return errors.New("nothing to paste")
 	}
+	m.Text = r.resolveUploads(ctx, m.Text) // attached images: local files
 	buf := "forge-" + randomName()
 	load := exec.CommandContext(ctx, r.cfg.TmuxPath, "load-buffer", "-b", buf, "-")
 	load.Env = r.tmuxEnv()

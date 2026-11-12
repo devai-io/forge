@@ -71,6 +71,7 @@ func codexPolicy(mode string, approvals bool) (string, string, error) {
 }
 
 func (r *Runner) runCodex(ctx context.Context, run claimedRun, dir string, ship *shipper) finishReport {
+	run.Prompt = r.resolveUploads(ctx, run.Prompt) // attached images: local files
 	if !contains(r.cfg.PermissionModes, run.PermissionMode) {
 		return finishReport{Status: "failed", Error: "refused: permission mode is not enabled on this runner"}
 	}

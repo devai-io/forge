@@ -23,6 +23,7 @@ import { Markdown } from "@/components/ui/Markdown";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { useUser } from "@/lib/auth";
 import { useNow } from "@/lib/now";
+import { splitImageMarkers, stripImageMarkers } from "@/lib/images";
 import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import { useToast } from "@/components/ui/Toast";
 import { useShell } from "@/features/shell/context";
@@ -30,6 +31,7 @@ import { formatCost, formatDuration } from "@/lib/format";
 import { mapRunEvents, toolCallCount, withoutEchoedResult } from "@/lib/runlog";
 import { ENGINE_LABEL, runTitle } from "@/lib/agents";
 import { RunKindIcon, RunStatusBadge, RunTagBadge } from "./RunBits";
+import { ImageThumbs } from "./ImageAttachments";
 import { RunInteraction } from "./RunInteraction";
 import { RunLog } from "./RunLog";
 
@@ -424,11 +426,13 @@ function RunView({
 /** The prompt under the title: muted, two lines until opened. */
 function PromptText({ prompt }: { prompt: string }) {
   const [open, setOpen] = useState(false);
-  const text = prompt.trim();
+  const images = splitImageMarkers(prompt).flatMap((p) => (p.kind === "image" ? [p] : []));
+  const text = stripImageMarkers(prompt);
   const long = text.split("\n").length > 2 || text.length > 180;
   return (
     <div className="mt-1">
-      <p className={clsx("text-[12.5px] break-words whitespace-pre-wrap text-fg-3", !open && "line-clamp-2")}>{text}</p>
+      {text ? <p className={clsx("text-[12.5px] break-words whitespace-pre-wrap text-fg-3", !open && "line-clamp-2")}>{text}</p> : null}
+      <ImageThumbs images={images} className="mt-1.5" />
       {long ? (
         <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="text-[11.5px] text-accent hover:underline">
           {open ? "Show less" : "Show the whole prompt"}

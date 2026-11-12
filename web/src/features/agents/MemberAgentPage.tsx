@@ -15,9 +15,12 @@ import { Field, Select, Switch, Textarea } from "@/components/ui/Input";
 import { PageHeader, Panel } from "@/components/ui/Panel";
 import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import { useToast } from "@/components/ui/Toast";
+import { withImageMarkers } from "@/lib/images";
 import { agentLine, runTitle } from "@/lib/agents";
 import { mapRunEvents } from "@/lib/runlog";
 import { RunRow, RunStatusBadge } from "./RunBits";
+import { AttachImageButton, AttachmentStrip, DropOverlay, TextWithImages } from "./ImageAttachments";
+import { useImageAttachments, usePageImageDrop } from "./imageHooks";
 import { RunInteraction } from "./RunInteraction";
 import { RunLog } from "./RunLog";
 
@@ -102,16 +105,18 @@ function StartForm({
   const ask = useAskMemberAgent();
   const toast = useToast();
   const [prompt, setPrompt] = useState("");
+  const images = useImageAttachments();
+  const dragging = usePageImageDrop(images.add);
   const [project, setProject] = useState(view.projects[0]?.key ?? "");
   // A conversation that was cut off (it failed) is the one to go on with, unless told otherwise.
   const [resume, setResume] = useState(() => last?.status === "failed");
   const continues = !!last && resume;
-  const text = prompt.trim();
+  const text = withImageMarkers(prompt, images.markers);
   const nowhere = view.projects.length === 0;
 
   const submit = (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!text || ask.isPending || nowhere) return;
+    if (!text || images.busy || ask.isPending || nowhere) return;
     ask.mutate(
       continues
         ? { prompt: text, continue_run_id: last.id }
@@ -119,6 +124,7 @@ function StartForm({
       {
         onSuccess: () => {
           setPrompt("");
+          images.clear();
           onDone();
         },
         onError: (err) => toast.error(err),
@@ -128,6 +134,7 @@ function StartForm({
 
   return (
     <form onSubmit={submit} className="space-y-3 rounded-xl border border-line bg-surface p-4" aria-label={fresh ? "New conversation" : "Ask the agent"}>
+      <DropOverlay show={dragging} label="Drop images to give them to the agent" />
       {nowhere ? (
         <p className="text-[13px] text-fg-2">None of your projects has a repository the agent can work in yet. Ask the owner to add one.</p>
       ) : null}
@@ -174,6 +181,7 @@ function StartForm({
             value={prompt}
             disabled={nowhere}
             onChange={(e) => setPrompt(e.target.value)}
+            onPaste={images.onPaste}
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
             }}
@@ -181,13 +189,16 @@ function StartForm({
           />
         )}
       </Field>
-      <div className="flex items-center justify-end gap-2">
+      <div className="flex items-center gap-2">
+        <AttachImageButton onFiles={images.add} disabled={nowhere} />
+        <AttachmentStrip items={images.items} onRemove={images.remove} className="min-w-0 flex-1" />
+        {images.items.length ? null : <span className="flex-1 text-[11.5px] text-fg-3">Drop, paste or pick screenshots to show the agent</span>}
         {onCancel ? (
           <Button variant="ghost" onClick={onCancel}>
             Back to the conversation
           </Button>
         ) : null}
-        <Button variant="primary" type="submit" loading={ask.isPending} disabled={!text || nowhere}>
+        <Button variant="primary" type="submit" loading={ask.isPending} disabled={!text || images.busy || nowhere}>
           {continues ? "Continue" : fresh ? "Start a new conversation" : "Start"}
         </Button>
       </div>
@@ -213,7 +224,7 @@ function Conversation({ run: listed, machine }: { run: Run; machine: string }) {
   return (
     <section aria-label="Conversation">
       <div className="mb-3 flex flex-wrap items-start gap-2 rounded-xl border border-line bg-surface px-3.5 py-3">
-        <p className="min-w-0 flex-1 text-[13.5px] break-words whitespace-pre-wrap">{run.prompt}</p>
+        <TextWithImages text={run.prompt} className="min-w-0 flex-1 text-[13.5px]" />
         <RunStatusBadge run={run} />
       </div>
       {run.error ? (

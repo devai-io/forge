@@ -83,6 +83,9 @@ func (m *Monitor) Run(ctx context.Context) {
 			if err := m.store.PruneSessions(ctx); err != nil {
 				slog.Error("prune sessions", "err", err)
 			}
+			if _, err := m.store.PruneUploads(ctx, 30*24*time.Hour); err != nil {
+				slog.Error("prune uploads", "err", err)
+			}
 		}
 	}
 }

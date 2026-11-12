@@ -8,6 +8,9 @@ import (
 )
 
 func TestClaudeLineForAgentRuns(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	up := " --add-dir '" + filepath.Join(cache, "forge", "uploads") + "'"
 	r := &Runner{cfg: &Config{ClaudePath: "claude", PermissionModes: []string{"plan", "acceptEdits"}}}
 	line, err := r.claudeLine(controlMsg{Session: "SHOP-12", SessionID: "0b6e3f4a-1c2d-4e5f-8a9b-0c1d2e3f4a5b",
 		PermissionMode: "plan", Model: "opus", Effort: "high", Worktree: "forge-run-7", Prompt: "Fix the cart's rounding",
@@ -15,11 +18,11 @@ func TestClaudeLineForAgentRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "FORGE_RUN_ID='7' claude --session-id 0b6e3f4a-1c2d-4e5f-8a9b-0c1d2e3f4a5b --permission-mode plan --model 'opus' --effort high --worktree forge-run-7 'Fix the cart'\\''s rounding'"
+	want := "FORGE_RUN_ID='7' claude" + up + " --session-id 0b6e3f4a-1c2d-4e5f-8a9b-0c1d2e3f4a5b --permission-mode plan --model 'opus' --effort high --worktree forge-run-7 -- 'Fix the cart'\\''s rounding'"
 	if line != want {
 		t.Fatalf("line =\n%s\nwant\n%s", line, want)
 	}
-	if line, _ = r.claudeLine(controlMsg{Session: "SHOP-12", Resume: "0b6e3f4a-1c2d-4e5f-8a9b-0c1d2e3f4a5b", Prompt: "carry on"}, "/srv"); line != "claude --resume 0b6e3f4a-1c2d-4e5f-8a9b-0c1d2e3f4a5b 'carry on'" {
+	if line, _ = r.claudeLine(controlMsg{Session: "SHOP-12", Resume: "0b6e3f4a-1c2d-4e5f-8a9b-0c1d2e3f4a5b", Prompt: "carry on"}, "/srv"); line != "claude"+up+" --resume 0b6e3f4a-1c2d-4e5f-8a9b-0c1d2e3f4a5b -- 'carry on'" {
 		t.Fatalf("resume line = %s", line)
 	}
 	// What the machine does not allow never becomes a flag.

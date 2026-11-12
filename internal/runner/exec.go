@@ -202,12 +202,18 @@ func permissionArgs(mode string) []string {
 }
 
 func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship *shipper) finishReport {
+	run.Prompt = r.resolveUploads(ctx, run.Prompt) // attached images: local files
 	if !contains(r.cfg.PermissionModes, run.PermissionMode) {
 		msg := fmt.Sprintf("refused: permission mode %q is not enabled on this runner", run.PermissionMode)
 		ship.send(textEvent("system", msg))
 		return finishReport{Status: "failed", Error: msg}
 	}
 	args := append([]string{"-p", "--output-format", "stream-json", "--verbose"}, permissionArgs(run.PermissionMode)...)
+	// Images attached in Forge are kept outside the repo (resolveUploads):
+	// Claude may read them. Options follow, so the list of folders ends here.
+	if up, err := uploadsDir(); err == nil {
+		args = append(args, "--add-dir", up)
+	}
 	interactive := run.Interactive && run.Assistant == nil
 	if interactive {
 		args = append(args, interactiveArgs...)

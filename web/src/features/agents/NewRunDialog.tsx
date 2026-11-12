@@ -22,9 +22,28 @@ import { Segmented } from "@/components/ui/Tabs";
 import { useToast } from "@/components/ui/Toast";
 import type { NewRunPrefill } from "@/features/shell/context";
 import { useUser } from "@/lib/auth";
+import { withImageMarkers } from "@/lib/images";
+import { AttachImageButton, AttachmentStrip, DropOverlay } from "./ImageAttachments";
+import { useImageAttachments, usePageImageDrop } from "./imageHooks";
 import { commandOptions, defaultRunner, EFFORT_LABEL, ENGINE_LABEL, PERMISSION_MODE_HELP, runnerForCommand } from "@/lib/agents";
 
 const CUSTOM_MODEL = "__custom__"; // the model select's "Other…": type an id
+
+/** The prompt's images: the button, the thumbnails, and the whole page as a drop zone while the dialog is open. */
+function PromptImages({ images }: { images: ReturnType<typeof useImageAttachments> }) {
+  const dragging = usePageImageDrop(images.add);
+  return (
+    <div className="-mt-1 flex items-center gap-2">
+      <DropOverlay show={dragging} label="Drop images to give them to the agent" />
+      <AttachImageButton onFiles={images.add} />
+      {images.items.length ? (
+        <AttachmentStrip items={images.items} onRemove={images.remove} className="min-w-0 flex-1" />
+      ) : (
+        <span className="text-[11.5px] text-fg-3">Drop, paste or pick screenshots to show the agent</span>
+      )}
+    </div>
+  );
+}
 
 export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onClose: () => void }) {
   const toast = useToast();
@@ -42,6 +61,8 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   );
   const [kind, setKind] = useState<RunKind>("agent");
   const [prompt, setPrompt] = useState(prefill.prompt ?? "");
+  // Screenshots for the agent: dropped onto the dialog's page, pasted or picked.
+  const images = useImageAttachments();
   const [command, setCommand] = useState("");
   const member = useUser().role === "member"; // agents only
   const [mode, setMode] = useState("");
@@ -116,7 +137,9 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   const canSubmit =
     !!effectiveRunnerId &&
     !!effectiveRepoId &&
-    (kind === "agent" ? prompt.trim().length > 0 : !!effectiveCommand && (!needsConfirm || confirmed)) &&
+    (kind === "agent" || resume
+      ? (prompt.trim().length > 0 || images.markers.length > 0) && !images.busy
+      : !!effectiveCommand && (!needsConfirm || confirmed)) &&
     !create.isPending;
 
   const submit = (e: React.FormEvent) => {
@@ -127,7 +150,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
         runner_id: runRunner ? runRunner.id : Number(effectiveRunnerId),
         repo_id: Number(effectiveRepoId),
         kind: resume ? "agent" : kind,
-        prompt: kind === "agent" || resume ? prompt.trim() : undefined,
+        prompt: kind === "agent" || resume ? withImageMarkers(prompt, images.markers) : undefined,
         command: kind === "command" && !resume ? effectiveCommand : undefined,
         confirmed: needsConfirm ? confirmed : undefined,
         permission_mode: kind === "agent" || resume ? effectiveMode : undefined,
@@ -274,6 +297,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                   data-autofocus
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
+                  onPaste={images.onPaste}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(e);
                   }}
@@ -283,6 +307,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                 />
               )}
             </Field>
+            <PromptImages images={images} />
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field
                 label="Engine"

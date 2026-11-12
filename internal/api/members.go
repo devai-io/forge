@@ -18,6 +18,8 @@ import (
 // refused for it, so a new route is closed to members until added.
 var memberRoutes = map[string]bool{
 	"GET /api/auth/me":                      true,
+	"POST /api/uploads":                     true,
+	"GET /api/uploads/{token}":              true,
 	"PATCH /api/auth/me":                    true,
 	"POST /api/auth/password":               true,
 	"GET /api/auth/sessions":                true,

@@ -402,6 +402,7 @@ func (s *session) handle(it inboxItem) {
 			Text string `json:"text"`
 		}
 		if json.Unmarshal(it.Data, &m) == nil && m.Text != "" {
+			m.Text = s.r.resolveUploads(s.ctx, m.Text) // attached images: local files
 			s.working()
 			send := s.message
 			if send == nil {
