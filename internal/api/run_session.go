@@ -31,6 +31,26 @@ func (s *Server) finishRun(w http.ResponseWriter, r *http.Request, u *store.User
 	writeJSON(w, http.StatusOK, run.Public())
 }
 
+// archiveRun takes a run off the Agents page ({archived: false} puts it back).
+func (s *Server) archiveRun(w http.ResponseWriter, r *http.Request, u *store.User) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	in := struct {
+		Archived *bool `json:"archived"`
+	}{}
+	if !decode(w, r, &in) {
+		return
+	}
+	run, err := s.store.ArchiveRun(r.Context(), id, in.Archived == nil || *in.Archived)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, run.Public())
+}
+
 // sessionID is what a Claude Code session id or Codex thread id looks like;
 // it goes into a shell line, so nothing else passes.
 var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{7,63}$`)

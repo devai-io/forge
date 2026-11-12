@@ -309,6 +309,7 @@ func (s *Server) Handler() http.Handler {
 	h("GET /api/uploads/{token}", s.authed(s.getUpload))
 	h("POST /api/runs/{id}/end", s.authed(s.endRunSession))
 	h("POST /api/runs/{id}/finish", s.authed(s.finishRun))
+	h("POST /api/runs/{id}/archive", s.authed(s.archiveRun))
 	h("POST /api/runs/{id}/handoff", s.authed(s.elevated(s.handoffRun)))
 	h("GET /api/admin/users", s.authed(s.adminUsers))
 	h("POST /api/admin/users", s.authed(s.elevated(s.adminCreateUser)))

@@ -600,6 +600,11 @@ func splitStatements(sqlText string) []string {
 		case c == '\'':
 			inQuote = true
 		case c == ';':
+			// A trigger's body holds statements of its own: it ends at END.
+			if s := strings.ToUpper(strings.TrimSpace(cur.String())); strings.HasPrefix(s, "CREATE TRIGGER") && !strings.HasSuffix(s, "END") {
+				cur.WriteByte(c)
+				continue
+			}
 			if s := strings.TrimSpace(cur.String()); s != "" {
 				out = append(out, s)
 			}

@@ -55,6 +55,7 @@ var memberRoutes = map[string]bool{
 	"POST /api/runs/{id}/messages":             true,
 	"POST /api/runs/{id}/end":                  true,
 	"POST /api/runs/{id}/finish":               true,
+	"POST /api/runs/{id}/archive":              true,
 	"GET /api/agent":                           true,
 	"POST /api/agent":                          true,
 }

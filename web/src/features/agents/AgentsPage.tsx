@@ -97,7 +97,7 @@ function ActivePanel() {
       ) : (
         <div>
           {runs.map((r) => (
-            <RunRow key={r.id} run={r} />
+            <RunRow key={r.id} run={r} archive="archive" />
           ))}
         </div>
       )}
@@ -107,11 +107,17 @@ function ActivePanel() {
 
 function RunsPanel() {
   const [project, setProject] = useState("");
-  const [status, setStatus] = useState<RunStatus | "">("");
+  const [status, setStatus] = useState<RunStatus | "" | "archived">("");
+  const archived = status === "archived";
   const projects = useProjects();
-  const runs = useRuns({ project: project || undefined, status: status || undefined, limit: 100 }, 6000);
+  const runs = useRuns(
+    { project: project || undefined, status: archived ? undefined : status || undefined, archived: archived || undefined, limit: 100 },
+    6000,
+  );
   // What is still open is in "Open"; here it only shows when asked for.
-  const shown = (runs.data ?? []).filter((r) => status || (r.status !== "running" && r.status !== "queued" && r.status !== "waiting"));
+  const shown = (runs.data ?? []).filter(
+    (r) => status || (r.status !== "running" && r.status !== "queued" && r.status !== "waiting"),
+  );
   const user = useUser();
   const days = groupRunsByDay(shown, user.timezone);
   return (
@@ -134,7 +140,7 @@ function RunsPanel() {
             compact
             className="w-auto"
             value={status}
-            onChange={(e) => setStatus(e.target.value as RunStatus | "")}
+            onChange={(e) => setStatus(e.target.value as RunStatus | "" | "archived")}
           >
             <option value="">Any status</option>
             <option value="queued">Queued</option>
@@ -143,6 +149,7 @@ function RunsPanel() {
             <option value="succeeded">Succeeded</option>
             <option value="failed">Failed</option>
             <option value="cancelled">Cancelled</option>
+            <option value="archived">Archived</option>
           </Select>
         </div>
       }
@@ -163,13 +170,13 @@ function RunsPanel() {
                 </span>
               </h3>
               {d.runs.map((r) => (
-                <RunRow key={r.id} run={r} />
+                <RunRow key={r.id} run={r} archive={archived ? "restore" : "archive"} />
               ))}
             </section>
           ))}
         </div>
       ) : (
-        <EmptyState compact icon={<Bot />} title="No runs match" />
+        <EmptyState compact icon={<Bot />} title={archived ? "Nothing archived" : "No runs match"} />
       )}
     </Panel>
   );

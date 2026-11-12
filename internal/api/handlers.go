@@ -525,6 +525,17 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request, u *store.User)
 	if st := r.URL.Query().Get("status"); st != "" {
 		f.Statuses = strings.Split(st, ",")
 	}
+	// Archived runs are off the lists, except a task's own history.
+	switch r.URL.Query().Get("archived") {
+	case "1", "only":
+		f.Archived = "only"
+	case "all":
+		f.Archived = "all"
+	default:
+		if f.TaskID != 0 {
+			f.Archived = "all"
+		}
+	}
 	var err error
 	if f.OnlyKeys, err = s.onlyKeys(r, u); err != nil {
 		writeErr(w, r, err)

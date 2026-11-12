@@ -296,6 +296,7 @@ type Run = {
   session_id: string; result: string /* final assistant text, markdown */; error: string;
   exit_code: number | null; cost_usd: number | null; num_turns: number | null; duration_ms: number | null;
   created_at: string; started_at: string | null; finished_at: string | null;
+  archived_at: string | null;   // taken off the Agents page (POST /api/runs/{id}/archive)
 };
 type RunEvent = {
   seq: number; at: string;
@@ -440,7 +441,7 @@ top = first − 1000).
 | POST | /api/runners/{id}/pair | – | `{runner: Runner, pairing: Pairing}` — a new code for an existing machine |
 | POST | /api/runners/{id}/rotate | – | `{runner: Runner, token: string}` — the token is shown once (manual setup) |
 | DELETE | /api/runners/{id} | – | `204` |
-| GET | /api/runs | query `project` (key), `task` (id), `status`, `limit` (default 50) | `{runs: Run[]}` newest first |
+| GET | /api/runs | query `project` (key), `task` (id), `status`, `limit` (default 50), `archived` (`1`: only archived runs; `all`: both) | `{runs: Run[]}` newest first. Archived runs are left out unless asked for — except with `task`, a task's history lists them all |
 | POST | /api/runs | `{runner_id, repo_id, kind, prompt?, command?, permission_mode?, model?, engine?, effort?, interactive?, worktree?, task_id?, resume_run_id?, one_turn?, fresh?}` | `201 Run` (queued). `resume_run_id` copies runner/repo from that run and requires it to have a `session_id`; `one_turn` makes an agent run finish once its session has answered (see *One-turn runs*). **One project, one agent**: an agent run for a project whose agent has a conversation open on that machine (see *Agents in tmux*; not a `one_turn` run) goes to that run as a message instead; failing that, one for a task that already has an agent (its latest agent run that is open or has a session), or with `resume_run_id`, goes to that run — reopening it on its session when it had finished. The answer is then `200 Run` with `continued: true`; `fresh: true` starts another agent anyway (an extra session). Falls back to a new run when the machine's agent cannot resume in place |
 | GET | /api/runs/{id} | – | `Run` |
 | GET | /api/runs/{id}/events | query `after` (seq, default 0), `limit` (default 500) | `{events: RunEvent[], run: Run, prompts: RunPrompt[]}` — poll every ~1.5 s while the run is active; `prompts` is the whole list (empty unless interactive) |
@@ -451,6 +452,7 @@ top = first − 1000).
 | GET | /api/uploads/{token} | – | the image (`Content-Type` as stored); only for the account that uploaded it and owners, else `404` |
 | POST | /api/runs/{id}/end | – | `Run` — same as `finish` |
 | POST | /api/runs/{id}/finish | – | `Run` — the work is done: a `waiting` (or resume-`queued`) run becomes `succeeded` at once; a running one gets `finish_requested` (an interactive session ends after its current turn) and then finishes as `succeeded`; `422` for a run that is already over |
+| POST | /api/runs/{id}/archive | `{archived?}` (default `true`; `false` puts it back) | `Run` with `archived_at` — takes it off the Agents page (Open and History) without stopping or finishing anything. It comes back by itself when it needs the user: queued again (a reply resumes it) or a new question / permission / plan prompt. `404` for an unknown run |
 | POST | /api/runs/{id}/handoff | – | **elevation**. `{run: Run, runner_id, session}` — opens the run's session in Claude Code (Codex: `codex resume`) in a tmux session `run-<id>` on its machine, in the run's folder, with the run's skip-permissions setting where the machine allows it. A live interactive session is parked first (up to 45 s). The run then ends (`waiting` → `succeeded`) with `handoff` saying where it went. `409 terminal_disabled` / `runner_offline` / `agent_outdated`; `422` while the run is queued or a one-shot run is still working |
 
 Validation for `POST /api/runs`: the runner must exist; `kind = agent` needs a

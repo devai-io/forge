@@ -402,6 +402,8 @@ export type Run = {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  /** Taken off the Agents page (POST /runs/{id}/archive); it comes back when it needs you. */
+  archived_at?: string | null;
   inbox_after: number;
   resumes: number; // times a parked session was picked back up in this run
   finish_requested: boolean; // Finish pressed while the session was live
@@ -782,6 +784,8 @@ export type RunFilters = {
   task?: number;
   status?: RunStatus;
   limit?: number;
+  /** true: only archived runs (left out otherwise). */
+  archived?: boolean;
 };
 
 // ── Terminal (tmux sessions via runners) ────────────────────────────────────

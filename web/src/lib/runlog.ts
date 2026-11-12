@@ -285,3 +285,92 @@ export function withoutEchoedResult(items: DisplayItem[], result: string): Displ
 }
 
 export const toolCallCount = (items: DisplayItem[]) => items.filter((i) => i.kind === "tool").length;
+
+// ── Activity: the tool calls between what Claude says ─────────────────────
+
+export type ActivityItem = Extract<DisplayItem, { kind: "tool" | "thinking" | "note" }>;
+export type LogBlock = Exclude<DisplayItem, ActivityItem> | ActivityItem | { kind: "activity"; key: string; items: ActivityItem[] };
+
+const isActivity = (i: DisplayItem): i is ActivityItem => i.kind === "tool" || i.kind === "thinking" || i.kind === "note";
+
+/**
+ * Folds each stretch of tool calls (with the thinking and notes among them)
+ * into one block, so a transcript reads as what Claude said, with "Bash ×4 ·
+ * Read ×2" between. A stretch without a tool call stays as it is.
+ */
+export function groupActivity(items: DisplayItem[]): LogBlock[] {
+  const out: LogBlock[] = [];
+  let run: ActivityItem[] = [];
+  const flush = () => {
+    if (!run.length) return;
+    if (run.some((i) => i.kind === "tool")) out.push({ kind: "activity", key: `act-${run[0].key}`, items: run });
+    else out.push(...run);
+    run = [];
+  };
+  for (const item of items) {
+    if (isActivity(item)) run.push(item);
+    else {
+      flush();
+      out.push(item);
+    }
+  }
+  flush();
+  return out;
+}
+
+export type ActivitySummary = {
+  tools: number;
+  /** "Bash ×4 · Read ×2 · Edit", in the order they were first used. */
+  label: string;
+  errors: number;
+  /** A call without its result yet: Claude is working. */
+  pending: boolean;
+  /** The latest call, for "what is it doing now". */
+  last: Extract<DisplayItem, { kind: "tool" }> | null;
+};
+
+export function summarizeActivity(items: ActivityItem[]): ActivitySummary {
+  const counts = new Map<string, number>();
+  let errors = 0;
+  let pending = false;
+  let last: Extract<DisplayItem, { kind: "tool" }> | null = null;
+  for (const i of items) {
+    if (i.kind !== "tool") continue;
+    const name = toolLabel(i.name);
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+    if (i.result?.isError) errors++;
+    if (!i.result) pending = true;
+    last = i;
+  }
+  const label = [...counts].map(([n, c]) => (c > 1 ? `${n} ×${c}` : n)).join(" · ");
+  const tools = [...counts.values()].reduce((a, b) => a + b, 0);
+  return { tools, label, errors, pending, last };
+}
+
+/** A tool's name as a reader wants it: Forge's own MCP tools without the prefix. */
+export function toolLabel(name: string): string {
+  const m = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(name);
+  return m ? `${m[1]}·${m[2]}` : name;
+}
+
+/** An Edit / MultiEdit / Write call as diff lines (removed, added). */
+export function toolDiff(name: string, input: unknown): { file: string; lines: { sign: "-" | "+" | " "; text: string }[] } | null {
+  const i = (input && typeof input === "object" ? input : {}) as Record<string, any>;
+  const file = str(i.file_path ?? i.path ?? i.notebook_path);
+  const edits: { old: string; new: string }[] =
+    name === "Edit"
+      ? [{ old: str(i.old_string), new: str(i.new_string) }]
+      : name === "MultiEdit" && Array.isArray(i.edits)
+        ? i.edits.map((e: any) => ({ old: str(e?.old_string), new: str(e?.new_string) }))
+        : name === "Write"
+          ? [{ old: "", new: str(i.content) }]
+          : [];
+  if (!edits.length) return null;
+  const lines: { sign: "-" | "+" | " "; text: string }[] = [];
+  edits.forEach((e, n) => {
+    if (n > 0) lines.push({ sign: " ", text: "⋯" });
+    if (e.old) for (const l of e.old.split("\n")) lines.push({ sign: "-", text: l });
+    if (e.new) for (const l of e.new.split("\n")) lines.push({ sign: "+", text: l });
+  });
+  return { file, lines };
+}

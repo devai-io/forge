@@ -824,6 +824,7 @@ export function useRuns(filters: RunFilters, refetchInterval: number | false = 8
           task: filters.task,
           status: filters.status,
           limit: filters.limit,
+          archived: filters.archived,
         })
         .then((r) => r.runs),
     placeholderData: keepPreviousData,
@@ -930,6 +931,25 @@ export function useFinishRun() {
     onSuccess: (run) => {
       qc.setQueryData(keys.run(run.id), run);
       void qc.invalidateQueries({ queryKey: keys.runEvents(run.id) });
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+      void qc.invalidateQueries({ queryKey: keys.dashboard });
+    },
+  });
+}
+
+/** Takes a run off the Agents page (or, with archived: false, puts it back). Nothing about the run stops. */
+export function useArchiveRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, archived = true }: { id: number; archived?: boolean }) =>
+      api.post<Run>(`/runs/${id}/archive`, { archived }),
+    onMutate: async ({ id, archived = true }) => {
+      // Gone from the list at once; the refetch confirms.
+      await qc.cancelQueries({ queryKey: ["runs"] });
+      qc.setQueriesData<Run[]>({ queryKey: ["runs"] }, (list) => (list && archived ? list.filter((r) => r.id !== id) : list));
+    },
+    onSettled: (run) => {
+      if (run) qc.setQueryData(keys.run(run.id), run);
       void qc.invalidateQueries({ queryKey: ["runs"] });
       void qc.invalidateQueries({ queryKey: keys.dashboard });
     },

@@ -1,9 +1,11 @@
 import clsx from "clsx";
-import { Bot, SquareTerminal } from "lucide-react";
+import { Archive, ArchiveRestore, Bot, SquareTerminal } from "lucide-react";
 import { Link } from "react-router-dom";
+import { useArchiveRun } from "@/api/hooks";
 import type { Run, RunStatus } from "@/api/types";
 import { Badge, ColorDot } from "@/components/ui/Badge";
 import { RelativeTime } from "@/components/ui/RelativeTime";
+import { useToast } from "@/components/ui/Toast";
 import { runTag, runTitle } from "@/lib/agents";
 import { formatCost, formatDuration } from "@/lib/format";
 
@@ -66,14 +68,74 @@ export function RunTagBadge({ run }: { run: Pick<Run, "kind" | "prompt"> }) {
 }
 
 /** One run as a compact, clickable row. */
-export function RunRow({ run, showProject = true }: { run: Run; showProject?: boolean }) {
+/**
+ * A run in a list. `archive` adds a button that takes it off the list
+ * ("archive", with Undo in the toast) or puts an archived one back ("restore").
+ */
+export function RunRow({ run, showProject = true, archive }: { run: Run; showProject?: boolean; archive?: "archive" | "restore" }) {
+  const row = <RunLink run={run} showProject={showProject} className={archive ? "min-w-0 flex-1" : undefined} />;
+  if (!archive) return row;
+  return (
+    <div className="group/row flex min-w-0 items-center gap-0.5">
+      {row}
+      <ArchiveRunButton run={run} mode={archive} />
+    </div>
+  );
+}
+
+function ArchiveRunButton({ run, mode }: { run: Run; mode: "archive" | "restore" }) {
+  const archive = useArchiveRun();
+  const toast = useToast();
+  const restore = mode === "restore";
+  const label = `${restore ? "Restore" : "Archive"} run #${run.id}`;
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={restore ? "Put it back on the Agents page" : "Archive: take it off this page (nothing stops; it comes back if it needs you)"}
+      disabled={archive.isPending}
+      onClick={() =>
+        archive.mutate(
+          { id: run.id, archived: !restore },
+          {
+            onSuccess: () =>
+              restore
+                ? toast.success(`Run #${run.id} is back`)
+                : toast.success(
+                    <span className="inline-flex items-center gap-2">
+                      Run #{run.id} archived
+                      <button
+                        type="button"
+                        className="font-medium text-accent hover:underline"
+                        onClick={() => archive.mutate({ id: run.id, archived: false })}
+                      >
+                        Undo
+                      </button>
+                    </span>,
+                    { duration: 6000 },
+                  ),
+            onError: (e) => toast.error(e),
+          },
+        )
+      }
+      className={clsx(
+        "grid size-8 shrink-0 place-items-center rounded-md text-fg-3 hover:bg-surface-2 hover:text-fg focus-visible:opacity-100 disabled:opacity-50",
+        !restore && "md:opacity-0 md:group-hover/row:opacity-100",
+      )}
+    >
+      {restore ? <ArchiveRestore className="size-4" aria-hidden /> : <Archive className="size-4" aria-hidden />}
+    </button>
+  );
+}
+
+function RunLink({ run, showProject, className }: { run: Run; showProject: boolean; className?: string }) {
   const duration =
     run.duration_ms ??
     (run.started_at && run.finished_at ? new Date(run.finished_at).getTime() - new Date(run.started_at).getTime() : null);
   return (
     <Link
       to={`/agents/runs/${run.id}`}
-      className="group flex min-w-0 items-center gap-2.5 rounded-md px-2 py-2 hover:bg-surface-2"
+      className={clsx("group flex min-w-0 items-center gap-2.5 rounded-md px-2 py-2 hover:bg-surface-2", className)}
     >
       <RunKindIcon kind={run.kind} />
       <div className="min-w-0 flex-1">

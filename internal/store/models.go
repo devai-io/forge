@@ -367,6 +367,7 @@ type Run struct {
 	CreatedAt       time.Time  `json:"created_at"`
 	StartedAt       *time.Time `json:"started_at"`
 	FinishedAt      *time.Time `json:"finished_at"`
+	ArchivedAt      *time.Time `json:"archived_at"` // taken off the Agents page (store.ArchiveRun)
 
 	// Only the runner needs these: where to run and which session to resume.
 	RepoPath      string `json:"repo_path,omitempty"`

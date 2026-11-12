@@ -265,7 +265,8 @@ SELECT r.id, coalesce(r.runner_id, 0), coalesce(rn.name, r.runner_name), coalesc
        CASE WHEN r.status <> 'running' THEN ''
             WHEN EXISTS (SELECT 1 FROM run_prompts pr WHERE pr.run_id = r.id AND pr.status = 'pending') THEN 'answer'
             ELSE r.awaiting END,
-       r.inbox_after, r.resumes, r.finish_requested, r.handoff, r.one_turn, r.tmux_session, r.origin, r.user_id
+       r.inbox_after, r.resumes, r.finish_requested, r.handoff, r.one_turn, r.tmux_session, r.origin, r.user_id,
+       r.archived_at
 FROM runs r
 LEFT JOIN projects p ON p.id = r.project_id
 LEFT JOIN repos rp ON rp.id = r.repo_id
@@ -282,7 +283,7 @@ func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 		&r.ExitCode, &r.CostUSD, &r.NumTurns, &r.DurationMS, &r.CreatedAt, &r.StartedAt, &r.FinishedAt,
 		&r.RepoPath, &r.ResumeSession, &r.ModelNote, &r.Engine, &r.Effort, &r.ChatTurnID, &usage, &r.AppendSystem,
 		&r.Interactive, &r.Cwd, &r.Awaiting, &r.InboxAfter, &r.Resumes, &r.FinishRequested, &r.Handoff, &r.OneTurn,
-		&r.TmuxSession, &r.Origin, &r.UserID); err != nil {
+		&r.TmuxSession, &r.Origin, &r.UserID, &r.ArchivedAt); err != nil {
 		return nil, mapErr(err)
 	}
 	r.Usage = json.RawMessage(usage)
@@ -351,6 +352,8 @@ type RunFilter struct {
 	Limit      int
 	// OnlyKeys, when non-nil, limits results to these projects (a member).
 	OnlyKeys []string
+	// Archived: "" leaves archived runs out, "only" lists just them, "all" both.
+	Archived string
 	// Assistant sessions (Claude Code turns of a chat, no repo) are left out
 	// of run lists; they show in their chat.
 }
@@ -373,6 +376,13 @@ func (s *Store) ListRuns(ctx context.Context, f RunFilter) ([]Run, error) {
 	}
 	if f.Finished {
 		where = append(where, "r.finished_at IS NOT NULL AND r.status IN ('succeeded', 'failed', 'cancelled')")
+	}
+	switch f.Archived {
+	case "only":
+		where = append(where, "r.archived_at IS NOT NULL")
+	case "all":
+	default:
+		where = append(where, "r.archived_at IS NULL")
 	}
 	q := runSelect + " WHERE " + strings.Join(where, " AND ")
 	if f.Limit <= 0 || f.Limit > 500 {
@@ -877,6 +887,23 @@ func requeueTx(ctx context.Context, tx pgxTx, runID, inboxAfter int64) error {
 // FinishRunByUser closes an open run: a waiting one at once; a live one is
 // asked to end its session after the current turn and then finishes as
 // succeeded; a queued one (a resume nobody picked up yet) at once.
+// ArchiveRun takes a run off the Agents page, or puts it back. Nothing about
+// the run itself changes: a working one keeps working.
+func (s *Store) ArchiveRun(ctx context.Context, id int64, archived bool) (*Run, error) {
+	q := `UPDATE runs SET archived_at = NULL WHERE id = $1`
+	if archived {
+		q = `UPDATE runs SET archived_at = coalesce(archived_at, now()) WHERE id = $1`
+	}
+	tag, err := s.DB.Exec(ctx, q, id)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrNotFound
+	}
+	return s.RunByID(ctx, id)
+}
+
 func (s *Store) FinishRunByUser(ctx context.Context, id int64) (*Run, error) {
 	run, err := s.RunByID(ctx, id)
 	if err != nil {

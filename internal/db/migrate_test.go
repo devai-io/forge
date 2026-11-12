@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -57,5 +58,14 @@ func TestVaultRebuildKeepsRows(t *testing.T) {
 	var orphan *int64
 	if err := d.QueryRow(ctx, `SELECT item_id FROM vault_audit LIMIT 1`).Scan(&orphan); err != nil || orphan != nil {
 		t.Fatalf("audit item_id = %v, %v", orphan, err)
+	}
+}
+
+func TestSplitStatementsKeepsTriggerBodies(t *testing.T) {
+	got := splitStatements(`ALTER TABLE a ADD COLUMN b TEXT; -- a comment; with a semicolon
+CREATE TRIGGER t AFTER UPDATE ON a BEGIN UPDATE a SET b = 'x;y'; DELETE FROM a WHERE 0; END;
+CREATE INDEX i ON a (b);`)
+	if len(got) != 3 || !strings.HasSuffix(got[1], "END") || !strings.Contains(got[1], "DELETE FROM a WHERE 0;") {
+		t.Fatalf("statements = %q", got)
 	}
 }
