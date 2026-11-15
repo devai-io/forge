@@ -80,8 +80,9 @@ func (m *fakeMachine) beat(tmux []map[string]any, out any) {
 	}
 	expect(m.t, "heartbeat", m.runner.do("POST", "/api/runner/heartbeat", map[string]any{
 		"hostname": "desk", "os": "linux/amd64", "version": "test",
-		"capabilities": map[string]any{"claude": true, "permission_modes": []string{"plan", "acceptEdits"}, "interactive": true,
-			"resume_in_place": true, "terminal_resume": true, "terminal": true, "tmux_agents": true, "max_concurrent": 2},
+		"capabilities": map[string]any{"claude": true, "codex": true, "permission_modes": []string{"plan", "acceptEdits"}, "interactive": true,
+			"resume_in_place": true, "terminal_resume": true, "terminal": true, "tmux_agents": true, "tmux_codex": true, "max_concurrent": 2,
+			"codex_models": []map[string]any{{"id": "gpt-test-sol", "name": "GPT-Test-Sol", "efforts": []string{"low", "high", "ultra"}}}},
 		"tmux": tmux,
 	}, out, m.bearer...), 200)
 }
@@ -433,5 +434,83 @@ func TestOrphanedRunComesBackWithItsMachine(t *testing.T) {
 	beat([]int64{})
 	if r := m.run(run.ID); r.Status != "failed" {
 		t.Fatalf("a run the machine lost = %+v", r)
+	}
+}
+
+// TestCodexAgentInTmux: a Codex run lives in the project's tmux session like
+// a Claude one — started as codex (no session id: Codex names its thread,
+// and its first hook says which), its turns reported by Codex's hooks, a
+// Claude session open there getting a session of its own, a hand-started
+// Codex conversation registered as a Codex run, and the engine's model list
+// coming from the machine's Codex.
+func TestCodexAgentInTmux(t *testing.T) {
+	h := setup(t)
+	h.login()
+	m := newFakeMachine(t, h)
+	const name = "F-Shop"
+
+	var eng struct {
+		Models      map[string][]string `json:"models"`
+		CodexModels []store.CodexModel  `json:"codex_models"`
+	}
+	expect(t, "engine", h.do("GET", "/api/engine", nil, &eng), 200)
+	if len(eng.Models["codex"]) != 1 || eng.Models["codex"][0] != "gpt-test-sol" || len(eng.CodexModels) != 1 || eng.CodexModels[0].Efforts[2] != "ultra" {
+		t.Fatalf("codex models = %v / %+v", eng.Models["codex"], eng.CodexModels)
+	}
+
+	var run store.Run
+	expect(t, "queue", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent", "engine": "codex",
+		"prompt": "Fix the cart", "permission_mode": "acceptEdits", "model": "gpt-test-sol", "effort": "ultra"}, &run), 201)
+	if run.TmuxSession != name || run.Engine != "codex" {
+		t.Fatalf("run = %+v", run)
+	}
+	create := m.wait("create", 1)
+	env, _ := create["env"].(map[string]any)
+	if create["start"] != "codex" || create["session_id"] != nil || create["remote_control"] != nil || create["model"] != "gpt-test-sol" ||
+		create["effort"] != "ultra" || create["permission_mode"] != "acceptEdits" || env["FORGE_RUN_ID"] != fmt.Sprint(run.ID) {
+		t.Fatalf("create = %v", create)
+	}
+	if run = m.run(run.ID); run.Status != "running" || run.SessionID != "" {
+		t.Fatalf("started = %+v", run)
+	}
+	h.api.projectSessions.started = map[string]time.Time{}
+
+	// Codex's hooks: its thread id comes with the first report.
+	const thread = "019c4dc5-e7aa-7d01-9229-b8754de4f929"
+	m.hook(map[string]any{"event": "SessionStart", "session_id": thread, "run_id": run.ID, "tmux_session": name, "source": "startup", "engine": "codex"})
+	m.hook(map[string]any{"event": "Stop", "session_id": thread, "run_id": run.ID, "tmux_session": name, "engine": "codex", "last_message": "Done."})
+	if run = m.run(run.ID); run.SessionID != thread || run.Awaiting != "reply" || run.Result != "Done." {
+		t.Fatalf("after the turn = %+v", run)
+	}
+	// Codex open in the session counts as alive; Claude alone would not.
+	if _, err := h.store.DB.Exec(context.Background(), `UPDATE runs SET started_at = ts_add(now(), -600) WHERE id = $1`, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	m.beat([]map[string]any{{"name": name, "windows": 1, "command": "node", "codex": true}}, nil)
+	if run = m.run(run.ID); run.Status != "running" {
+		t.Fatalf("Codex still open, run = %+v", run)
+	}
+	m.beat([]map[string]any{{"name": name, "windows": 1, "command": "node", "claude": true}}, nil)
+	if run = m.run(run.ID); run.Status != "waiting" {
+		t.Fatalf("Codex gone, run = %+v", run)
+	}
+	// Picked up again with codex resume <thread>.
+	expect(t, "reply", h.do("POST", fmt.Sprintf("/api/runs/%d/messages", run.ID), map[string]string{"text": "carry on"}, nil), 200)
+	if resume := m.wait("create", 2); resume["start"] != "codex" || resume["resume"] != thread || resume["prompt"] != "carry on" {
+		t.Fatalf("resume = %v", resume)
+	}
+}
+
+func TestCodexHookRegistersHandStartedSession(t *testing.T) {
+	h := setup(t)
+	h.login()
+	m := newFakeMachine(t, h)
+	const thread = "019c4dc5-e7aa-7d01-9229-b8754de4f930"
+	m.hook(map[string]any{"event": "UserPromptSubmit", "session_id": thread, "tmux_session": "work", "cwd": m.path, "prompt": "Look around",
+		"engine": "codex"})
+	var list struct{ Runs []store.Run }
+	expect(t, "runs", h.do("GET", "/api/runs?project=SHOP", nil, &list), 200)
+	if len(list.Runs) != 1 || list.Runs[0].Engine != "codex" || list.Runs[0].SessionID != thread || !strings.HasSuffix(list.Runs[0].ResumeHint, "codex resume "+thread) {
+		t.Fatalf("runs = %+v", list.Runs)
 	}
 }

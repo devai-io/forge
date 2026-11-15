@@ -15,8 +15,8 @@ import (
 	"github.com/devai-io/forge/internal/store"
 )
 
-// Project agents: each project has one agent — a Claude Code session on the
-// master machine with Remote Control on, in a tmux session named F-<Project>
+// Project agents: each project has one agent — a Claude Code (or, when asked
+// for, Codex) session on the master machine with Remote Control on, in a tmux session named F-<Project>
 // (the same name Remote Control shows), in the project's folder: its one
 // repo, or the folder all its repos share. It is started when the user asks
 // for it (POST /api/project-sessions/{key}, with a model, an effort and
@@ -80,6 +80,9 @@ type ProjectSession struct {
 	Activity      *string `json:"activity"`
 	// Extra is 0 for the project's agent and 2, 3, … for an extra one.
 	Extra int `json:"extra"`
+	// Engine is the agent in it: "claude", "codex", or "" when none is
+	// open and no conversation says.
+	Engine string `json:"engine"`
 	// The conversation open in the session, if any: its run, that run's
 	// status (queued, running, waiting), what it waits for and its request.
 	RunID     *int64 `json:"run_id"`
@@ -95,6 +98,9 @@ type projectSessionHost struct {
 	SkipPermissions bool   `json:"skip_permissions"`
 	// TmuxAgents: the machine's agent can take a first request (v0.1.44+).
 	TmuxAgents bool `json:"tmux_agents"`
+	// Codex: Codex can be the agent there (Codex installed, and an agent
+	// that hosts Codex in tmux).
+	Codex bool `json:"codex"`
 }
 
 type projectSessionsView struct {
@@ -184,6 +190,7 @@ func (s *Server) projectSessionHost(ctx context.Context, v *projectSessionsView)
 				Online: h.Online && v.cc != nil, SkipPermissions: h.SkipPermissions}
 			if rn, err := s.store.RunnerByID(ctx, h.RunnerID); err == nil {
 				v.Host.TmuxAgents = rn.Capabilities.TmuxAgents
+				v.Host.Codex = rn.Capabilities.Codex && rn.Capabilities.TmuxCodex
 			}
 			for _, ss := range h.Sessions {
 				v.tmux[ss.Name] = ss
@@ -242,6 +249,7 @@ func (s *Server) projectSessionsView(ctx context.Context) (*projectSessionsView,
 			e.State = "missing"
 		}
 		if there {
+			e.Engine = store.AgentEngineIn([]store.TmuxSession{t}, name)
 			e.Attached = t.Attached
 			if t.Activity != "" {
 				a := t.Activity
@@ -255,6 +263,9 @@ func (s *Server) projectSessionsView(ctx context.Context) (*projectSessionsView,
 			id := run.ID
 			e.RunID, e.RunStatus, e.Awaiting = &id, run.Status, run.Awaiting
 			e.RunPrompt = clipText(run.Prompt, 240)
+			if e.Engine == "" {
+				e.Engine = tmuxEngine(run.Engine)
+			}
 			if run.Status == "queued" && e.State != "offline" && e.State != "running" {
 				e.State = "starting"
 			}
@@ -400,6 +411,7 @@ var agentModel = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,79}$`)
 // left as it is — the request is typed into it.
 func (s *Server) openProjectSession(w http.ResponseWriter, r *http.Request, u *store.User) {
 	var in struct {
+		Engine          string `json:"engine"`
 		Model           string `json:"model"`
 		Effort          string `json:"effort"`
 		Prompt          string `json:"prompt"`
@@ -415,8 +427,20 @@ func (s *Server) openProjectSession(w http.ResponseWriter, r *http.Request, u *s
 		writeErr(w, r, &store.ValidationError{Field: "model", Message: "not a model name"})
 		return
 	}
-	if in.Effort != "" && !store.OneOf(in.Effort, store.ClaudeEfforts) {
-		writeErr(w, r, &store.ValidationError{Field: "effort", Message: "must be one of " + strings.Join(store.ClaudeEfforts, ", ")})
+	in.Engine = strings.ToLower(strings.TrimSpace(in.Engine))
+	if in.Engine == "" {
+		in.Engine = "claude"
+	}
+	if in.Engine != "claude" && in.Engine != "codex" {
+		writeErr(w, r, &store.ValidationError{Field: "engine", Message: "must be claude or codex"})
+		return
+	}
+	efforts := store.ClaudeEfforts
+	if in.Engine == "codex" {
+		efforts = store.CodexEfforts
+	}
+	if in.Effort != "" && !store.OneOf(in.Effort, efforts) {
+		writeErr(w, r, &store.ValidationError{Field: "effort", Message: "must be one of " + strings.Join(efforts, ", ")})
 		return
 	}
 	if len(in.Prompt) > 100000 {
@@ -439,6 +463,10 @@ func (s *Server) openProjectSession(w http.ResponseWriter, r *http.Request, u *s
 	}
 	if !v.Host.Online {
 		writeError(w, http.StatusConflict, "runner_offline", v.Host.RunnerName+" is not connected")
+		return
+	}
+	if in.Engine == "codex" && !v.Host.Codex {
+		writeError(w, http.StatusConflict, "agent_outdated", v.Host.RunnerName+" cannot run Codex agents: install Codex there, run forge update and forge agent setup-codex")
 		return
 	}
 	repos, err := s.store.AllRepos(ctx)
@@ -469,7 +497,16 @@ func (s *Server) openProjectSession(w http.ResponseWriter, r *http.Request, u *s
 	sessions := s.liveTmux(ctx, v.cc, runnerID)
 	base := projectSessionName(p.Name)
 	name := base
-	if in.Extra {
+	// The other agent open (or about to be) in the project's session: this
+	// one is an extra agent next to it.
+	otherAgent := func(n string) bool {
+		if e := store.AgentEngineIn(sessions, n); e != "" && e != in.Engine {
+			return true
+		}
+		cur, err := s.store.OpenRunInTmux(ctx, runnerID, n)
+		return err == nil && cur.Status != "waiting" && tmuxEngine(cur.Engine) != in.Engine
+	}
+	if in.Extra || otherAgent(base) {
 		projects, _ := s.store.ListProjects(ctx, store.TodayFor("UTC"), true)
 		live := claudeTaken(sessions)
 		name, err = s.store.FreeTmuxName(ctx, runnerID, 0, base, 2, func(n string) bool {
@@ -545,9 +582,9 @@ func (s *Server) openProjectSession(w http.ResponseWriter, r *http.Request, u *s
 
 	if in.Prompt == "" {
 		// Just the session: it becomes a run with its first request.
-		msg := map[string]any{"type": "create", "session": name, "cwd": dir, "start": "claude", "skip_permissions": skip,
+		msg := map[string]any{"type": "create", "session": name, "cwd": dir, "start": in.Engine, "skip_permissions": skip,
 			"model": in.Model, "effort": in.Effort, "reuse": exists, "env": map[string]string{"FORGE_PROJECT": p.Key}}
-		if as, err := s.store.AgentSettings(ctx); err != nil || as.RemoteControl {
+		if as, err := s.store.AgentSettings(ctx); in.Engine == "claude" && (err != nil || as.RemoteControl) {
 			msg["remote_control"] = name
 		}
 		_, err := v.cc.call(ctx, msg, 30*time.Second)
@@ -559,7 +596,7 @@ func (s *Server) openProjectSession(w http.ResponseWriter, r *http.Request, u *s
 			writeError(w, http.StatusBadGateway, "runner_error", err.Error())
 			return
 		}
-		slog.Info("project session started", "session", name, "dir", dir, "model", in.Model, "effort", in.Effort, "ip", s.clientIP(r))
+		slog.Info("project session started", "session", name, "dir", dir, "engine", in.Engine, "model", in.Model, "effort", in.Effort, "ip", s.clientIP(r))
 		s.sec(r, "terminal_create", name+" (project agent"+map[bool]string{true: ", skipping permissions", false: ""}[skip]+")")
 		result(nil, true)
 		return
@@ -572,11 +609,14 @@ func (s *Server) openProjectSession(w http.ResponseWriter, r *http.Request, u *s
 		writeError(w, http.StatusConflict, "agent_outdated", v.Host.RunnerName+" runs an older Forge agent that cannot take a request this way; upgrade it (forge update), or start the session without one")
 		return
 	}
-	runIn := store.RunInput{RunnerID: runnerID, RepoID: repo.ID, Kind: "agent", Prompt: in.Prompt, Engine: "claude",
+	runIn := store.RunInput{RunnerID: runnerID, RepoID: repo.ID, Kind: "agent", Prompt: in.Prompt, Engine: in.Engine,
 		Model: in.Model, Effort: in.Effort, Interactive: true, Fresh: true}
-	if skip {
+	switch {
+	case skip:
 		runIn.PermissionMode = "bypassPermissions"
-	} else {
+	case in.Engine == "codex":
+		runIn.PermissionMode = "acceptEdits" // Codex asks in the terminal for anything outside the workspace
+	default:
 		runIn.DefaultMode = true
 	}
 	if dir != filepath.Clean(repo.Path) {

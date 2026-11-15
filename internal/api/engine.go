@@ -83,6 +83,7 @@ func (s *Server) engineStatus(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	k, _ := s.providerKey(ctx)
+	codex := s.codexModels(ctx)
 	deepseek := []string{}
 	listed := []string{}
 	for _, m := range s.providerModels(ctx) {
@@ -96,7 +97,8 @@ func (s *Server) engineStatus(ctx context.Context) (map[string]any, error) {
 		}
 	}
 	return map[string]any{"settings": set, "provider_key": k != "",
-		"models":        map[string]any{"deepseek": deepseek, "claude": store.ClaudeModels, "codex": []string{}},
+		"models":        map[string]any{"deepseek": deepseek, "claude": store.ClaudeModels, "codex": codexModelIDs(codex)},
+		"codex_models":  codex,
 		"codex_efforts": store.CodexEfforts,
 		"efforts":       store.ClaudeEfforts}, nil
 }
@@ -161,4 +163,29 @@ func (s *Server) updateEngine(w http.ResponseWriter, r *http.Request, u *store.U
 	}
 	s.sec(r, "engine_settings", fmt.Sprintf("default=%s model=%s heavy=%s max_concurrent=%d", set.Default, set.Model, set.HeavyModel, set.MaxConcurrent))
 	s.getEngine(w, r, u)
+}
+
+// codexModels is what a Codex run (or agent) can pick: the list the master
+// machine's Codex keeps for its login, else another machine's, else Forge's
+// own.
+func (s *Server) codexModels(ctx context.Context) []store.CodexModel {
+	if rn, err := s.store.MasterRunner(ctx); err == nil && len(rn.Capabilities.CodexModels) > 0 {
+		return rn.Capabilities.CodexModels
+	}
+	if runners, err := s.store.ListRunners(ctx); err == nil {
+		for _, rn := range runners {
+			if len(rn.Capabilities.CodexModels) > 0 {
+				return rn.Capabilities.CodexModels
+			}
+		}
+	}
+	return store.CodexModels
+}
+
+func codexModelIDs(models []store.CodexModel) []string {
+	ids := make([]string, 0, len(models))
+	for _, m := range models {
+		ids = append(ids, m.ID)
+	}
+	return ids
 }

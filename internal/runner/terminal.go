@@ -264,7 +264,9 @@ type controlMsg struct {
 	RemoteControl string `json:"remote_control"`
 	// An agent run in tmux (api/tmux_agents.go): SessionID starts a new
 	// Claude Code session under that id (--session-id); PermissionMode,
-	// Model, Effort and Worktree are claude's flags; Env is exported for the
+	// Model, Effort and Worktree are claude's flags (Codex: its sandbox and
+	// approval policy, --model and model_reasoning_effort; no session id or
+	// worktree); Env is exported for the
 	// session (FORGE_RUN_ID, which its hooks report). Reuse types the command
 	// into the session when it already exists (its Claude has exited).
 	SessionID      string            `json:"session_id"`
@@ -399,7 +401,7 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''
 func (r *Runner) createSession(ctx context.Context, m controlMsg) error {
 	exists := false
 	if _, err := r.tmux(ctx, "has-session", "-t", "="+m.Session); err == nil {
-		if !m.Reuse || m.Start != "claude" {
+		if !m.Reuse || (m.Start != "claude" && m.Start != "codex") {
 			return nil // exists: attaching to it is what the caller wants
 		}
 		exists = true // an agent's session whose Claude exited: start it again in there
@@ -446,21 +448,11 @@ func (r *Runner) createSession(ctx context.Context, m controlMsg) error {
 	}
 	var line string
 	if m.Start == "codex" {
-		line = r.cfg.CodexPath
-		if m.Resume != "" {
-			line += " resume " + m.Resume
-		}
-		if m.SkipPermissions {
-			line += " --dangerously-bypass-approvals-and-sandbox"
-		}
-		if strings.TrimSpace(m.Prompt) != "" && m.Resume == "" {
-			line += " " + shellQuote(m.Prompt)
-		}
-	} else {
-		var err error
-		if line, err = r.claudeLine(m, dir); err != nil {
+		if line, err = r.codexLine(m); err != nil {
 			return err
 		}
+	} else if line, err = r.claudeLine(m, dir); err != nil {
+		return err
 	}
 	if exists {
 		line = "cd " + shellQuote(dir) + " && " + line
@@ -474,7 +466,36 @@ func (r *Runner) createSession(ctx context.Context, m controlMsg) error {
 		// questions the way its headless runs never have to.
 		go r.answerStartup(context.WithoutCancel(ctx), m.Session, m.PermissionMode == "bypassPermissions" || m.SkipPermissions)
 	}
+	if m.Start == "codex" && len(m.Env) > 0 {
+		go r.answerCodexTrust(context.WithoutCancel(ctx), m.Session)
+	}
 	return nil
+}
+
+// codexTrust is Codex's first-run question for a folder it has not seen:
+// the session cannot go on until it is answered. The folder is inside this
+// machine's allowed_roots, where headless Codex runs work without asking.
+const (
+	codexTrustQuestion = "Trust this folder?"
+	codexTrustOption   = "Trust and continue"
+)
+
+// answerCodexTrust watches a just-started Codex agent session for 20 seconds
+// and, when Codex asks whether to trust the folder, takes its first option
+// ("Trust and continue").
+func (r *Runner) answerCodexTrust(ctx context.Context, session string) {
+	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
+		pane, err := r.capture(ctx, controlMsg{Session: session, Lines: 40})
+		if err != nil {
+			return
+		}
+		if strings.Contains(pane, codexTrustQuestion) && strings.Contains(pane, codexTrustOption) {
+			if _, err := r.tmux(ctx, "send-keys", "-t", target(controlMsg{Session: session}), "Enter"); err == nil {
+				slog.Info("answered Codex's folder trust question", "session", session)
+			}
+			return
+		}
+	}
 }
 
 // startupPrompts are the questions interactive Claude Code may ask before it
@@ -623,6 +644,80 @@ func (r *Runner) claudeLine(m controlMsg, dir string) (string, error) {
 			prompt = "Your request is in " + path + " — read it and do what it says."
 		}
 		b.WriteString(" -- " + shellQuote(prompt)) // "--": --add-dir takes several values
+	}
+	return b.String(), nil
+}
+
+// codexEfforts are the reasoning efforts `codex -c model_reasoning_effort=` takes.
+var codexEfforts = []string{"minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+
+// codexLine is the command that starts (or resumes) Codex in a tmux
+// session: Forge's variables, the thread to resume, the permission mode as
+// Codex's sandbox and approval policy, the model and reasoning effort, then
+// the prompt. A Codex thread id cannot be chosen up front, so a new run
+// learns it from the session's first hook report.
+func (r *Runner) codexLine(m controlMsg) (string, error) {
+	var b strings.Builder
+	keys := make([]string, 0, len(m.Env))
+	for k := range m.Env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if !envName.MatchString(k) {
+			return "", fmt.Errorf("invalid variable %q", k)
+		}
+		b.WriteString(k + "=" + shellQuote(m.Env[k]) + " ")
+	}
+	b.WriteString(r.cfg.CodexPath)
+	if m.Resume != "" {
+		b.WriteString(" resume")
+	}
+	switch {
+	case m.PermissionMode != "":
+		if !contains(r.cfg.PermissionModes, m.PermissionMode) {
+			return "", fmt.Errorf("permission mode %q is not enabled on this runner", m.PermissionMode)
+		}
+		switch m.PermissionMode {
+		case "plan":
+			b.WriteString(" --sandbox read-only --ask-for-approval never") // no approval may widen a read-only run
+		case "acceptEdits":
+			b.WriteString(" --sandbox workspace-write --ask-for-approval on-request")
+		case "bypassPermissions":
+			b.WriteString(" --dangerously-bypass-approvals-and-sandbox")
+		default:
+			return "", fmt.Errorf("Codex does not support permission mode %q", m.PermissionMode)
+		}
+	case m.SkipPermissions:
+		b.WriteString(" --dangerously-bypass-approvals-and-sandbox")
+	}
+	if m.Model != "" {
+		if !modelName.MatchString(m.Model) {
+			return "", errors.New("invalid model")
+		}
+		b.WriteString(" --model " + shellQuote(m.Model))
+	}
+	if m.Effort != "" {
+		if !contains(codexEfforts, m.Effort) {
+			return "", errors.New("invalid effort")
+		}
+		b.WriteString(" -c " + shellQuote("model_reasoning_effort=\""+m.Effort+"\""))
+	}
+	if m.Resume != "" {
+		b.WriteString(" " + m.Resume) // checked against resumeID by the caller
+	}
+	if prompt := strings.TrimSpace(m.Prompt); prompt != "" {
+		if len(prompt) > maxInlinePrompt {
+			path, err := writePromptFile(m.Session, prompt)
+			if err != nil {
+				return "", err
+			}
+			prompt = "Your request is in " + path + " — read it and do what it says."
+		}
+		if strings.HasPrefix(prompt, "-") {
+			prompt = " " + prompt // a prompt, never an option
+		}
+		b.WriteString(" " + shellQuote(prompt))
 	}
 	return b.String(), nil
 }

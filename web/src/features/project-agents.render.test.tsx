@@ -98,7 +98,7 @@ describe("project agents", () => {
     await user.type(within(dialog).getByLabelText(/First request/), "Fix the cart");
     await user.click(within(dialog).getByRole("button", { name: "Start with this request" }));
     await waitFor(() => expect(posted).toHaveLength(1));
-    expect(posted[0]).toEqual({ path: "/project-sessions/SHOP", body: { prompt: "Fix the cart", model: "opus", effort: "high", skip_permissions: true } });
+    expect(posted[0]).toEqual({ path: "/project-sessions/SHOP", body: { engine: "claude", prompt: "Fix the cart", model: "opus", effort: "high", skip_permissions: true } });
     await waitFor(() => expect(screen.getByLabelText("location")).toHaveTextContent("/agents/runs/12"));
     // What it was started with is where the next one starts.
     expect(window.localStorage.getItem("forge.agent.model")).toBe("opus");
@@ -162,7 +162,7 @@ describe("project agents", () => {
     expect(within(dialog).getByLabelText("Model")).toBeEnabled();
     await user.click(within(dialog).getByRole("button", { name: "Start an extra session" }));
     await waitFor(() => expect(posted).toHaveLength(2));
-    expect(posted[1]).toEqual({ extra: true, skip_permissions: true });
+    expect(posted[1]).toEqual({ engine: "claude", extra: true, skip_permissions: true });
     await waitFor(() => expect(screen.getByLabelText("location")).toHaveTextContent("/terminal/3/F-Shop-3"));
   });
 });

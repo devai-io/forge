@@ -318,3 +318,50 @@ func TestIsCodexPane(t *testing.T) {
 		t.Fatal("procTreeRuns does not see the child")
 	}
 }
+
+func TestCodexLine(t *testing.T) {
+	r := &Runner{cfg: &Config{CodexPath: "codex", PermissionModes: []string{"plan", "acceptEdits"}}}
+	line, err := r.codexLine(controlMsg{Session: "F-Shop", Env: map[string]string{"FORGE_RUN_ID": "7"}, PermissionMode: "acceptEdits",
+		Model: "gpt-test-sol", Effort: "ultra", Prompt: "Fix it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `FORGE_RUN_ID='7' codex --sandbox workspace-write --ask-for-approval on-request --model 'gpt-test-sol' -c 'model_reasoning_effort="ultra"' 'Fix it'`
+	if line != want {
+		t.Fatalf("line =\n%s\nwant\n%s", line, want)
+	}
+	line, err = r.codexLine(controlMsg{Resume: "019c4dc5-e7aa-7d01-9229-b8754de4f929", PermissionMode: "plan", Prompt: "-carry on"})
+	if err != nil || line != `codex resume --sandbox read-only --ask-for-approval never 019c4dc5-e7aa-7d01-9229-b8754de4f929 ' -carry on'` {
+		t.Fatalf("resume line = %q, %v", line, err)
+	}
+	if _, err := r.codexLine(controlMsg{PermissionMode: "bypassPermissions"}); err == nil {
+		t.Fatal("a mode the machine does not allow")
+	}
+	if _, err := r.codexLine(controlMsg{Effort: "extreme"}); err == nil {
+		t.Fatal("an unknown effort")
+	}
+}
+
+func TestCodexModelsFromCache(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	if codexModels() != nil {
+		t.Fatal("no cache, no models")
+	}
+	cache := `{"models":[{"slug":"b-model","display_name":"B","priority":2,"visibility":"list","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]},
+		{"slug":"hidden","priority":0,"visibility":"hide"},{"slug":"a-model","display_name":"A","priority":1,"visibility":"list"}]}`
+	if err := os.WriteFile(filepath.Join(home, "models_cache.json"), []byte(cache), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := codexModels()
+	if len(got) != 2 || got[0].ID != "a-model" || got[1].ID != "b-model" || len(got[1].Efforts) != 2 || got[1].Efforts[1] != "high" {
+		t.Fatalf("models = %+v", got)
+	}
+}
+
+func TestSandboxSettingsAreJSON(t *testing.T) {
+	var v map[string]any
+	if err := json.Unmarshal([]byte(sandboxSettings), &v); err != nil {
+		t.Fatal(err)
+	}
+}

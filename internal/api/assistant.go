@@ -507,7 +507,7 @@ func (s *Server) sendBotMessage(w http.ResponseWriter, r *http.Request, u *store
 }
 
 func (s *Server) codexStatus(ctx context.Context) map[string]any {
-	st := map[string]any{"available": false, "machine": "", "online": nil, "reason": "no master machine", "models": []string{}, "efforts": store.CodexEfforts, "skip_permissions": false}
+	st := map[string]any{"available": false, "machine": "", "online": nil, "reason": "no master machine", "models": codexModelIDs(s.codexModels(ctx)), "efforts": store.CodexEfforts, "skip_permissions": false}
 	if rn, err := s.store.MasterRunner(ctx); err == nil {
 		st["machine"], st["online"] = rn.Name, rn.Online
 		st["reason"] = rn.Name + " has no Codex; install Codex and run forge agent setup-codex"

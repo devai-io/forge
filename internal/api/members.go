@@ -460,8 +460,13 @@ func (s *Server) askMemberAgent(w http.ResponseWriter, r *http.Request, u *store
 		writeErr(w, r, err)
 		return
 	}
+	mode, sandbox := agent.RunMode()
+	engine := agent.Engine
+	if engine == "" {
+		engine = "claude"
+	}
 	run, err := s.store.CreateRun(ctx, store.RunInput{RunnerID: agent.RunnerID, RepoID: repoID, Kind: "agent", Prompt: in.Prompt,
-		Engine: "claude", Model: agent.Model, Effort: agent.Effort, PermissionMode: agent.PermissionMode,
+		Engine: engine, Model: agent.Model, Effort: agent.Effort, PermissionMode: mode, Sandbox: sandbox,
 		Interactive: rn.LastSeenAt == nil || rn.Capabilities.Interactive, UserID: &u.ID, TaskID: in.TaskID})
 	if err != nil {
 		writeErr(w, r, err)

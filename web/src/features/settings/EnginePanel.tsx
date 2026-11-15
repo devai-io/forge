@@ -163,10 +163,10 @@ function AgentsInTmux() {
           checked={settings.data.tmux}
           disabled={update.isPending}
           onChange={(tmux) => update.mutate({ tmux }, { onError: (e) => toast.error(e) })}
-          label="Run Claude Code agents in tmux sessions"
+          label="Run Claude Code and Codex agents in tmux sessions"
         />
         <p className="text-[12px] text-fg-3">
-          Each project has one agent: a Claude Code session in the tmux session <span className="font-mono">F-Project</span> on its machine —
+          Each project has one agent: a Claude Code (or Codex) session in the tmux session <span className="font-mono">F-Project</span> on its machine —
           the same session in Forge, in <span className="font-mono">tmux attach</span> and in the Terminal page. Forge types your requests
           into it; a conversation you start by hand in tmux becomes a run with its first request. Needs agents on v0.1.44 or later; others
           keep running headless.

@@ -57,7 +57,7 @@ export type AdminUserPatch = {
   email?: string;
   role?: "owner" | "member";
   projects?: string[];
-  agent?: { machine: string; model?: string; effort?: string; permission_mode?: string } | null;
+  agent?: { machine: string; engine?: "claude" | "codex"; model?: string; effort?: string; permission_mode?: string } | null;
 };
 
 /** GET /api/setup (no auth): true until the server has its one account. */
@@ -341,7 +341,11 @@ export type RunnerCapabilities = {
   interactive?: boolean; // can keep a session open for questions and follow-ups (older agents: absent)
   approvals?: boolean; // also relays tool permissions and plan approvals ("approvals" in agent.json)
   tmux_agents?: boolean; // can host agent runs in tmux sessions (agents from v0.1.44)
+  tmux_codex?: boolean; // can host Codex agent runs in tmux as well (newer agents)
+  codex_models?: CodexModel[]; // what the machine's Codex lists for its login
 };
+/** A model the machine's Codex offers (`codex --model <id>`). */
+export type CodexModel = { id: string; name: string; description?: string; efforts?: string[]; default_effort?: string };
 export type Runner = {
   id: number;
   name: string;
@@ -750,9 +754,10 @@ export type MemberAgent = {
   runner_id: number;
   runner_name: string;
   online: boolean;
-  model: string; // "" = Claude Code's default
+  engine?: "claude" | "codex"; // absent: Claude Code (older servers)
+  model: string; // "" = the engine's default
   effort: string; // "" = its default
-  permission_mode: string;
+  permission_mode: string; // plan | acceptEdits | auto | dontAsk | project (anything inside its project, sandboxed)
 };
 export type MemberAgentView = {
   agent: MemberAgent | null; // null: this account has none (the owner, or a member without one)
@@ -858,15 +863,23 @@ export type ProjectSession = {
   run_status: "" | "queued" | "running" | "waiting";
   awaiting: "" | "answer" | "reply";
   run_prompt: string;
+  engine?: "" | "claude" | "codex"; // the agent in it ("" none open, no conversation)
 };
 export type ProjectSessionsSettings = { skip_permissions: boolean };
 export type ProjectSessions = {
   settings: ProjectSessionsSettings;
-  host: { runner_id: number; runner_name: string; online: boolean; skip_permissions: boolean; tmux_agents: boolean } | null;
+  host: {
+    runner_id: number;
+    runner_name: string;
+    online: boolean;
+    skip_permissions: boolean;
+    tmux_agents: boolean;
+    codex?: boolean; // Codex can be the agent there
+  } | null;
   sessions: ProjectSession[];
 };
 /** POST /api/project-sessions/{key}: open the project's agent (or an extra one), with a request or without. */
-export type OpenProjectSessionInput = { model?: string; effort?: string; prompt?: string; extra?: boolean; skip_permissions?: boolean };
+export type OpenProjectSessionInput = { engine?: "claude" | "codex"; model?: string; effort?: string; prompt?: string; extra?: boolean; skip_permissions?: boolean };
 export type OpenProjectSessionResult = { session: string; runner_id: number; run: Run | null; started: boolean };
 
 // What a new terminal session runs: Claude Code, Codex (both with the Forge context) or a plain shell.
@@ -1043,6 +1056,7 @@ export type EngineStatus = {
   settings: EngineSettings;
   provider_key: boolean; // DeepSeek runs need it; without it they fall back to Claude
   models: Partial<Record<Engine, string[]>>; // what the run form offers per engine
+  codex_models?: CodexModel[]; // models.codex with names, descriptions and supported efforts
   codex_efforts?: string[];
   efforts: string[]; // claude --effort values
 };

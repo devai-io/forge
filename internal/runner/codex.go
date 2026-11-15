@@ -47,10 +47,23 @@ func SetupCodex(configPath string, out io.Writer) error {
 	if err := addHook(path, "UserPromptSubmit", match, "match --hook"); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Added the SessionStart (context) and UserPromptSubmit (task matching) hooks to %s.\n", path)
-	fmt.Fprintln(out, "Codex runs a new hook only once it is trusted: open codex, type /hooks and trust the two Forge hooks. Run codex login to use your ChatGPT plan, then restart the Forge agent to refresh its capabilities.")
+	// The session reports: a Codex session in tmux and its Forge run are one
+	// thing, as for Claude Code (RunHook).
+	report := shellJoin(append([]string{exe}, agentArgs(cfg.configPath, "hook", "--report", "--codex")...))
+	for _, event := range codexReportEvents {
+		if err := addHook(path, event, report, "hook --report"); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(out, "Added the SessionStart (context), UserPromptSubmit (task matching) and session-report hooks to %s.\n", path)
+	fmt.Fprintln(out, "Codex runs a new hook only once it is trusted: open codex, type /hooks and trust the Forge hooks. Run codex login to use your ChatGPT plan, then restart the Forge agent to refresh its capabilities.")
 	return nil
 }
+
+// codexReportEvents are the Codex hook events `forge agent hook --report
+// --codex` handles (Codex has no Notification or SessionEnd hook: a session
+// that exits is seen in the machine's tmux report).
+var codexReportEvents = []string{"SessionStart", "UserPromptSubmit", "Stop"}
 
 // codexPolicy deliberately has no approximation for Claude's auto/dontAsk modes.
 func codexPolicy(mode string, approvals bool) (string, string, error) {
@@ -75,7 +88,9 @@ func (r *Runner) runCodex(ctx context.Context, run claimedRun, dir string, ship 
 	if !contains(r.cfg.PermissionModes, run.PermissionMode) {
 		return finishReport{Status: "failed", Error: "refused: permission mode is not enabled on this runner"}
 	}
-	sandbox, policy, err := codexPolicy(run.PermissionMode, run.Interactive && r.cfg.Approvals && run.Assistant == nil)
+	// A sandboxed run asks nothing: it works inside the workspace, and
+	// anything beyond it fails instead of waiting for an approval.
+	sandbox, policy, err := codexPolicy(run.PermissionMode, run.Interactive && r.cfg.Approvals && run.Assistant == nil && !run.Sandbox)
 	if err != nil {
 		return finishReport{Status: "failed", Error: err.Error()}
 	}
@@ -121,6 +136,9 @@ func (r *Runner) runCodex(ctx context.Context, run claimedRun, dir string, ship 
 		args = append(args, "-c", v)
 	}
 	cmd := exec.Command(r.cfg.CodexPath, args...)
+	// FORGE_HEADLESS: Codex's session-report hooks (setup-codex) leave this
+	// run to its own process, which reports it.
+	cmd.Env = append(os.Environ(), "FORGE_HEADLESS=1")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return finishReport{Status: "failed", Error: err.Error()}

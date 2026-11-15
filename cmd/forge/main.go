@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -57,9 +58,10 @@ Server (workspace: FORGE_HOME, default ~/.config/forge):
   forge grant <username> <KEY>           give a member another project
   forge revoke <username> <KEY>          take a project away from a member
   forge member-machine <machine> on|off  let members run agents on a machine (off by default)
-  forge member-agent <username> <machine> [model] [effort] [mode]
-                                         give a member one agent: that machine only, that model and effort
-                                         (mode: acceptEdits by default, never bypassPermissions)
+  forge member-agent <username> <machine> [claude|codex] [model] [effort] [mode]
+                                         give a member one agent: that machine only, that engine, model and effort
+                                         (mode: acceptEdits by default, never bypassPermissions; "project" =
+                                         anything inside its project without asking, sandboxed there)
   forge member-agent <username> off      take it away (forge member-agent <username> shows it)
   forge reset-password <username>        set a new random password
   forge disable-2fa <username>           turn two-factor off (the next password sign-in sets it up again)
@@ -187,7 +189,7 @@ func runAgent(args []string) error {
 		return nil
 	case "hook":
 		if err == nil { // Claude Code's session hooks: report, never fail
-			runner.RunHook(cfg, os.Stdin)
+			runner.RunHook(cfg, os.Stdin, slices.Contains(fs.Args()[1:], "--codex"))
 		}
 		return nil
 	case "secrets":
@@ -340,15 +342,15 @@ func runServer(args []string) error {
 		fmt.Printf("member runs on %s: %s\n", args[1], args[2])
 		return nil
 	case "member-agent":
-		if len(args) < 2 || len(args) > 6 {
-			return errors.New("usage: forge member-agent <username> <machine> [model] [effort] [mode] | forge member-agent <username> off")
+		if len(args) < 2 || len(args) > 7 {
+			return errors.New("usage: forge member-agent <username> <machine> [claude|codex] [model] [effort] [mode] | forge member-agent <username> off")
 		}
 		u, err := st.UserByLogin(ctx, args[1])
 		if err != nil {
 			return fmt.Errorf("user %q: %w", args[1], err)
 		}
 		show := func(a *store.MemberAgent) {
-			fmt.Printf("%s's agent: on %s only · model %s · effort %s · %s\n", u.Username, a.RunnerName,
+			fmt.Printf("%s's agent: %s on %s only · model %s · effort %s · %s\n", u.Username, a.Engine, a.RunnerName,
 				orDefault(a.Model), orDefault(a.Effort), a.PermissionMode)
 		}
 		switch {
@@ -365,8 +367,12 @@ func runServer(args []string) error {
 			}
 			fmt.Printf("%s has no agent now\n", u.Username)
 		default:
-			opt := append(args[3:], "", "", "")
-			a, err := st.SetMemberAgent(ctx, u.ID, args[2], opt[0], opt[1], opt[2])
+			rest, engine := args[3:], "claude"
+			if len(rest) > 0 && (rest[0] == "claude" || rest[0] == "codex") {
+				engine, rest = rest[0], rest[1:]
+			}
+			opt := append(append([]string{}, rest...), "", "", "")
+			a, err := st.SetMemberAgent(ctx, u.ID, args[2], engine, opt[0], opt[1], opt[2])
 			if err != nil {
 				return err
 			}

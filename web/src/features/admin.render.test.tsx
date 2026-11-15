@@ -106,7 +106,7 @@ describe("admin", () => {
     expect(within(dialog).queryByRole("option", { name: "bypassPermissions" })).toBeNull();
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
     await waitFor(() =>
-      expect(patched).toEqual([{ projects: ["SHOP", "GAME"], agent: { machine: "desk", model: "opus", effort: "high", permission_mode: "acceptEdits" } }]),
+      expect(patched).toEqual([{ projects: ["SHOP", "GAME"], agent: { machine: "desk", engine: "claude", model: "opus", effort: "high", permission_mode: "acceptEdits" } }]),
     );
     expect(await within(gus).findByText(/Agent: Claude Code · opus · High effort · on desk · acceptEdits/)).toBeInTheDocument();
     // The machines panel says whose agent lives where.

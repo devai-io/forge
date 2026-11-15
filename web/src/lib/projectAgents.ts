@@ -95,8 +95,28 @@ function store(key: string, value: string) {
   }
 }
 
-export const readAgentPrefs = () => ({ model: read(MODEL_KEY), effort: read(EFFORT_KEY) });
-export function storeAgentPrefs(model: string, effort: string) {
-  store(MODEL_KEY, model);
-  store(EFFORT_KEY, effort);
+const ENGINE_KEY = "forge.agent.engine";
+
+export type AgentEngine = "claude" | "codex";
+
+/** Model and effort are remembered per engine (Claude's under the original keys). */
+const keys = (engine: AgentEngine) =>
+  engine === "codex" ? [`${MODEL_KEY}.codex`, `${EFFORT_KEY}.codex`] : [MODEL_KEY, EFFORT_KEY];
+
+/** The engine last started ("" = none yet: the server's default engine decides). */
+export const readAgentEngine = (): AgentEngine | "" => {
+  const e = read(ENGINE_KEY);
+  return e === "claude" || e === "codex" ? e : "";
+};
+
+export function readAgentPrefs(engine: AgentEngine = "claude") {
+  const [m, e] = keys(engine);
+  return { model: read(m!), effort: read(e!) };
+}
+
+export function storeAgentPrefs(model: string, effort: string, engine: AgentEngine = "claude") {
+  const [m, e] = keys(engine);
+  store(ENGINE_KEY, engine);
+  store(m!, model);
+  store(e!, effort);
 }

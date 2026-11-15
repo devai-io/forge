@@ -560,7 +560,11 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request, u *store.User
 		// A member with an agent of its own runs everything as that agent:
 		// its machine, model, effort and permission mode, whatever was asked.
 		if a, err := s.store.MemberAgent(r.Context(), u.ID); err == nil && in.Kind == "agent" {
-			in.Engine, in.Model, in.Effort, in.PermissionMode, in.Worktree = "claude", a.Model, a.Effort, a.PermissionMode, false
+			mode, sandbox := a.RunMode()
+			in.Engine, in.Model, in.Effort, in.PermissionMode, in.Worktree, in.Sandbox = a.Engine, a.Model, a.Effort, mode, false, sandbox
+			if in.Engine == "" {
+				in.Engine = "claude"
+			}
 			if in.ResumeRunID == nil {
 				in.RunnerID = a.RunnerID
 			}

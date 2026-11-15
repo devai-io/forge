@@ -1,9 +1,9 @@
 // Queue an agent (Claude Code) or a named command on a runner.
 //
-// An agent run uses the server's default engine (normally DeepSeek) unless
-// Claude is picked here explicitly; a continued run keeps its engine. Model
-// and effort come from what the server offers for that engine (or a model id
-// typed in by hand).
+// An agent run uses the server's default engine (Settings → Engine) unless
+// another is picked here; a continued run keeps its engine. Model and effort
+// come from what the server offers for that engine — for Codex, the list the
+// machine's Codex keeps for its login — or a model id typed in by hand.
 //
 // The runner decides what it will accept: permission modes and commands come
 // from its advertised capabilities, so this form can only offer what the
@@ -79,7 +79,14 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   const runEngine: Engine = resume ? resume.engine || "claude" : engine || defaultEngine;
   const models = [...(engineStatus.data?.models?.[runEngine] ?? [])];
   if (model && !customModel && !models.includes(model)) models.unshift(model);
-  const efforts = (runEngine === "codex" ? engineStatus.data?.codex_efforts : engineStatus.data?.efforts) ?? [];
+  // Codex: the machine's own model list, by name, and the efforts the picked model supports.
+  const codexModels = runEngine === "codex" ? (engineStatus.data?.codex_models ?? []) : [];
+  const modelName = (id: string) => {
+    const m = codexModels.find((x) => x.id === id);
+    return m?.name && m.name !== id ? `${m.name} (${id})` : id;
+  };
+  const pickedEfforts = codexModels.find((x) => x.id === model)?.efforts;
+  const efforts = (runEngine === "codex" ? (pickedEfforts?.length ? pickedEfforts : engineStatus.data?.codex_efforts) : engineStatus.data?.efforts) ?? [];
   const [confirmText, setConfirmText] = useState("");
   const [taskId, setTaskId] = useState<string>(
     resume?.task_id ? String(resume.task_id) : prefill.task_id ? String(prefill.task_id) : "",
@@ -110,8 +117,15 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   const commands = commandOptions(runnerList, repoName, runner?.id);
   // One project, one agent: the conversation open in the project's session on this machine gets the request.
   const projectAgent =
-    !resume && kind === "agent" && runEngine === "claude" && runner && projectSessions.data?.host?.runner_id === runner.id
-      ? (projectSessions.data.sessions.find((x) => x.project_key === effectiveProjectKey && x.extra === 0 && x.run_id !== null && x.run_status !== "waiting") ?? null)
+    !resume && kind === "agent" && (runEngine === "claude" || runEngine === "codex") && runner && projectSessions.data?.host?.runner_id === runner.id
+      ? (projectSessions.data.sessions.find(
+          (x) =>
+            x.project_key === effectiveProjectKey &&
+            x.extra === 0 &&
+            x.run_id !== null &&
+            x.run_status !== "waiting" &&
+            (x.engine || "claude") === runEngine,
+        ) ?? null)
       : null;
   const hasAgent = !!projectAgent || !!taskAgent;
   // Default: no permission prompts where the machine allows it, else what
@@ -372,7 +386,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                       <option value="">Default</option>
                       {models.map((m) => (
                         <option key={m} value={m}>
-                          {m}
+                          {modelName(m)}
                         </option>
                       ))}
                       <option value={CUSTOM_MODEL}>Other…</option>

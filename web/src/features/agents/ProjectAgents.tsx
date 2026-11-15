@@ -1,7 +1,8 @@
 // The project buttons at the top of Agents: one small square per active
-// project. A project has one agent — a Claude Code session in the tmux
-// session F-<Project> on the master, Remote Control on — and its button says
-// what that agent is doing. Clicking it asks for a model, an effort and,
+// project. A project has one agent — a Claude Code (or Codex) session in the
+// tmux session F-<Project> on the master, Remote Control on for Claude — and
+// its button says what that agent is doing. Clicking it asks for an engine,
+// a model, an effort and,
 // if you like, a request; the session opens if it is not open yet, and the
 // request is typed into it. An extra session for the same project is one
 // switch away.
@@ -17,7 +18,7 @@ import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { Field, Select, Switch, Textarea } from "@/components/ui/Input";
 import { useToast } from "@/components/ui/Toast";
-import { EFFORT_LABEL } from "@/lib/agents";
+import { EFFORT_LABEL, ENGINE_LABEL } from "@/lib/agents";
 import { useUser } from "@/lib/auth";
 import { shortHome } from "@/lib/paths";
 import {
@@ -27,9 +28,11 @@ import {
   isOpen,
   openCount,
   promptTitle,
+  readAgentEngine,
   readAgentPrefs,
   sessionStatus,
   storeAgentPrefs,
+  type AgentEngine,
   type AgentGroup,
   type AgentTone,
 } from "@/lib/projectAgents";
@@ -163,21 +166,44 @@ function ProjectAgentDialog({ group, view, onClose }: { group: AgentGroup; view:
   const primaryOpen = isOpen(group.primary);
   const sessions = [group.primary, ...group.extras].filter((s) => isOpen(s) || s.run_id !== null);
 
-  const [prefs] = useState(readAgentPrefs);
-  const [model, setModel] = useState(prefs.model);
-  const [effort, setEffort] = useState(prefs.effort);
+  // Codex when the machine can host it and it was picked last time, or is the default engine.
+  const canCodex = !!host?.codex;
+  const [agentEngine, setAgentEngine] = useState<AgentEngine>(() => {
+    const last = readAgentEngine() || (engine.data?.settings.default === "codex" ? "codex" : "claude");
+    return last === "codex" && canCodex ? "codex" : "claude";
+  });
+  const [model, setModel] = useState(() => readAgentPrefs(agentEngine).model);
+  const [effort, setEffort] = useState(() => readAgentPrefs(agentEngine).effort);
+  const pickEngine = (e: AgentEngine) => {
+    const p = readAgentPrefs(e);
+    setAgentEngine(e);
+    setModel(p.model);
+    setEffort(p.effort);
+  };
   const [prompt, setPrompt] = useState("");
   const [extra, setExtra] = useState(false);
   const canSkip = !!host?.skip_permissions;
   const [skip, setSkip] = useState(view.settings.skip_permissions);
 
-  // Claude Code's own aliases: each is the newest model of its family on that machine.
-  const models = [...AGENT_MODELS];
-  if (model && !models.includes(model)) models.unshift(model);
-  const efforts = engine.data?.efforts ?? ["low", "medium", "high", "xhigh", "max"];
+  // Claude Code's own aliases (each is the newest model of its family on that
+  // machine); for Codex, what the machine's Codex lists for its login.
+  const codex = agentEngine === "codex";
+  const codexModels = engine.data?.codex_models ?? [];
+  const models: { id: string; name: string }[] = codex
+    ? codexModels.map((m) => ({ id: m.id, name: m.name && m.name !== m.id ? `${m.name} (${m.id})` : m.id }))
+    : AGENT_MODELS.map((m) => ({ id: m, name: m }));
+  if (model && !models.some((m) => m.id === model)) models.unshift({ id: model, name: model });
+  const pickedCodex = codex ? codexModels.find((m) => m.id === model) : undefined;
+  const efforts = codex
+    ? (pickedCodex?.efforts?.length ? pickedCodex.efforts : (engine.data?.codex_efforts ?? ["low", "medium", "high", "xhigh"]))
+    : (engine.data?.efforts ?? ["low", "medium", "high", "xhigh", "max"]);
 
-  // A session starts (so model, effort and permissions apply) unless the request goes to the open one.
-  const starts = !primaryOpen || extra;
+  // A session starts (so engine, model, effort and permissions apply) unless
+  // the request goes to the open one — which it does only when that one runs
+  // the same engine (the other engine gets a session of its own).
+  const primaryEngine = group.primary.engine || "claude";
+  const otherOpen = primaryOpen && primaryEngine !== agentEngine;
+  const starts = !primaryOpen || extra || otherOpen;
   const text = prompt.trim();
   const offline = !host || !host.online;
   const label = starts ? (extra ? "Start an extra session" : text ? "Start with this request" : "Start") : text ? "Send" : "Attach";
@@ -190,10 +216,11 @@ function ProjectAgentDialog({ group, view, onClose }: { group: AgentGroup; view:
       navigate(attachPath(host.runner_id, group.primary.name));
       return;
     }
-    if (starts) storeAgentPrefs(model, effort);
+    if (starts) storeAgentPrefs(model, effort, agentEngine);
     open.mutate(
       {
         key: group.key,
+        engine: starts ? agentEngine : undefined,
         prompt: text || undefined,
         extra: extra || undefined,
         model: starts && model ? model : undefined,
@@ -280,14 +307,39 @@ function ProjectAgentDialog({ group, view, onClose }: { group: AgentGroup; view:
           )}
         </Field>
 
+        {canCodex ? (
+          <Field
+            label="Agent"
+            hint={
+              otherOpen
+                ? `${group.primary.name} runs ${ENGINE_LABEL[primaryEngine]}: ${ENGINE_LABEL[agentEngine]} starts in a session of its own.`
+                : codex
+                  ? "Codex in tmux, with this machine's Codex login."
+                  : "Claude Code in tmux, with this machine's Claude login."
+            }
+          >
+            {(id, desc) => (
+              <Select
+                id={id}
+                aria-describedby={desc}
+                value={agentEngine}
+                onChange={(e) => pickEngine(e.target.value as AgentEngine)}
+              >
+                <option value="claude">{ENGINE_LABEL.claude}</option>
+                <option value="codex">{ENGINE_LABEL.codex}</option>
+              </Select>
+            )}
+          </Field>
+        ) : null}
+
         <div className="grid grid-cols-2 gap-3">
           <Field label="Model">
             {(id) => (
               <Select id={id} value={model} disabled={!starts} onChange={(e) => setModel(e.target.value)}>
                 <option value="">Default</option>
                 {models.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
+                  <option key={m.id} value={m.id}>
+                    {m.name}
                   </option>
                 ))}
               </Select>

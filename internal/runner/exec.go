@@ -41,6 +41,10 @@ type claimedRun struct {
 	// OneTurn: the session answers (the prompt, or the message that resumed
 	// it) and closes; the run finishes instead of waiting for a reply.
 	OneTurn bool `json:"one_turn"`
+	// Sandbox: the agent works in its folder without asking, inside its OS
+	// sandbox (sandboxSettings for Claude Code; workspace-write with no
+	// approvals for Codex).
+	Sandbox bool `json:"sandbox"`
 	// Setup and Assistant come alongside the run in the claim answer.
 	Setup     *engineSetup    `json:"-"`
 	Assistant *assistantSetup `json:"-"`
@@ -190,6 +194,17 @@ func (r *Runner) execute(ctx context.Context, run claimedRun) finishReport {
 	return finishReport{Status: "failed", Error: "unknown run kind " + run.Kind}
 }
 
+// sandboxSettings are Claude Code's settings for a sandboxed run: shell
+// commands run in its OS sandbox (bubblewrap and socat on Linux) and need no
+// approval there — writes only inside the working folders, network only to
+// what is approved — and no command may leave the sandbox. File tools stay
+// inside the working folders too, and credentials are not readable. Without
+// a working sandbox the run refuses to start rather than run unconfined.
+const sandboxSettings = `{"permissions":{"blockReadsOutsideWorkingDirectories":true},` +
+	`"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true,"allowUnsandboxedCommands":false,"failIfUnavailable":true,` +
+	`"filesystem":{"denyRead":["~/.ssh","~/.gnupg","~/.aws","~/.kube","~/.docker","~/.netrc","~/.git-credentials",` +
+	`"~/.config/forge","~/.config/gh","~/.config/sops","~/.codex","~/.claude.json"]}}}`
+
 // permissionArgs are claude's flags for a permission mode. bypassPermissions
 // also takes the explicit --dangerously-skip-permissions: Claude Code wants
 // both before it skips every prompt.
@@ -232,6 +247,9 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 	}
 	if contains(claudeEfforts, run.Effort) {
 		args = append(args, "--effort", run.Effort)
+	}
+	if run.Sandbox {
+		args = append(args, "--settings", sandboxSettings)
 	}
 	if run.Assistant != nil {
 		// Forge's own tools only: everything else stays under this machine's

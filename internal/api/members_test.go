@@ -220,7 +220,7 @@ func TestMemberAgent(t *testing.T) {
 	if view.Agent != nil {
 		t.Fatalf("owner agent = %+v", view.Agent)
 	}
-	if _, err := h.store.SetMemberAgent(ctx, bob.ID, m.rn.Name, "opus", "high", ""); err == nil {
+	if _, err := h.store.SetMemberAgent(ctx, bob.ID, m.rn.Name, "claude", "opus", "high", ""); err == nil {
 		t.Fatal("an owner account must not get a member agent")
 	}
 	if err := h.store.SetUserRole(ctx, bob.ID, store.RoleMember); err != nil {
@@ -229,10 +229,10 @@ func TestMemberAgent(t *testing.T) {
 	if err := h.store.GrantProject(ctx, bob.ID, "shop"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.store.SetMemberAgent(ctx, bob.ID, m.rn.Name, "opus", "high", "bypassPermissions"); err == nil {
+	if _, err := h.store.SetMemberAgent(ctx, bob.ID, m.rn.Name, "claude", "opus", "high", "bypassPermissions"); err == nil {
 		t.Fatal("a member agent never skips permissions")
 	}
-	if _, err := h.store.SetMemberAgent(ctx, bob.ID, "nowhere", "opus", "high", ""); err == nil {
+	if _, err := h.store.SetMemberAgent(ctx, bob.ID, "nowhere", "claude", "opus", "high", ""); err == nil {
 		t.Fatal("an unknown machine")
 	}
 
@@ -248,7 +248,7 @@ func TestMemberAgent(t *testing.T) {
 	expect(t, "closed machine", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent",
 		"prompt": "hello", "permission_mode": "plan"}, nil), 403)
 
-	if _, err := h.store.SetMemberAgent(ctx, bob.ID, m.rn.Name, "opus", "high", ""); err != nil {
+	if _, err := h.store.SetMemberAgent(ctx, bob.ID, m.rn.Name, "claude", "opus", "high", ""); err != nil {
 		t.Fatal(err)
 	}
 	expect(t, "agent", h.do("GET", "/api/agent", nil, &view), 200)
@@ -344,6 +344,37 @@ func TestMemberAgent(t *testing.T) {
 		t.Fatalf("picked up = %+v", picked)
 	}
 	fresh = picked
+
+	// Free in its project, on Codex: no prompts inside the project, kept there by the sandbox.
+	if _, err := h.store.SetMemberAgent(ctx, bob.ID, m.rn.Name, "codex", "gpt-test-sol", "max", "auto"); err == nil {
+		t.Fatal("Codex has no auto mode")
+	}
+	if _, err := h.store.SetMemberAgent(ctx, bob.ID, m.rn.Name, "codex", "gpt-test-sol", "high", "project"); err != nil {
+		t.Fatal(err)
+	}
+	var sandboxed store.Run
+	expect(t, "codex agent", h.do("POST", "/api/agent", map[string]any{"prompt": "Build it", "fresh": true}, &sandboxed), 201)
+	if sandboxed.Engine != "codex" || sandboxed.Model != "gpt-test-sol" || sandboxed.PermissionMode != "acceptEdits" || !sandboxed.Sandbox ||
+		sandboxed.TmuxSession != "" {
+		t.Fatalf("sandboxed = %+v", sandboxed)
+	}
+	var formRun store.Run
+	expect(t, "run form as the agent", h.do("POST", "/api/runs", map[string]any{"runner_id": m.rn.ID, "repo_id": m.repoID, "kind": "agent",
+		"prompt": "Another", "engine": "claude", "permission_mode": "plan", "fresh": true}, &formRun), 201)
+	if formRun.Engine != "codex" || !formRun.Sandbox || formRun.PermissionMode != "acceptEdits" {
+		t.Fatalf("run form = %+v", formRun)
+	}
+	var claimed struct {
+		Run struct {
+			ID      int64
+			Sandbox bool `json:"sandbox"`
+		}
+	}
+	expect(t, "the machine takes it", m.runner.do("POST", "/api/runner/claim", nil, &claimed, m.bearer...), 200)
+	if claimed.Run.ID == 0 || !claimed.Run.Sandbox {
+		t.Fatalf("claimed = %+v", claimed.Run)
+	}
+	fresh = formRun
 
 	// Taken away: the machine is closed to it again.
 	if err := h.store.ClearMemberAgent(ctx, bob.ID); err != nil {

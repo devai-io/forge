@@ -16,6 +16,7 @@ import {
   useImpersonate,
   useResetAccountPassword,
   useSetMachineMembers,
+  useEngine,
   useUpdateAccount,
 } from "@/api/hooks";
 import type { AdminUser, AdminView } from "@/api/types";
@@ -34,8 +35,12 @@ import { useCurrentUser } from "@/lib/auth";
 
 const MODELS = ["fable", "opus", "sonnet", "haiku"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
-const MODES = ["acceptEdits", "plan", "auto", "dontAsk"];
+const MODES = ["project", "acceptEdits", "plan", "auto", "dontAsk"];
+const CODEX_MODES = ["project", "acceptEdits", "plan"];
+const MODE_LABEL: Record<string, string> = { project: "Free in its project (sandboxed)" };
 const MODE_HELP: Record<string, string> = {
+  project:
+    "Does anything inside its project's folder without asking — edits, builds, tests, installs there — kept there by the machine's sandbox: nothing written outside it, no logins or keys readable, no network it was not given. Claude Code needs bubblewrap and socat on the machine.",
   acceptEdits: "Edits files without asking; asks before it runs commands.",
   plan: "Read-only: explores and proposes, changes nothing.",
   auto: "Decides by itself what is safe to do without asking.",
@@ -368,10 +373,27 @@ function EditAccountDialog({ user, view, self, onClose }: { user: AdminUser; vie
   const [projects, setProjects] = useState(user.projects);
   const [hasAgent, setHasAgent] = useState(!!user.agent);
   const [machine, setMachine] = useState(user.agent?.runner_name ?? view.machines.find((m) => m.role === "master")?.name ?? view.machines[0]?.name ?? "");
+  const engineStatus = useEngine();
+  const [engine, setEngine] = useState<"claude" | "codex">(user.agent?.engine ?? "claude");
   const [model, setModel] = useState(user.agent?.model ?? "opus");
   const [effort, setEffort] = useState(user.agent?.effort ?? "high");
   const [mode, setMode] = useState(user.agent?.permission_mode ?? "acceptEdits");
-  const models = model && !MODELS.includes(model) ? [model, ...MODELS] : MODELS;
+  const codex = engine === "codex";
+  const codexModels = engineStatus.data?.codex_models ?? [];
+  const engineModels = codex ? codexModels.map((m) => m.id) : MODELS;
+  const models = model && !engineModels.includes(model) ? [model, ...engineModels] : engineModels;
+  const modelName = (id: string) => {
+    const m = codexModels.find((x) => x.id === id);
+    return m?.name && m.name !== id ? `${m.name} (${id})` : id;
+  };
+  const efforts = codex ? (codexModels.find((m) => m.id === model)?.efforts ?? engineStatus.data?.codex_efforts ?? EFFORTS) : EFFORTS;
+  const modes = codex ? CODEX_MODES : MODES;
+  const pickEngine = (e: "claude" | "codex") => {
+    setEngine(e);
+    setModel(e === "codex" ? "" : "opus");
+    setEffort(e === "codex" ? "" : "high");
+    if (e === "codex" && !CODEX_MODES.includes(mode)) setMode("project");
+  };
   const member = role === "member";
 
   const submit = (e: React.FormEvent) => {
@@ -384,7 +406,7 @@ function EditAccountDialog({ user, view, self, onClose }: { user: AdminUser; vie
         email: email.trim() !== user.email ? email.trim() : undefined,
         role: role !== user.role ? role : undefined,
         projects: member ? projects : undefined,
-        agent: member ? (hasAgent ? { machine, model, effort, permission_mode: mode } : user.agent ? null : undefined) : undefined,
+        agent: member ? (hasAgent ? { machine, engine, model, effort, permission_mode: mode } : user.agent ? null : undefined) : undefined,
       },
       {
         onSuccess: () => {
@@ -431,12 +453,20 @@ function EditAccountDialog({ user, view, self, onClose }: { user: AdminUser; vie
               <legend className="px-1 text-[13px] font-medium text-fg-2">Its own agent</legend>
               <Switch checked={hasAgent} onChange={setHasAgent} label="Give this member one agent" />
               <p className="text-[12px] text-fg-3">
-                One Claude Code agent with an Agent page, on one machine only, with a set model and effort. Without it, the member queues runs on the
-                machines open to members.
+                One agent (Claude Code or Codex) with an Agent page, on one machine only, with a set model and effort. Without it, the member queues
+                runs on the machines open to members.
               </p>
               {hasAgent ? (
                 <>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Field label="Engine" hint={codex ? "Codex with the machine's Codex login." : "Claude Code with the machine's Claude login."}>
+                      {(id, desc) => (
+                        <Select id={id} aria-describedby={desc} value={engine} onChange={(e) => pickEngine(e.target.value as "claude" | "codex")}>
+                          <option value="claude">Claude Code</option>
+                          <option value="codex">Codex</option>
+                        </Select>
+                      )}
+                    </Field>
                     <Field label="Machine">
                       {(id) => (
                         <Select id={id} value={machine} onChange={(e) => setMachine(e.target.value)}>
@@ -455,7 +485,7 @@ function EditAccountDialog({ user, view, self, onClose }: { user: AdminUser; vie
                           <option value="">Default</option>
                           {models.map((m) => (
                             <option key={m} value={m}>
-                              {m}
+                              {modelName(m)}
                             </option>
                           ))}
                         </Select>
@@ -465,7 +495,7 @@ function EditAccountDialog({ user, view, self, onClose }: { user: AdminUser; vie
                       {(id) => (
                         <Select id={id} value={effort} onChange={(e) => setEffort(e.target.value)}>
                           <option value="">Default</option>
-                          {EFFORTS.map((x) => (
+                          {efforts.map((x) => (
                             <option key={x} value={x}>
                               {EFFORT_LABEL[x] ?? x}
                             </option>
@@ -474,12 +504,12 @@ function EditAccountDialog({ user, view, self, onClose }: { user: AdminUser; vie
                       )}
                     </Field>
                   </div>
-                  <Field label="Permission mode" hint={`${MODE_HELP[mode] ?? ""} A member's agent never skips permission prompts.`}>
+                  <Field label="Permission mode" hint={`${MODE_HELP[mode] ?? ""} A member's agent never skips permissions outside its project.`}>
                     {(id, desc) => (
                       <Select id={id} aria-describedby={desc} value={mode} onChange={(e) => setMode(e.target.value)}>
-                        {MODES.map((x) => (
+                        {modes.map((x) => (
                           <option key={x} value={x}>
-                            {x}
+                            {MODE_LABEL[x] ?? x}
                           </option>
                         ))}
                       </Select>

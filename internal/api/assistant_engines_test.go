@@ -288,7 +288,7 @@ func TestCodexChatAndEngineIsolation(t *testing.T) {
 	// Subscription-backed Codex needs no provider key.
 	expect(t, "enable", h.do("PATCH", "/api/assistant", map[string]any{"enabled": true, "engine": "codex"}, nil), 200)
 	var started chatView
-	expect(t, "bad effort", h.do("POST", "/api/chats", map[string]any{"content": "Hello", "engine": "codex", "effort": "max"}, nil), 422)
+	expect(t, "bad effort", h.do("POST", "/api/chats", map[string]any{"content": "Hello", "engine": "codex", "effort": "extreme"}, nil), 422)
 	expect(t, "start", h.do("POST", "/api/chats", map[string]any{"content": "Read SHOP status", "engine": "codex", "effort": "high"}, &started), 201)
 	var claim struct {
 		Run    store.Run

@@ -157,6 +157,24 @@ func claudeTaken(sessions []store.TmuxSession) func(string) bool {
 // messages written since.
 func (s *Server) startTmuxRun(ctx context.Context, cc *controlConn, run *store.Run, sessions []store.TmuxSession) {
 	exists, busy := store.ClaudeIn(sessions, run.TmuxSession)
+	agent := agentLabel(run.Engine)
+	if busy && run.Resumes == 0 && store.AgentEngineIn(sessions, run.TmuxSession) != tmuxEngine(run.Engine) {
+		// The other agent is open in there: this one gets a session of its own.
+		base := s.agentSessionName(ctx, run.ProjectID)
+		if base == "" {
+			base = run.TmuxSession
+		}
+		name, err := s.store.FreeTmuxName(ctx, run.RunnerID, run.ID, base, 1, claudeTaken(sessions))
+		if err != nil {
+			s.failTmuxStart(ctx, run, err)
+			return
+		}
+		if _, err := s.store.SetRunTmux(ctx, run.ID, name); err != nil {
+			return
+		}
+		run.TmuxSession = name
+		exists, busy = store.ClaudeIn(sessions, name)
+	}
 	prompt, inboxAfter := run.Prompt, run.InboxAfter
 	resume := ""
 	if run.Resumes > 0 {
@@ -178,7 +196,7 @@ func (s *Server) startTmuxRun(ctx context.Context, cc *controlConn, run *store.R
 		prompt = strings.Join(msgs, "\n\n")
 		other, _ := s.store.TmuxNameInUse(ctx, run.RunnerID, run.ID, run.TmuxSession)
 		switch {
-		case busy && !other:
+		case busy && !other && store.AgentEngineIn(sessions, run.TmuxSession) == tmuxEngine(run.Engine):
 			// Claude is still open in there (the machine's list was behind):
 			// the session is live, so the messages are typed into it.
 			if _, err := s.store.MarkTmuxStarted(ctx, run.ID, resume, run.InboxAfter); err == nil {
@@ -223,8 +241,8 @@ func (s *Server) startTmuxRun(ctx context.Context, cc *controlConn, run *store.R
 			slog.Warn("tmux run sent but not recorded", "run", run.ID, "err", err)
 			return
 		}
-		s.appendSystem(ctx, run, fmt.Sprintf("Sent to the Claude Code session open in tmux session %s on %s (its model and permission mode stay as they are) — attach with `tmux attach -t %s`",
-			run.TmuxSession, run.RunnerName, run.TmuxSession))
+		s.appendSystem(ctx, run, fmt.Sprintf("Sent to the %s session open in tmux session %s on %s (its model and permission mode stay as they are) — attach with `tmux attach -t %s`",
+			agent, run.TmuxSession, run.RunnerName, run.TmuxSession))
 		slog.Info("tmux run sent to an open session", "run", run.ID, "session", run.TmuxSession, "runner", run.RunnerName)
 		return
 	}
@@ -233,15 +251,17 @@ func (s *Server) startTmuxRun(ctx context.Context, cc *controlConn, run *store.R
 	if mode == "default" {
 		mode = "" // Claude Code's own default: it asks in the terminal
 	}
-	msg := map[string]any{"type": "create", "session": run.TmuxSession, "cwd": run.SessionDir(), "start": "claude",
+	codex := run.Engine == "codex"
+	msg := map[string]any{"type": "create", "session": run.TmuxSession, "cwd": run.SessionDir(), "start": tmuxEngine(run.Engine),
 		"prompt": prompt, "permission_mode": mode, "model": run.Model, "effort": run.Effort,
 		"env": map[string]string{"FORGE_RUN_ID": fmt.Sprint(run.ID)}, "reuse": exists}
-	if set, err := s.store.AgentSettings(ctx); err == nil && set.RemoteControl {
+	if set, err := s.store.AgentSettings(ctx); err == nil && set.RemoteControl && !codex {
 		msg["remote_control"] = run.TmuxSession // the same name on claude.ai/code and in the Claude app
 	}
 	if resume != "" {
 		msg["resume"] = resume
-	} else {
+	} else if !codex { // Codex names its thread itself: the session's first hook reports it
+
 		sessionID = newSessionID()
 		msg["session_id"] = sessionID
 		if run.Worktree {
@@ -260,15 +280,15 @@ func (s *Server) startTmuxRun(ctx context.Context, cc *controlConn, run *store.R
 		return
 	}
 	s.projectSessions.markStarted(run.TmuxSession)
-	s.appendSystem(ctx, run, fmt.Sprintf("Claude Code %s in tmux session %s on %s — attach with `tmux attach -t %s`",
-		map[bool]string{true: "resumed", false: "started"}[resume != ""], run.TmuxSession, run.RunnerName, run.TmuxSession))
+	s.appendSystem(ctx, run, fmt.Sprintf("%s %s in tmux session %s on %s — attach with `tmux attach -t %s`",
+		agent, map[bool]string{true: "resumed", false: "started"}[resume != ""], run.TmuxSession, run.RunnerName, run.TmuxSession))
 	slog.Info("tmux run started", "run", run.ID, "session", run.TmuxSession, "runner", run.RunnerName)
 }
 
 // failTmuxStart: the machine refused to start the session (a permission
 // mode it does not allow, a folder outside its roots…).
 func (s *Server) failTmuxStart(ctx context.Context, run *store.Run, err error) {
-	s.appendSystem(ctx, run, "could not start Claude Code in tmux: "+err.Error())
+	s.appendSystem(ctx, run, "could not start "+agentLabel(run.Engine)+" in tmux: "+err.Error())
 	_, _ = s.store.DB.Exec(ctx, `UPDATE runs SET status = 'failed', error = $2, finished_at = now() WHERE id = $1 AND status = 'queued'`,
 		run.ID, truncateErr(err.Error()))
 }
@@ -332,6 +352,22 @@ func truncateErr(s string) string {
 	return s
 }
 
+// tmuxEngine is the agent a run's tmux session runs: Codex for a Codex
+// run, Claude Code for everything else.
+func tmuxEngine(engine string) string {
+	if engine == "codex" {
+		return "codex"
+	}
+	return "claude"
+}
+
+func agentLabel(engine string) string {
+	if engine == "codex" {
+		return "Codex"
+	}
+	return "Claude Code"
+}
+
 // newSessionID is a random UUID (v4), the form Claude Code's --session-id takes.
 func newSessionID() string {
 	b := make([]byte, 16)
@@ -345,12 +381,13 @@ func newSessionID() string {
 
 // placeInTmux puts a freshly queued run into tmux when the machine can host
 // it there and the setting is on: a user's Claude Code agent run (not an
-// Assistant turn, not a one-turn status check, not Codex or DeepSeek, which
-// keep their headless engines). It goes to the project's agent session
+// Assistant turn, not a one-turn status check, not DeepSeek, which keeps its
+// headless engine; a Codex run on a machine that hosts Codex in tmux, unless
+// it wants a worktree). It goes to the project's agent session
 // (F-<Project>), or to an extra one (F-<Project>-2, …) when that one holds
 // another conversation — or, for a fresh agent, has Claude Code open at all.
 func (s *Server) placeInTmux(ctx context.Context, run *store.Run, fresh bool) *store.Run {
-	if run.Kind != "agent" || run.Engine != "claude" || run.ChatTurnID != nil || run.OneTurn || run.RepoID == 0 {
+	if run.Kind != "agent" || (run.Engine != "claude" && run.Engine != "codex") || run.ChatTurnID != nil || run.OneTurn || run.RepoID == 0 || run.Sandbox {
 		return run
 	}
 	set, err := s.store.AgentSettings(ctx)
@@ -360,6 +397,9 @@ func (s *Server) placeInTmux(ctx context.Context, run *store.Run, fresh bool) *s
 	rn, err := s.store.RunnerByID(ctx, run.RunnerID)
 	if err != nil || !rn.Capabilities.TmuxAgents {
 		return run
+	}
+	if run.Engine == "codex" && (!rn.Capabilities.TmuxCodex || run.Worktree) {
+		return run // headless (codex app-server), as before
 	}
 	base := s.agentSessionName(ctx, run.ProjectID)
 	if base == "" {
@@ -482,6 +522,8 @@ type hookReport struct {
 	Reason           string             `json:"reason"`
 	LastMessage      string             `json:"last_message"`
 	Events           []store.EventInput `json:"events"`
+	// Engine: "codex" from Codex's hooks, else Claude Code.
+	Engine string `json:"engine"`
 }
 
 // runnerHook is `forge agent hook --report` from a Claude Code session on the
@@ -544,7 +586,7 @@ func (s *Server) runnerHook(w http.ResponseWriter, r *http.Request, rn *store.Ru
 			return
 		}
 		reg, err := s.store.RegisterTmuxRun(ctx, rn.ID, store.TmuxRegistration{SessionID: in.SessionID,
-			TmuxSession: in.TmuxSession, Cwd: in.Cwd, Prompt: in.Prompt})
+			TmuxSession: in.TmuxSession, Cwd: in.Cwd, Prompt: in.Prompt, Engine: in.Engine})
 		if errors.Is(err, store.ErrNotFound) {
 			w.WriteHeader(http.StatusNoContent) // not in any project
 			return
@@ -569,6 +611,10 @@ func (s *Server) runnerHook(w http.ResponseWriter, r *http.Request, rn *store.Ru
 				return
 			}
 		}
+	}
+	if run.SessionID == "" && opening {
+		// A Codex run Forge started: Codex chose its thread id, and this is it.
+		_, _ = s.store.DB.Exec(ctx, `UPDATE runs SET session_id = $2 WHERE id = $1 AND session_id = ''`, run.ID, in.SessionID)
 	}
 	if len(in.Events) > 0 {
 		_ = s.store.AppendEvents(ctx, run.ID, rn.ID, in.Events)

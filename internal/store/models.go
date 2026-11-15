@@ -295,6 +295,19 @@ type RunnerCapabilities struct {
 	// TmuxAgents: the machine can host agent runs in tmux (claude with a set
 	// session id, pasted follow-ups) and its hooks report them.
 	TmuxAgents bool `json:"tmux_agents"`
+	// TmuxCodex: it can host Codex agent runs in tmux as well.
+	TmuxCodex bool `json:"tmux_codex"`
+	// CodexModels: the models the machine's Codex lists for its login.
+	CodexModels []CodexModel `json:"codex_models,omitempty"`
+}
+
+// CodexModel is one model a machine's Codex offers.
+type CodexModel struct {
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Description   string   `json:"description,omitempty"`
+	Efforts       []string `json:"efforts,omitempty"`
+	DefaultEffort string   `json:"default_effort,omitempty"`
 }
 
 type CommandDetail struct {
@@ -407,6 +420,10 @@ type Run struct {
 	// no parked run); a question left open when it parked still keeps it
 	// waiting. Continue starts a new run on the same session.
 	OneTurn bool `json:"one_turn"`
+	// Sandbox: the agent works in its folder without asking, inside its OS
+	// sandbox — writes only there, no network it was not allowed (a member's
+	// agent set to "project").
+	Sandbox bool `json:"sandbox"`
 	// Handoff says where the session continued outside Forge ("" = it did not).
 	Handoff string `json:"handoff"`
 	// ResumeHint is the shell line that opens this run's session in Claude
@@ -495,8 +512,21 @@ var (
 	PermissionModes = []string{"plan", "acceptEdits", "auto", "dontAsk", "bypassPermissions"}
 	RunnerRoles     = []string{"master", "ios", "worker"}
 	Engines         = []string{"deepseek", "claude", "codex"}
-	CodexEfforts    = []string{"low", "medium", "high", "xhigh"}
-	ClaudeEfforts   = []string{"low", "medium", "high", "xhigh", "max"}
+	CodexEfforts    = []string{"low", "medium", "high", "xhigh", "max", "ultra"}
+	// CodexModels are offered for a Codex run when no machine has reported
+	// its own list yet (Codex's model cache); any id Codex accepts can still
+	// be sent.
+	CodexModels = []CodexModel{
+		{ID: "gpt-6.1-sol", Name: "GPT-6.1-Sol", Description: "Latest workhorse model for coding and everyday work."},
+		{ID: "gpt-6-astra", Name: "GPT-6-Astra", Description: "Frontier intelligence for the most demanding work."},
+		{ID: "gpt-6.1-terra", Name: "GPT-6.1 Terra", Description: "Balanced Codex model."},
+		{ID: "gpt-6-sol", Name: "GPT-6-Sol", Description: "Previous generation workhorse model."},
+		{ID: "gpt-6-luna", Name: "GPT-6-Luna", Description: "Fast and affordable model for easier tasks."},
+		{ID: "gpt-5.6-sol", Name: "GPT-5.6-Sol", Description: "Older generation workhorse model."},
+		{ID: "gpt-5.6-terra", Name: "GPT-5.6-Terra", Description: "Older balanced model for straightforward work."},
+		{ID: "gpt-5.6-luna", Name: "GPT-5.6-Luna", Description: "Older fast and efficient model."},
+	}
+	ClaudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 	// ClaudeModels are the models the web app offers for a Claude run (any
 	// other id Claude Code accepts can still be sent).
 	ClaudeModels = []string{"claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"}

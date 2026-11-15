@@ -76,7 +76,7 @@ type AdminView = { users: AdminUser[];
 |---|---|---|---|
 | GET | /api/admin/users | – | `AdminView` |
 | POST | /api/admin/users | `{username, email, display_name?, role?, projects?}` (**elevated**) | `201 {user: AdminUser, password}` — the password Forge made up, shown once. `role` defaults to `member`; `projects` are a member's. `422` for a bad or taken username or e-mail, or an unknown project |
-| PATCH | /api/admin/users/{user} | `{display_name?, email?, role?, projects?, agent?}` (**elevated**) | `AdminUser`. `projects` replaces a member's grants; `agent: {machine, model?, effort?, permission_mode?}` sets a member's agent (never `bypassPermissions`), `agent: null` takes it away. The last owner stays an owner; nobody changes their own role; a member made an owner loses its agent |
+| PATCH | /api/admin/users/{user} | `{display_name?, email?, role?, projects?, agent?}` (**elevated**) | `AdminUser`. `projects` replaces a member's grants; `agent: {machine, engine?, model?, effort?, permission_mode?}` sets a member's agent (`engine` claude (default) or codex; `permission_mode` may be `project`, never `bypassPermissions`), `agent: null` takes it away. The last owner stays an owner; nobody changes their own role; a member made an owner loses its agent |
 | POST | /api/admin/users/{user}/password | – (**elevated**) | `{password}` — a new made-up password, shown once; every session of that account ends. Not for your own account (Settings) |
 | POST | /api/admin/users/{user}/disable-2fa | – (**elevated**) | `204` — its next password sign-in sets up an authenticator again |
 | POST | /api/admin/users/{user}/remove-passkeys | – (**elevated**) | `{removed: number}` — logged as `user_updated` |
@@ -95,17 +95,27 @@ account's sign-in settings stay out of reach (`403 impersonating` on
 stopping are logged as `impersonate`. If the account is deleted, or the
 session's user stops being an owner, the session is itself again.
 
-**A member's agent.** `forge member-agent <username> <machine> [model] [effort] [mode]`
-gives a member one agent: Claude Code on that machine only, with that model
-and effort (empty = Claude Code's defaults) and permission mode (default
-`acceptEdits`; never `bypassPermissions`); `forge member-agent <username> off`
+**A member's agent.** `forge member-agent <username> <machine> [claude|codex] [model] [effort] [mode]`
+gives a member one agent: Claude Code (default) or Codex on that machine only,
+with that model and effort (empty = the engine's defaults) and permission mode
+(default `acceptEdits`; Claude: `plan|acceptEdits|auto|dontAsk|project`,
+Codex: `plan|acceptEdits|project`; never `bypassPermissions`). **`project`**
+lets it do anything inside its project's folder without asking: its runs are
+`acceptEdits` with `sandbox: true` — Claude Code runs shell commands in its OS
+sandbox without approval (writes only in the working folders, network only as
+approved, no command outside the sandbox, credentials such as `~/.ssh`
+unreadable, file tools kept to the working folders; it refuses to start when
+the machine lacks bubblewrap and socat), Codex runs `workspace-write` with
+no approvals (anything beyond the workspace fails instead of asking). Such
+runs stay headless. `forge member-agent <username> off`
 takes it away. The member then has an **Agent** page in place of Agents, with
 that one agent and one conversation at a time, and every agent run it queues
 (`POST /api/runs` included) is forced to that machine, model, effort and mode.
 
 ```ts
 type MemberAgent = { runner_id: number; runner_name: string; online: boolean;
-                     model: string; effort: string; permission_mode: string };
+                     engine: "claude" | "codex"; model: string; effort: string;
+                     permission_mode: string };   // …or "project" (see above)
 type MemberAgentView = {
   agent: MemberAgent | null;                                // null: no agent (any other account)
   projects: { key: string; name: string; color: string }[]; // the member's projects with a repo to work in
@@ -499,8 +509,9 @@ machine), `forge resume [RUN]` in a shell there, or the run's `resume_hint`.
 On a machine whose agent reports `tmux_agents` (v0.1.44+), with
 `GET/PATCH /api/agent-settings` `{tmux?: boolean, remote_control?: boolean}`
 (both on by default; PATCH changes only what it names), a user's Claude Code
-agent run (not an Assistant turn, not a one-turn run, not Codex or DeepSeek)
-is a conversation in its **project's agent session**: the tmux session
+agent run (not an Assistant turn, not a one-turn run, not DeepSeek, not
+sandboxed) — or Codex agent run, on a machine that also reports `tmux_codex`
+and unless it wants a worktree — is a conversation in its **project's agent session**: the tmux session
 `F-<Project name>` on its machine (unsafe characters become `-`, at most 40),
 or an extra one — `F-<Project>-2`, `-3`, … — when that one holds another
 conversation (or, for a `fresh` run, has Claude Code open at all). It is the
@@ -534,6 +545,18 @@ the server drives it over the control channel:
   that one is gone or holds another conversation by then, in the project's
   session if it is free, else an extra one. `POST /api/runs/{id}/handoff`
   (Attach) starts it with no message and attaches.
+- **Codex** in tmux: `create` with `start: "codex"` and no `session_id`
+  (Codex names its thread; the session's first hook report sets the run's
+  `session_id`), no `remote_control`, no worktree; resumed with
+  `codex resume <thread>`. `forge agent setup-codex` installs
+  `forge agent hook --report --codex` for `SessionStart`, `UserPromptSubmit`
+  and `Stop` in `~/.codex/hooks.json` (trust them once with `/hooks` in
+  Codex): the report carries `engine: "codex"`, the prompt and the turn's
+  last message as events (Codex has no transcript Forge reads). A session
+  counts as alive while Codex is open in it; a hand-started Codex
+  conversation registers as a Codex run. The machine answers Codex's
+  "Trust this folder?" for sessions Forge starts. When the other engine is
+  open in the session a run is placed in, it gets a session of its own.
 - **Hand-started conversations**: a Claude Code session in tmux in a
   project's repo — or in the project's own folder above its repos — becomes
   a run (`origin: "tmux"`, `permission_mode: "default"`) with its **first
@@ -571,6 +594,7 @@ type Run = { /* … */ interactive: boolean;
              inbox_after: number; resumes: number;  // in-place resumes of a parked session
              finish_requested: boolean;             // Finish pressed while the session was live
              one_turn: boolean;                     // finishes once the session has answered (see One-turn runs)
+             sandbox: boolean;                      // works in its folder without asking, in its OS sandbox (a member agent's "project" mode)
              handoff: string;                       // where the session continued outside Forge, "" if not
              resume_hint: string;                   // "cd '/path' && claude --resume <session>" ("" without a session)
              tmux_session: string;                  // the tmux session its Claude Code session lives in ("" = headless; see Agents in tmux)
@@ -579,7 +603,10 @@ type Run = { /* … */ interactive: boolean;
 type RunnerCapabilities = { /* … */ interactive?: boolean; approvals?: boolean;
              resume_in_place?: boolean;             // agents from v0.1.32: resumes a waiting run in place
              terminal_resume?: boolean;             // a terminal can start as `claude --resume <id>`
-             tmux_agents?: boolean };               // agents from v0.1.44: hosts agent runs in tmux (see Agents in tmux)
+             tmux_agents?: boolean;                 // agents from v0.1.44: hosts agent runs in tmux (see Agents in tmux)
+             tmux_codex?: boolean;                  // hosts Codex agent runs in tmux too
+             codex_models?: CodexModel[] };         // the models the machine's Codex lists (its models_cache.json)
+type CodexModel = { id: string; name: string; description?: string; efforts?: string[]; default_effort?: string };
 type RunPrompt = {
   id: number; run_id: number; request_id: string;
   kind: "question" | "permission" | "plan";        // AskUserQuestion | any other tool | ExitPlanMode
@@ -997,10 +1024,12 @@ type ProjectSession = {
   run_status: "" | "queued" | "running" | "waiting";
   awaiting: "" | "answer" | "reply";
   run_prompt: string;        // that run's request, cut to 240 characters
+  engine: "" | "claude" | "codex"; // the agent open in it, else its conversation's; "" = neither
 };
 type ProjectSessions = {
   settings: { skip_permissions: boolean }; // what a new session starts with unless the request says otherwise
-  host: { runner_id: number; runner_name: string; online: boolean; skip_permissions: boolean; tmux_agents: boolean } | null; // the master
+  host: { runner_id: number; runner_name: string; online: boolean; skip_permissions: boolean; tmux_agents: boolean;
+          codex: boolean } | null; // the master; codex: it can host a Codex agent
   sessions: ProjectSession[]; // per project: its agent, then the extras that exist (a session, or a run in one)
 };
 ```
@@ -1009,7 +1038,7 @@ type ProjectSessions = {
 |---|---|---|---|
 | GET | /api/project-sessions | – | `ProjectSessions` |
 | PATCH | /api/project-sessions | `{skip_permissions?}` (**elevated**) | `ProjectSessions`. Logged as `project_sessions` |
-| POST | /api/project-sessions/{key} | `{model?, effort?, prompt?, extra?, skip_permissions?}` | `{session, runner_id, run: Run \| null, started: boolean}`. Opens the project's agent — with `extra: true` a new extra one. **Not open** (no session, or Claude exited in it): it starts with `model` (an alias or id), `effort` (`low`…`max`) and `skip_permissions` (default: the setting; only where the master allows it); with a `prompt` it starts as a run with that request (`run`), without one as a plain session (`run: null`) that becomes a run with its first request. **Open, a conversation going**: `prompt` is one more message to that run (`run`), model and effort are ignored; no `prompt` just answers where it is. **Open, no conversation yet**: `prompt` is typed into it and is a run from then on. `started` says whether a session was started. A conversation that had stopped with its session (`waiting`) is finished first — Continue picks it up again. `409 runner_offline` (no connected master with terminals), `409 starting` (a request within 15 s of the session's start), `409 agent_outdated` (a request on an agent older than v0.1.44), `422` for a bad model or effort or a project without a repo path, `502 runner_error`. Logged as `terminal_create` |
+| POST | /api/project-sessions/{key} | `{engine?, model?, effort?, prompt?, extra?, skip_permissions?}` | `{session, runner_id, run: Run \| null, started: boolean}`. Opens the project's agent — with `extra: true` a new extra one. `engine`: `claude` (default) or `codex` (`409 agent_outdated` when the master cannot host Codex); when the other engine is open in the project's session (or its conversation is), this one opens as an extra session. A Codex session starts with `--model`, `model_reasoning_effort` and, without skipping permissions, `workspace-write` with on-request approvals; it has no Remote Control. **Not open** (no session, or Claude exited in it): it starts with `model` (an alias or id), `effort` (`low`…`max`) and `skip_permissions` (default: the setting; only where the master allows it); with a `prompt` it starts as a run with that request (`run`), without one as a plain session (`run: null`) that becomes a run with its first request. **Open, a conversation going**: `prompt` is one more message to that run (`run`), model and effort are ignored; no `prompt` just answers where it is. **Open, no conversation yet**: `prompt` is typed into it and is a run from then on. `started` says whether a session was started. A conversation that had stopped with its session (`waiting`) is finished first — Continue picks it up again. `409 runner_offline` (no connected master with terminals), `409 starting` (a request within 15 s of the session's start), `409 agent_outdated` (a request on an agent older than v0.1.44), `422` for a bad model or effort or a project without a repo path, `502 runner_error`. Logged as `terminal_create` |
 | DELETE | /api/project-sessions/{key}/{name} | – | `204`. Closes one of the project's sessions: its conversation is finished (`succeeded`) and the tmux session killed. `404` for a name that is not this project's |
 
 ## Images for agents
@@ -1312,7 +1341,8 @@ type EngineSettings = {
 // defaults: "claude", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"
 type EngineStatus = { settings: EngineSettings; provider_key: boolean;
   models: Record<Engine, string[]>;  // the run form's choices; deepseek: settings, then the provider's deepseek/* models, then the known ones
-  codex_efforts: string[];           // low|medium|high|xhigh
+  codex_models: CodexModel[];        // models.codex with names and supported efforts: the master's Codex list, else another machine's, else Forge's own
+  codex_efforts: string[];           // low|medium|high|xhigh|max|ultra
   efforts: string[] };               // claude --effort: low|medium|high|xhigh|max
 type Run = { /* … */ engine: Engine | "";     // "" for command runs
               effort: string;                // claude --effort, "" = default
@@ -1795,9 +1825,9 @@ entitlement; login, usage limits and model errors are reported by the run.
 - Agent configuration: `codex_path` (default `codex`).
 - `forge agent setup-codex` registers `forge agent mcp` with Codex, preserving a
   custom `-config` path. Run `codex login` separately under the runner's OS user.
-- `GET /api/engine` includes `models.codex: []` and `codex_efforts:
-  ["low", "medium", "high", "xhigh"]`. An empty model uses Codex's configured
-  default; any valid account-supported model ID can be entered explicitly. Jev
+- `GET /api/engine` includes `models.codex` (the ids of `codex_models`) and
+  `codex_efforts: ["low", "medium", "high", "xhigh", "max", "ultra"]`. An empty
+  model uses Codex's configured default; any valid account-supported model ID can be entered explicitly. Jev
   does not select Claude models for Codex runs.
 - `GET /api/assistant` includes `engines.codex` with the same availability, machine,
   online, reason, models, efforts and skip_permissions fields as `engines.claude`.

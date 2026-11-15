@@ -149,7 +149,7 @@ func (s *Store) InboxSince(ctx context.Context, runID, after int64) ([]InboxItem
 // MarkTmuxStarted: the session is up in tmux under its session id.
 func (s *Store) MarkTmuxStarted(ctx context.Context, id int64, sessionID string, inboxAfter int64) (*Run, error) {
 	if _, err := s.DB.Exec(ctx, `UPDATE runs SET status = 'running', started_at = coalesce(started_at, now()),
-		session_id = $2, inbox_after = max(inbox_after, $3), awaiting = '', finished_at = NULL
+		session_id = CASE WHEN $2 = '' THEN session_id ELSE $2 END, inbox_after = max(inbox_after, $3), awaiting = '', finished_at = NULL
 		WHERE id = $1 AND status = 'queued'`, id, sessionID, inboxAfter); err != nil {
 		return nil, err
 	}
@@ -239,6 +239,8 @@ type TmuxRegistration struct {
 	TmuxSession string
 	Cwd         string
 	Prompt      string
+	// Engine: "codex" for a Codex session, else Claude Code.
+	Engine string
 }
 
 // firstRepoUnder is the project's first repo that lives inside dir (nil when
@@ -291,6 +293,10 @@ func (s *Store) RegisterTmuxRun(ctx context.Context, runnerID int64, in TmuxRegi
 			return nil, err
 		}
 	}
+	engine, label := "claude", "Claude Code"
+	if in.Engine == "codex" {
+		engine, label = "codex", "Codex"
+	}
 	cwd := ""
 	if in.Cwd != repo.Path {
 		cwd = in.Cwd // Claude Code files the session under the folder it started in
@@ -299,13 +305,13 @@ func (s *Store) RegisterTmuxRun(ctx context.Context, runnerID int64, in TmuxRegi
 	err = s.tx(ctx, func(tx pgxTx) error {
 		if err := tx.QueryRow(ctx, `INSERT INTO runs (runner_id, runner_name, project_id, repo_id, task_id, kind, prompt,
 			permission_mode, engine, interactive, status, started_at, session_id, tmux_session, origin, cwd)
-			VALUES ($1, $2, $3, $4, $5, 'agent', $6, 'default', 'claude', true, 'running', now(), $7, $8, 'tmux', $9)
+			VALUES ($1, $2, $3, $4, $5, 'agent', $6, 'default', $10, true, 'running', now(), $7, $8, 'tmux', $9)
 			RETURNING id`, runner.ID, runner.Name, repo.ProjectID, repo.ID, taskID, strings.TrimSpace(in.Prompt),
-			in.SessionID, in.TmuxSession, cwd).Scan(&id); err != nil {
+			in.SessionID, in.TmuxSession, cwd, engine).Scan(&id); err != nil {
 			return mapErr(err)
 		}
 		return logActivity(ctx, tx, ActivityInput{ProjectID: &repo.ProjectID, TaskID: taskID, RunID: &id, Kind: "run.queued",
-			Summary: fmt.Sprintf("Run #%d: Claude Code session in tmux %s on %s (%s)", id, in.TmuxSession, runner.Name, repo.Name)})
+			Summary: fmt.Sprintf("Run #%d: %s session in tmux %s on %s (%s)", id, label, in.TmuxSession, runner.Name, repo.Name)})
 	})
 	if err != nil {
 		return nil, err
@@ -382,15 +388,13 @@ func (s *Store) EndTmuxRun(ctx context.Context, id int64, why string) error {
 // window went back to a shell) — after a grace period for a session that is
 // still starting.
 func (s *Store) reconcileTmuxRuns(ctx context.Context, runnerID int64, sessions []TmuxSession) error {
-	live := map[string]bool{}
+	live := map[string]bool{} // "claude:<name>", "codex:<name>"
 	for _, se := range sessions {
-		if se.Claude {
-			live[se.Name] = true
-		}
+		live["claude:"+se.Name] = live["claude:"+se.Name] || se.Claude
+		live["codex:"+se.Name] = live["codex:"+se.Name] || se.Codex
 		for _, w := range se.WindowList {
-			if w.Claude {
-				live[se.Name] = true
-			}
+			live["claude:"+se.Name] = live["claude:"+se.Name] || w.Claude
+			live["codex:"+se.Name] = live["codex:"+se.Name] || w.Codex
 		}
 	}
 	runs, err := s.listRunsWhere(ctx, `r.runner_id = $1 AND r.status = 'running' AND r.tmux_session <> ''
@@ -399,8 +403,12 @@ func (s *Store) reconcileTmuxRuns(ctx context.Context, runnerID int64, sessions 
 		return err
 	}
 	for _, run := range runs {
-		if !live[run.TmuxSession] {
-			if err := s.EndTmuxRun(ctx, run.ID, "Claude Code is no longer running in tmux session "+run.TmuxSession); err != nil {
+		agent, label := "claude", "Claude Code"
+		if run.Engine == "codex" {
+			agent, label = "codex", "Codex"
+		}
+		if !live[agent+":"+run.TmuxSession] {
+			if err := s.EndTmuxRun(ctx, run.ID, label+" is no longer running in tmux session "+run.TmuxSession); err != nil {
 				return err
 			}
 		}
@@ -456,6 +464,27 @@ func ClaudeIn(sessions []TmuxSession, name string) (exists, agent bool) {
 		return true, false
 	}
 	return false, false
+}
+
+// AgentEngineIn is the agent open in the named tmux session: "claude",
+// "codex" or "" (none, or no such session).
+func AgentEngineIn(sessions []TmuxSession, name string) string {
+	for _, se := range sessions {
+		if se.Name != name {
+			continue
+		}
+		claude, codex := se.Claude, se.Codex
+		for _, w := range se.WindowList {
+			claude, codex = claude || w.Claude, codex || w.Codex
+		}
+		switch {
+		case codex && !claude:
+			return "codex"
+		case claude:
+			return "claude"
+		}
+	}
+	return ""
 }
 
 // tmuxRunIDs maps each open tmux run's session name to the run, per machine.

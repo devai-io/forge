@@ -104,22 +104,40 @@ func (s *Store) RunnerMembersAllowed(ctx context.Context, runnerID int64) bool {
 // MemberAgent is the one agent a member works with: where it runs and how,
 // as the owner set it (`forge member-agent`). The member cannot change it.
 type MemberAgent struct {
-	UserID         int64  `json:"-"`
-	RunnerID       int64  `json:"runner_id"`
-	RunnerName     string `json:"runner_name"`
-	Online         bool   `json:"online"`
-	Model          string `json:"model"`
-	Effort         string `json:"effort"`
+	UserID     int64  `json:"-"`
+	RunnerID   int64  `json:"runner_id"`
+	RunnerName string `json:"runner_name"`
+	Online     bool   `json:"online"`
+	Engine     string `json:"engine"` // claude or codex
+	Model      string `json:"model"`
+	Effort     string `json:"effort"`
+	// PermissionMode is plan, acceptEdits, auto or dontAsk — or "project":
+	// it does anything inside its project's folder without asking, kept
+	// there by the machine's sandbox (Codex's own; Claude Code's needs
+	// bubblewrap and socat on the machine).
 	PermissionMode string `json:"permission_mode"`
+}
+
+// MemberProjectMode is the member-agent mode that works freely inside its
+// project, sandboxed.
+const MemberProjectMode = "project"
+
+// RunMode is the permission mode the agent's runs get, and whether they are
+// sandboxed: "project" is acceptEdits in the sandbox.
+func (a *MemberAgent) RunMode() (mode string, sandbox bool) {
+	if a.PermissionMode == MemberProjectMode {
+		return "acceptEdits", true
+	}
+	return a.PermissionMode, false
 }
 
 // MemberAgent is the user's agent (ErrNotFound when the owner set none).
 func (s *Store) MemberAgent(ctx context.Context, userID int64) (*MemberAgent, error) {
 	a := MemberAgent{UserID: userID}
 	err := s.DB.QueryRow(ctx, `SELECT a.runner_id, rn.name, coalesce(rn.last_seen_at > ts_add(now(), -`+onlineWindow+`), 0),
-		a.model, a.effort, a.permission_mode
+		a.engine, a.model, a.effort, a.permission_mode
 		FROM member_agents a JOIN runners rn ON rn.id = a.runner_id WHERE a.user_id = $1`, userID).
-		Scan(&a.RunnerID, &a.RunnerName, &a.Online, &a.Model, &a.Effort, &a.PermissionMode)
+		Scan(&a.RunnerID, &a.RunnerName, &a.Online, &a.Engine, &a.Model, &a.Effort, &a.PermissionMode)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -129,10 +147,11 @@ func (s *Store) MemberAgent(ctx context.Context, userID int64) (*MemberAgent, er
 // memberAgentModel is what an agent's model may be: an alias or a model id.
 var memberAgentModel = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,79}$`)
 
-// SetMemberAgent gives a member its agent: one machine, a model, an effort
-// and a permission mode — never bypassPermissions (Claude asks before
-// acting; a member does not turn that off).
-func (s *Store) SetMemberAgent(ctx context.Context, userID int64, machine, model, effort, mode string) (*MemberAgent, error) {
+// SetMemberAgent gives a member its agent: one machine, an engine (claude or
+// codex), a model, an effort and a permission mode — never
+// bypassPermissions: at most "project", free inside the project's folder
+// and sandboxed there.
+func (s *Store) SetMemberAgent(ctx context.Context, userID int64, machine, engine, model, effort, mode string) (*MemberAgent, error) {
 	var role string
 	if err := s.DB.QueryRow(ctx, `SELECT role FROM users WHERE id = $1`, userID).Scan(&role); err != nil {
 		return nil, mapErr(err)
@@ -147,19 +166,29 @@ func (s *Store) SetMemberAgent(ctx context.Context, userID int64, machine, model
 	if model != "" && !memberAgentModel.MatchString(model) {
 		return nil, invalid("model", "not a model name")
 	}
-	if effort != "" && !OneOf(effort, ClaudeEfforts) {
-		return nil, invalid("effort", "must be one of %s", strings.Join(ClaudeEfforts, ", "))
+	if engine == "" {
+		engine = "claude"
+	}
+	if engine != "claude" && engine != "codex" {
+		return nil, invalid("engine", "must be claude or codex")
+	}
+	efforts, modes := ClaudeEfforts, []string{"plan", "acceptEdits", "auto", "dontAsk", MemberProjectMode}
+	if engine == "codex" {
+		efforts, modes = CodexEfforts, []string{"plan", "acceptEdits", MemberProjectMode}
+	}
+	if effort != "" && !OneOf(effort, efforts) {
+		return nil, invalid("effort", "must be one of %s", strings.Join(efforts, ", "))
 	}
 	if mode == "" {
 		mode = "acceptEdits"
 	}
-	if !OneOf(mode, PermissionModes) || mode == "bypassPermissions" {
-		return nil, invalid("permission_mode", "must be plan, acceptEdits, auto or dontAsk — a member's agent never skips permissions")
+	if !OneOf(mode, modes) {
+		return nil, invalid("permission_mode", "must be %s — a member's agent never skips permissions", strings.Join(modes, ", "))
 	}
-	if _, err := s.DB.Exec(ctx, `INSERT INTO member_agents (user_id, runner_id, model, effort, permission_mode)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (user_id) DO UPDATE SET runner_id = excluded.runner_id, model = excluded.model,
-			effort = excluded.effort, permission_mode = excluded.permission_mode`, userID, runnerID, model, effort, mode); err != nil {
+	if _, err := s.DB.Exec(ctx, `INSERT INTO member_agents (user_id, runner_id, engine, model, effort, permission_mode)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (user_id) DO UPDATE SET runner_id = excluded.runner_id, engine = excluded.engine, model = excluded.model,
+			effort = excluded.effort, permission_mode = excluded.permission_mode`, userID, runnerID, engine, model, effort, mode); err != nil {
 		return nil, mapErr(err)
 	}
 	return s.MemberAgent(ctx, userID)

@@ -118,10 +118,11 @@ func (s *Server) adminUpdateUser(w http.ResponseWriter, r *http.Request, u *stor
 		Email       *string   `json:"email"`
 		Role        *string   `json:"role"`
 		Projects    *[]string `json:"projects"`
-		// Agent: a member's own agent — {machine, model, effort,
+		// Agent: a member's own agent — {machine, engine, model, effort,
 		// permission_mode} sets it, null takes it away.
 		Agent *struct {
 			Machine        string `json:"machine"`
+			Engine         string `json:"engine"`
 			Model          string `json:"model"`
 			Effort         string `json:"effort"`
 			PermissionMode string `json:"permission_mode"`
@@ -147,7 +148,7 @@ func (s *Server) adminUpdateUser(w http.ResponseWriter, r *http.Request, u *stor
 				writeErr(w, r, err)
 				return
 			}
-		} else if _, err := s.store.SetMemberAgent(ctx, id, in.Agent.Machine, in.Agent.Model, in.Agent.Effort, in.Agent.PermissionMode); err != nil {
+		} else if _, err := s.store.SetMemberAgent(ctx, id, in.Agent.Machine, in.Agent.Engine, in.Agent.Model, in.Agent.Effort, in.Agent.PermissionMode); err != nil {
 			writeErr(w, r, err)
 			return
 		}

@@ -39,6 +39,7 @@ export const EFFORT_LABEL: Record<string, string> = {
   high: "High",
   xhigh: "Extra high",
   max: "Max",
+  ultra: "Ultra",
 };
 
 export const PERMISSION_MODE_HELP: Record<string, string> = {
@@ -277,8 +278,8 @@ export function awaitingPairing(r: Pick<Runner, "last_seen_at" | "pair_expires_a
 }
 
 /** A member's agent in a line: "Claude Code · opus · High effort · on desk". */
-export function agentLine(a: { model: string; effort: string; runner_name: string }): string {
-  return ["Claude Code", a.model || "default model", a.effort ? `${EFFORT_LABEL[a.effort] ?? a.effort} effort` : "", `on ${a.runner_name}`]
+export function agentLine(a: { engine?: string; model: string; effort: string; runner_name: string }): string {
+  return [a.engine === "codex" ? "Codex" : "Claude Code", a.model || "default model", a.effort ? `${EFFORT_LABEL[a.effort] ?? a.effort} effort` : "", `on ${a.runner_name}`]
     .filter(Boolean)
     .join(" · ");
 }

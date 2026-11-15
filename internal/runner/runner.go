@@ -138,7 +138,11 @@ func (r *Runner) capabilities() map[string]any {
 		"resume_in_place":  true,
 		"terminal_resume":  true,
 		"tmux_agents":      r.terminalEnabled() && err == nil,
-		"approvals":        r.cfg.Approvals,
+		// TmuxCodex: Codex agents in tmux too (codex in a session, its hooks
+		// reporting the turns once setup-codex added them).
+		"tmux_codex":   r.terminalEnabled() && codexErr == nil,
+		"codex_models": codexModels(),
+		"approvals":    r.cfg.Approvals,
 	}
 }
 

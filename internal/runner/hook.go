@@ -24,7 +24,12 @@ import (
 // them), say nothing. Like every Forge hook it never fails or slows the
 // session down: errors are dropped, the report gives up after a few seconds,
 // and nothing is printed.
-func RunHook(cfg *Config, in io.Reader) {
+//
+// With codex set it is Codex's hook (setup-codex): the same events and
+// input, minus Notification and SessionEnd. Codex keeps its threads in its
+// own store, not in a transcript Forge can read, so its turns are reported
+// from what the hooks carry: the prompt, and the turn's last message.
+func RunHook(cfg *Config, in io.Reader, codex bool) {
 	if os.Getenv("FORGE_HEADLESS") == "1" {
 		return
 	}
@@ -52,6 +57,25 @@ func RunHook(cfg *Config, in io.Reader) {
 	body := map[string]any{"event": h.Event, "session_id": h.SessionID, "cwd": h.Cwd, "tmux_session": tmuxSession,
 		"run_id": runID, "source": h.Source, "prompt": clip(h.Prompt, 100000), "message": clip(h.Message, 2000),
 		"notification_type": h.NotificationType, "reason": h.Reason}
+	if codex {
+		body["engine"] = "codex"
+		switch h.Event {
+		case "UserPromptSubmit":
+			if t := strings.TrimSpace(h.Prompt); t != "" {
+				body["events"] = []event{messageEvent("user", clip(t, 100000))}
+			}
+		case "Stop":
+			last := clip(strings.TrimSpace(h.LastMessage), 100000)
+			body["last_message"], body["events"] = last, []event{}
+			if last != "" {
+				body["events"] = []event{messageEvent("assistant", last)}
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = newClient(cfg.APIURL, cfg.Token).post(ctx, "/api/runner/hook", body, nil)
+		return
+	}
 	off := hookOffset{session: h.SessionID}
 	switch h.Event {
 	case "SessionStart":
@@ -193,6 +217,17 @@ func readTranscript(path string, offset int64) (events []event, last string, nex
 		}
 	}
 	return events, clip(last, 100000), next
+}
+
+// messageEvent is one message in the shape of a Claude Code transcript
+// entry, which the run log reads.
+func messageEvent(role, text string) event {
+	content := any(text)
+	if role == "assistant" {
+		content = []map[string]string{{"type": "text", "text": text}}
+	}
+	data, _ := json.Marshal(map[string]any{"type": role, "message": map[string]any{"role": role, "content": content}})
+	return event{Kind: "claude", Data: data}
 }
 
 // contentText is the text blocks of a message's content (a string or a list
