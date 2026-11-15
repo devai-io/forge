@@ -174,6 +174,20 @@ function AgentsInTmux() {
       </div>
       <div className="space-y-1">
         <Switch
+          checked={settings.data.driver}
+          disabled={update.isPending}
+          onChange={(driver) => update.mutate({ driver }, { onError: (e) => toast.error(e) })}
+          label="Keep tasks in progress moving (work driver)"
+        />
+        <p className="text-[12px] text-fg-3">
+          Every couple of minutes, each task in progress gets an agent if it has none (on the master, in the task's repo, with the most
+          permissive mode that machine allows), and an agent whose turn ended is told to carry on — no Refresh needed. A task set in progress in
+          the last 20 minutes gets time to be picked up by hand first. It stops by itself: at most 10 nudges a task a day, 15 minutes apart, and
+          a pause after 3 nudges that changed nothing on the task. Agents still ask before deploying where a project's change control says so.
+        </p>
+      </div>
+      <div className="space-y-1">
+        <Switch
           checked={settings.data.remote_control}
           disabled={update.isPending}
           onChange={(remote_control) => update.mutate({ remote_control }, { onError: (e) => toast.error(e) })}

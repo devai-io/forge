@@ -17,6 +17,7 @@ import { lastSeq, mergeMessages, upsertChat } from "@/lib/chats";
 import { createPasskey, getPasskey, type CeremonyStart } from "@/lib/webauthn";
 import type {
   AgentSettings,
+  DriverView,
   Activity,
   AssistantSettings,
   AssistantStatus,
@@ -1419,6 +1420,24 @@ export function useUpdateAgentSettings() {
   return useMutation({
     mutationFn: (v: Partial<AgentSettings>) => api.patch<AgentSettings>("/agent-settings", v),
     onSuccess: (v) => qc.setQueryData(["agent-settings"], v),
+  });
+}
+
+/** The work driver's view of the tasks in progress (it checks every couple of minutes). */
+export function useDriver(enabled = true) {
+  return useQuery({ queryKey: ["driver"], queryFn: () => api.get<DriverView>("/driver"), refetchInterval: 30_000, enabled });
+}
+
+/** Run the driver now instead of at its next check. */
+export function useDriveNow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<DriverView>("/driver/run", {}),
+    onSuccess: (v) => {
+      qc.setQueryData(["driver"], v);
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+    },
   });
 }
 

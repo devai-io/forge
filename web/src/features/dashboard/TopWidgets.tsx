@@ -6,8 +6,8 @@ import clsx from "clsx";
 import { Bot, CircleAlert, CircleCheck, ExternalLink, Hammer, Plug, RefreshCw, Sparkles, TriangleAlert, Activity as Pulse } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useMonitoring, useProjectSessions, useServers } from "@/api/hooks";
-import type { Dashboard, ProjectSession, Run } from "@/api/types";
+import { useDriveNow, useDriver, useMonitoring, useProjectSessions, useServers } from "@/api/hooks";
+import type { Dashboard, DriverState, DriverTask, ProjectSession, Run } from "@/api/types";
 import { Badge, ColorDot } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Panel } from "@/components/ui/Panel";
@@ -21,6 +21,8 @@ import { investigationProject, investigationPrompt, prodFirst, serviceIssues, ty
 import { shortHome } from "@/lib/paths";
 import { isOpen, promptTitle, sessionStatus, type AgentTone } from "@/lib/projectAgents";
 import { attachPath } from "@/lib/terminal";
+import { useUser } from "@/lib/auth";
+import { useToast } from "@/components/ui/Toast";
 
 const SHOWN = 5;
 
@@ -148,14 +150,50 @@ export function ServicesWidget({ d }: { d: Dashboard }) {
   );
 }
 
+/** How the driver's view of a task reads in the Working on list (tone: warning when it needs you or stopped). */
+const DRIVER_TEXT: Record<DriverState, string> = {
+  pending: "driver checks it shortly",
+  grace: "agent starts soon unless picked up",
+  starting: "agent starting",
+  working: "agent working",
+  nudged: "driver nudged it",
+  cooling: "driver nudged it",
+  needs_you: "needs your answer",
+  ending: "agent ending",
+  handed_off: "continued in a terminal",
+  member: "a member's agent",
+  paused: "driver paused: no progress",
+  limit: "driver limit for today",
+  error: "driver could not start it",
+};
+const DRIVER_WARN: DriverState[] = ["needs_you", "paused", "limit", "error"];
+
+function DriverNote({ st }: { st: DriverTask }) {
+  return (
+    <span
+      title={st.note}
+      className={clsx("truncate", DRIVER_WARN.includes(st.state) ? "font-medium text-critical-ink" : "text-fg-3")}
+    >
+      · {DRIVER_TEXT[st.state] ?? st.state}
+    </span>
+  );
+}
+
 /**
- * 2) Working on: every in-progress task, with the agent run on it if any.
- * Refresh asks each task's session to bring the task's status up to date
- * and carry on (resuming or continuing it when it is not running).
+ * 2) Working on: every in-progress task, with the agent run on it if any and
+ * what the work driver does about it — it starts an agent for a task that
+ * has none and tells one whose turn ended to carry on (api/driver.go), so
+ * nothing here waits for a nudge. Refresh still asks every session for a
+ * status update right away.
  */
 export function WorkingOnWidget({ d }: { d: Dashboard }) {
   const { openTask } = useShell();
   const [refreshing, setRefreshing] = useState(false);
+  const owner = useUser().role !== "member";
+  const driver = useDriver(owner);
+  const driveNow = useDriveNow();
+  const toast = useToast();
+  const driverByTask = new Map((driver.data?.tasks ?? []).map((x) => [x.task_id, x]));
   const tasks = d.in_progress ?? [];
   const runByTask = new Map<number, Run>();
   for (const r of d.active_runs) if (r.task_id !== null && !runByTask.has(r.task_id)) runByTask.set(r.task_id, r);
@@ -173,6 +211,24 @@ export function WorkingOnWidget({ d }: { d: Dashboard }) {
       id="dash-working"
       actions={
         <span className="flex items-center gap-2">
+          {driver.data && tasks.length ? (
+            driver.data.enabled ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                loading={driveNow.isPending}
+                onClick={() => driveNow.mutate(undefined, { onError: (e) => toast.error(e) })}
+                title="The driver keeps every task in progress moving by itself (every couple of minutes). Check now."
+              >
+                <Bot className="size-3.5" aria-hidden />
+                Driver on
+              </Button>
+            ) : (
+              <Link to="/settings#settings-engine" className="text-[12px] text-critical-ink hover:underline" title="Nothing moves these tasks by itself">
+                Driver off
+              </Link>
+            )
+          ) : null}
           {tasks.length || d.active_runs.some((r) => r.status === "waiting") ? (
             <Button
               size="sm"
@@ -216,6 +272,7 @@ export function WorkingOnWidget({ d }: { d: Dashboard }) {
                       <span>
                         · <RelativeTime iso={t.updated_at} />
                       </span>
+                      {driver.data?.enabled && driverByTask.get(t.id) ? <DriverNote st={driverByTask.get(t.id)!} /> : null}
                     </span>
                   </span>
                   {run ? <RunStatusBadge run={run} /> : null}

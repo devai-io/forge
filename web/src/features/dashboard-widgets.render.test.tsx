@@ -194,6 +194,34 @@ describe("dashboard widgets", () => {
     expect(screen.getByText("· 2")).toBeInTheDocument();
   });
 
+  it("working on: the driver says what it does for each task, and checks now on request", async () => {
+    let ran = 0;
+    const view = (state: string, note: string) => ({
+      enabled: true,
+      tasks: [{ task_id: 5, ref: "SHOP-5", title: "Payouts", state, note, nudges_today: 1, last_nudge_at: null, run_id: null, checked_at: null }],
+    });
+    vi.stubGlobal(
+      "fetch",
+      routeFetch({
+        "GET /driver": () => jsonResponse(200, view("grace", "set in progress just now")),
+        "POST /driver/run": () => {
+          ran++;
+          return jsonResponse(200, view("paused", "3 nudges without any change on the task"));
+        },
+      }),
+    );
+    renderWithProviders(
+      <ShellProvider>
+        <WorkingOnWidget d={dash({ in_progress: [makeTask({ id: 5, ref: "SHOP-5", title: "Payouts", status: "in_progress" })], active_runs: [] })} />
+      </ShellProvider>,
+    );
+    const task = await screen.findByRole("button", { name: /Payouts/ });
+    await waitFor(() => expect(within(task).getByText("· agent starts soon unless picked up")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Driver on" }));
+    await waitFor(() => expect(within(task).getByText("· driver paused: no progress")).toHaveAttribute("title", "3 nudges without any change on the task"));
+    expect(ran).toBe(1);
+  });
+
   it("project agents: the open ones, each with what it is doing, Claude and attach", async () => {
     const session = (over: Partial<ProjectSession>): ProjectSession => ({
       project_key: "SHOP", project_name: "Shop", project_color: "#3987e5", project_status: "live", name: "F-Shop", dir: "/home/demo/dev/shop",

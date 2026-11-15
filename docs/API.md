@@ -504,10 +504,40 @@ Claude Code's own `/resume` picker leaves out sessions started with
 `claude -p` — every run. To get into one: `handoff` (a terminal on the
 machine), `forge resume [RUN]` in a shell there, or the run's `resume_hint`.
 
+#### Work driver
+
+Every 2 minutes the server keeps every task in progress moving
+(`api/driver.go`), with `GET/PATCH /api/agent-settings` `driver` (default
+`true`) to turn it off: a task in progress (project neither paused nor
+archived) with no agent gets one — on the master, in the task's repo or the
+project's, the default engine, the most permissive permission mode the
+machine allows (`bypassPermissions`, `auto`, `acceptEdits`, `plan`), as the
+first owner, `fresh` (an extra session when the project's is busy) — unless
+it was set in progress in the last 20 minutes and never nudged; an agent
+whose turn ended ≥ 3 minutes ago (`running`, `awaiting: "reply"`), parked
+(`waiting`) or over (with a session) gets one more message to carry on.
+Left alone: queued, working, `awaiting: "answer"`, ending, handed off, or a
+member's run. At most 10 nudges a task a UTC day, ≥ 15 minutes apart; after 3
+nudges in a row with the task unchanged (status, `updated_at`, comment count)
+the task is `paused` until it changes. Table `task_driver`.
+
+```ts
+type DriverTask = { task_id: number; ref: string; title: string;
+  state: "pending" | "grace" | "starting" | "working" | "nudged" | "cooling" | "needs_you" | "ending"
+       | "handed_off" | "member" | "paused" | "limit" | "error";
+  note: string; nudges_today: number; last_nudge_at: string | null; run_id: number | null; checked_at: string | null };
+type DriverView = { enabled: boolean; tasks: DriverTask[] }; // every task the driver looks after
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | /api/driver | – | `DriverView` (owners; members 403) |
+| POST | /api/driver/run | – | `DriverView` after a pass run now |
+
 #### Agents in tmux
 
 On a machine whose agent reports `tmux_agents` (v0.1.44+), with
-`GET/PATCH /api/agent-settings` `{tmux?: boolean, remote_control?: boolean}`
+`GET/PATCH /api/agent-settings` `{tmux?: boolean, remote_control?: boolean, driver?: boolean}`
 (both on by default; PATCH changes only what it names), a user's Claude Code
 agent run (not an Assistant turn, not a one-turn run, not DeepSeek, not
 sandboxed) — or Codex agent run, on a machine that also reports `tmux_codex`

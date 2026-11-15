@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { useLocation } from "react-router-dom";
 import type { EngineStatus, ProjectSession, ProjectSessions } from "@/api/types";
 import { ProjectAgents } from "@/features/agents/ProjectAgents";
@@ -16,6 +17,17 @@ const view = (sessions: ProjectSession[]): ProjectSessions => ({
   sessions,
 });
 const engine = { settings: {}, provider_key: false, models: { claude: ["opus", "sonnet", "haiku"] }, efforts: ["low", "medium", "high"] } as unknown as EngineStatus;
+
+/** The Agents page's use: a button picks the project (the page's filter). */
+function Picker() {
+  const [picked, setPicked] = useState<string | null>(null);
+  return (
+    <>
+      <ProjectAgents selected={picked} onSelect={setPicked} />
+      <output aria-label="picked">{picked ?? ""}</output>
+    </>
+  );
+}
 
 function Where() {
   const loc = useLocation();
@@ -57,7 +69,7 @@ describe("project agents", () => {
     const first = renderWithProviders(<ProjectAgents />);
     const list = await screen.findByRole("list", { name: "Project agents" });
     expect(within(list).getByRole("button", { name: "Shop: Your turn" })).toBeInTheDocument();
-    expect(within(list).getByRole("button", { name: "Blog: not open — start its agent" })).toBeInTheDocument();
+    expect(within(list).getByRole("button", { name: "Blog: not open" })).toBeInTheDocument();
     expect(within(list).queryByRole("button", { name: /Lab/ })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "All projects (3)" }));
     expect(within(list).getByRole("button", { name: /Lab/ })).toBeInTheDocument();
@@ -85,11 +97,20 @@ describe("project agents", () => {
     const user = userEvent.setup();
     renderWithProviders(
       <>
-        <ProjectAgents />
+        <Picker />
         <Where />
       </>,
     );
-    await user.click(await screen.findByRole("button", { name: "Shop: not open — start its agent" }));
+    // The button is a filter: it picks the project (again: all projects), and its strip opens a session.
+    const shop = await screen.findByRole("button", { name: "Shop: not open" });
+    await user.click(shop);
+    expect(shop).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("picked")).toHaveTextContent("SHOP");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.click(shop);
+    expect(screen.getByLabelText("picked")).toHaveTextContent("");
+    await user.click(shop);
+    await user.click(within(screen.getByRole("region", { name: "Shop agent sessions" })).getByRole("button", { name: "Open session" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByRole("button", { name: "Start" })).toBeInTheDocument();
     await waitFor(() => expect(within(dialog).getByRole("option", { name: "opus" })).toBeInTheDocument());
@@ -131,11 +152,15 @@ describe("project agents", () => {
     const user = userEvent.setup();
     renderWithProviders(
       <>
-        <ProjectAgents />
+        <Picker />
         <Where />
       </>,
     );
     await user.click(await screen.findByRole("button", { name: "Shop: Working, 2 sessions" }));
+    // Its sessions show under the grid.
+    const strip = screen.getByRole("region", { name: "Shop agent sessions" });
+    expect(within(strip).getByRole("link", { name: "#4 · Fix the cart" })).toHaveAttribute("href", "/agents/runs/4");
+    await user.click(within(strip).getByRole("button", { name: "Open session" }));
     let dialog = await screen.findByRole("dialog");
     const rows = within(dialog).getByRole("list", { name: "Sessions" });
     expect(within(rows).getByRole("link", { name: "#4 · Fix the cart" })).toHaveAttribute("href", "/agents/runs/4");
@@ -156,7 +181,7 @@ describe("project agents", () => {
     await waitFor(() => expect(screen.getByLabelText("location")).toHaveTextContent("/agents/runs/4"));
 
     // An extra session starts with its own model, and opens in the terminal.
-    await user.click(await screen.findByRole("button", { name: "Shop: Working, 2 sessions" }));
+    await user.click(within(screen.getByRole("region", { name: "Shop agent sessions" })).getByRole("button", { name: "Open session" }));
     dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("switch", { name: "Start an extra session for Shop" }));
     expect(within(dialog).getByLabelText("Model")).toBeEnabled();

@@ -93,6 +93,7 @@ type Server struct {
 	// Project sessions (project_sessions.go): what Forge started, and when.
 	projectSessions projectSessionState
 	tmux            tmuxState
+	driver          driverState
 }
 
 // Deps are the optional collaborators; a zero value turns the feature off
@@ -357,6 +358,8 @@ func (s *Server) Handler() http.Handler {
 	h("DELETE /api/runner/memories/{id}", s.runnerAuth(s.runnerForget))
 
 	h("GET /api/terminal/hosts", s.authed(s.terminalHosts))
+	h("GET /api/driver", s.authed(s.getDriver))
+	h("POST /api/driver/run", s.authed(s.driveNow))
 	h("GET /api/agent-settings", s.authed(s.getAgentSettings))
 	h("PATCH /api/agent-settings", s.authed(s.putAgentSettings))
 	h("GET /api/project-sessions", s.authed(s.getProjectSessions))

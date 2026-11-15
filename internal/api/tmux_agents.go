@@ -672,6 +672,7 @@ func (s *Server) putAgentSettings(w http.ResponseWriter, r *http.Request, u *sto
 	var in struct {
 		Tmux          *bool `json:"tmux"`
 		RemoteControl *bool `json:"remote_control"`
+		Driver        *bool `json:"driver"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -681,6 +682,9 @@ func (s *Server) putAgentSettings(w http.ResponseWriter, r *http.Request, u *sto
 	}
 	if in.RemoteControl != nil {
 		cur.RemoteControl = *in.RemoteControl
+	}
+	if in.Driver != nil {
+		cur.Driver = *in.Driver
 	}
 	v, err := s.store.PutAgentSettings(r.Context(), cur)
 	if err != nil {

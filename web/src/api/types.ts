@@ -769,7 +769,36 @@ export type MemberAgentView = {
 export type AgentSettings = {
   tmux: boolean; // agent runs live in tmux sessions on machines that support it
   remote_control: boolean; // their Claude Code sessions start with Remote Control on, under the tmux session's name
+  driver: boolean; // the work driver keeps every task in progress moving (default on)
 };
+
+/** What the work driver sees and did last for one task in progress. */
+export type DriverState =
+  | "pending" // not looked at yet
+  | "grace" // set in progress just now: an agent starts if nothing picks it up
+  | "starting"
+  | "working"
+  | "nudged" // it just started an agent or told one to carry on
+  | "cooling" // nudged a few minutes ago
+  | "needs_you" // its agent waits for your answer
+  | "ending"
+  | "handed_off"
+  | "member" // a member's agent is on it
+  | "paused" // nudges changed nothing: it waits for the task to change
+  | "limit" // the day's nudges are used up
+  | "error";
+export type DriverTask = {
+  task_id: number;
+  ref: string;
+  title: string;
+  state: DriverState;
+  note: string;
+  nudges_today: number;
+  last_nudge_at: string | null;
+  run_id: number | null;
+  checked_at: string | null;
+};
+export type DriverView = { enabled: boolean; tasks: DriverTask[] };
 
 export type TaskFilters = {
   project?: string;

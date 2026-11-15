@@ -509,6 +509,7 @@ func serve(ctx context.Context, cfg config.Config, database *db.DB, st *store.St
 	go app.RunBots(ctx)
 	go app.RunProjectSessions(ctx)
 	go app.RunTmuxAgents(ctx)
+	go app.RunDriver(ctx)
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,

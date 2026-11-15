@@ -60,23 +60,29 @@ const BADGE: Record<AgentTone, "warning" | "accent" | "good" | "outline"> = {
   offline: "outline",
 };
 
-/** The grid of project buttons; nothing for an account or a fleet that cannot host project agents. */
-export function ProjectAgents() {
+/**
+ * The grid of project buttons; nothing for an account or a fleet that cannot
+ * host project agents. A button is a filter: it narrows the Agents page to
+ * that project (again to show everything), and a strip under the grid shows
+ * that project's agent sessions — attach, close, or open one.
+ */
+export function ProjectAgents({ selected = null, onSelect }: { selected?: string | null; onSelect?: (key: string | null) => void }) {
   const member = useUser().role === "member";
-  return member ? null : <ProjectButtons />;
+  return member ? null : <ProjectButtons selected={selected} onSelect={onSelect ?? (() => {})} />;
 }
 
-function ProjectButtons() {
+function ProjectButtons({ selected, onSelect }: { selected: string | null; onSelect: (key: string | null) => void }) {
   const ps = useProjectSessions(5_000);
-  const [picked, setPicked] = useState<string | null>(null);
+  const [opening, setOpening] = useState(false);
   const [all, setAll] = useState(false);
   const v = ps.data;
   if (!v?.sessions?.length) return null;
   const groups = groupSessions(v.sessions);
   const active = groups.filter(isActiveGroup);
-  const shown = all ? groups : active;
+  // A picked project stays in the grid even when it is not an active one.
+  const shown = all ? groups : groups.filter((g) => isActiveGroup(g) || g.key === selected);
   const hidden = groups.length - active.length;
-  const current = groups.find((g) => g.key === picked) ?? null;
+  const current = groups.find((g) => g.key === selected) ?? null;
 
   return (
     <section aria-labelledby="agents-projects" id="agents-projects-section">
@@ -87,7 +93,7 @@ function ProjectButtons() {
         <p className="min-w-0 flex-1 truncate text-[12px] text-fg-3">
           {v.host
             ? v.host.online
-              ? `One agent per project, in tmux on ${v.host.runner_name}`
+              ? `Pick one to see only its agents · one agent per project, in tmux on ${v.host.runner_name}`
               : `${v.host.runner_name} is offline`
             : "Needs a master machine with terminals on"}
         </p>
@@ -101,7 +107,7 @@ function ProjectButtons() {
         <ul className="flex flex-wrap gap-2" aria-label="Project agents">
           {shown.map((g) => (
             <li key={g.key}>
-              <ProjectButton group={g} onClick={() => setPicked(g.key)} />
+              <ProjectButton group={g} picked={g.key === selected} onClick={() => onSelect(g.key === selected ? null : g.key)} />
             </li>
           ))}
         </ul>
@@ -113,13 +119,47 @@ function ProjectButtons() {
           </button>
         </p>
       )}
-      {current ? <ProjectAgentDialog group={current} view={v} onClose={() => setPicked(null)} /> : null}
+      {current ? <PickedProject group={current} view={v} onOpen={() => setOpening(true)} onClear={() => onSelect(null)} /> : null}
+      {current && opening ? <ProjectAgentDialog group={current} view={v} onClose={() => setOpening(false)} /> : null}
     </section>
   );
 }
 
-/** One project: a small square — its key and what its agent is doing; the name is in its tooltip and label. */
-function ProjectButton({ group, onClick }: { group: AgentGroup; onClick: () => void }) {
+/** The picked project: its agent sessions, a way to open one, and the way back to all projects. */
+function PickedProject({ group, view, onOpen, onClear }: { group: AgentGroup; view: ProjectSessions; onOpen: () => void; onClear: () => void }) {
+  const sessions = [group.primary, ...group.extras].filter((s) => isOpen(s) || s.run_id !== null);
+  const offline = !view.host || !view.host.online;
+  return (
+    <div aria-label={`${group.name} agent sessions`} role="region" className="mt-2 rounded-xl border border-line bg-surface">
+      <div className="flex items-center gap-2 px-3 py-2">
+        <ColorDot color={group.color} className="size-2.5" />
+        <span className="min-w-0 flex-1 truncate text-[13px]">
+          <span className="font-medium">{group.name}</span>
+          <span className="text-fg-3">
+            {" "}
+            · {sessions.length ? `${sessions.length} session${sessions.length === 1 ? "" : "s"}` : "no session open"} · {shortHome(group.primary.dir)}
+          </span>
+        </span>
+        <Button size="sm" variant="subtle" onClick={onOpen} disabled={offline} title="Open its tmux session, with or without a first request">
+          <Play className="size-3.5" aria-hidden /> Open session
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onClear} aria-label="Show all projects">
+          <X className="size-3.5" aria-hidden /> All projects
+        </Button>
+      </div>
+      {sessions.length ? (
+        <ul aria-label="Sessions" className="divide-y divide-line border-t border-line">
+          {sessions.map((s) => (
+            <SessionRow key={s.name} s={s} runnerId={view.host?.runner_id ?? null} onNavigate={() => {}} />
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/** One project: a small square — its key and what its agent is doing; the name is in its tooltip and label. Pressed: the page shows only it. */
+function ProjectButton({ group, picked, onClick }: { group: AgentGroup; picked: boolean; onClick: () => void }) {
   const st = groupStatus(group);
   const open = openCount(group);
   const lit = st.tone !== "closed" && st.tone !== "offline";
@@ -127,12 +167,14 @@ function ProjectButton({ group, onClick }: { group: AgentGroup; onClick: () => v
     <button
       type="button"
       onClick={onClick}
-      aria-label={`${group.name}: ${st.tone === "closed" ? "not open — start its agent" : st.label}${open > 1 ? `, ${open} sessions` : ""}`}
-      title={`${group.name} · ${group.primary.name} · ${shortHome(group.primary.dir)}`}
+      aria-pressed={picked}
+      aria-label={`${group.name}: ${st.tone === "closed" ? "not open" : st.label}${open > 1 ? `, ${open} sessions` : ""}`}
+      title={`${group.name} · ${picked ? "showing only its agents — click for all projects" : "show only its agents"}`}
       className={clsx(
         "group relative flex size-[4.25rem] flex-col justify-between rounded-xl border p-1.5 text-left transition-[background,box-shadow,transform] duration-100",
         "hover:shadow-pop active:scale-[0.97]",
         lit ? "border-line-strong" : "border-line bg-surface hover:bg-surface-2",
+        picked && "ring-2 ring-accent ring-offset-2 ring-offset-surface",
       )}
       style={lit ? { background: `color-mix(in srgb, ${group.color || "var(--accent)"} 13%, var(--surface))` } : undefined}
     >

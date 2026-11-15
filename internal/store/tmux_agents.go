@@ -33,10 +33,14 @@ type AgentSettings struct {
 	// Control on under its tmux session's name (default), so it can be
 	// picked up on claude.ai/code and in the Claude app.
 	RemoteControl bool `json:"remote_control"`
+	// Driver: the work driver keeps every task in progress moving — it starts
+	// an agent for one that has none and carries on one whose turn ended
+	// (api/driver.go). On by default.
+	Driver bool `json:"driver"`
 }
 
 func (s *Store) AgentSettings(ctx context.Context) (AgentSettings, error) {
-	v := AgentSettings{Tmux: true, RemoteControl: true}
+	v := AgentSettings{Tmux: true, RemoteControl: true, Driver: true}
 	_, err := s.getSetting(ctx, "agents", &v)
 	return v, err
 }

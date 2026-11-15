@@ -1,13 +1,15 @@
-// Agents: a button per active project first (its agent: one Claude Code
-// session in tmux, started and asked from there), then the conversations
-// that are open now (and waiting on you), then the history. The machines
-// themselves live on their own page (MachinesPage). Nothing open is one
-// line, so the history (by day, with what each day cost) starts high.
+// Agents: a button per active project first — a filter: picking one shows
+// only that project's agents (its sessions, its open conversations, its
+// history) and New run starts with it picked — then the conversations that
+// are open now (and waiting on you), then the history. The pick lives in the
+// URL (?project=KEY). The machines themselves live on their own page
+// (MachinesPage). Nothing open is one line, so the history (by day, with what
+// each day cost) starts high.
 
 import clsx from "clsx";
 import { Activity, Bot, Cpu, Plus } from "lucide-react";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useProjects, useRuns } from "@/api/hooks";
 import type { Run, RunStatus } from "@/api/types";
 import { Button } from "@/components/ui/Button";
@@ -25,6 +27,18 @@ import { RunRow } from "./RunBits";
 export function AgentsPage() {
   const { newRun } = useShell();
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const project = params.get("project")?.toUpperCase() || null;
+  const pick = (key: string | null) =>
+    setParams(
+      (p) => {
+        const next = new URLSearchParams(p);
+        if (key) next.set("project", key);
+        else next.delete("project");
+        return next;
+      },
+      { replace: true },
+    );
   return (
     <div className="mx-auto max-w-[1200px] space-y-4">
       <PageHeader
@@ -35,15 +49,20 @@ export function AgentsPage() {
             <Button variant="ghost" size="sm" onClick={() => navigate("/machines")}>
               <Cpu className="size-3.5" aria-hidden /> Machines
             </Button>
-            <Button variant="primary" size="sm" onClick={() => newRun()}>
-              <Plus className="size-3.5" aria-hidden /> New run
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => newRun(project ? { project_key: project } : undefined)}
+              title={project ? `A new run for ${project}` : undefined}
+            >
+              <Plus className="size-3.5" aria-hidden /> New run{project ? ` · ${project}` : ""}
             </Button>
           </>
         }
       />
-      <ProjectAgents />
-      <ActivePanel />
-      <RunsPanel />
+      <ProjectAgents selected={project} onSelect={pick} />
+      <ActivePanel project={project} />
+      <RunsPanel project={project} onProject={pick} />
     </div>
   );
 }
@@ -55,13 +74,14 @@ function activeOrder(r: Run): number {
   return r.status === "running" ? 2 : 3;
 }
 
-function ActivePanel() {
-  const running = useRuns({ status: "running", limit: 50 }, 3000);
-  const queued = useRuns({ status: "queued", limit: 50 }, 3000);
-  const waiting = useRuns({ status: "waiting", limit: 50 }, 8000);
-  const runs = [...(running.data ?? []), ...(queued.data ?? []), ...(waiting.data ?? [])].sort(
-    (a, b) => activeOrder(a) - activeOrder(b) || b.id - a.id,
-  );
+function ActivePanel({ project }: { project: string | null }) {
+  const filter = { project: project ?? undefined, limit: 50 };
+  const running = useRuns({ ...filter, status: "running" }, 3000);
+  const queued = useRuns({ ...filter, status: "queued" }, 3000);
+  const waiting = useRuns({ ...filter, status: "waiting" }, 8000);
+  const runs = [...(running.data ?? []), ...(queued.data ?? []), ...(waiting.data ?? [])]
+    .filter((r) => !project || r.project_key === project)
+    .sort((a, b) => activeOrder(a) - activeOrder(b) || b.id - a.id);
   const error = running.error ?? queued.error ?? waiting.error;
   const yours = runs.filter((r) => r.status === "waiting" || (r.status === "running" && r.awaiting)).length;
   const { newRun } = useShell();
@@ -70,8 +90,12 @@ function ActivePanel() {
     return (
       <p id="agents-active" className="flex items-center gap-2 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[13px] text-fg-3">
         <Activity className="size-4" aria-hidden />
-        Nothing open ·
-        <button type="button" onClick={() => newRun()} className="font-medium text-accent hover:underline">
+        {project ? `Nothing open for ${project}` : "Nothing open"} ·
+        <button
+          type="button"
+          onClick={() => newRun(project ? { project_key: project } : undefined)}
+          className="font-medium text-accent hover:underline"
+        >
           New run
         </button>
       </p>
@@ -79,7 +103,7 @@ function ActivePanel() {
   }
   return (
     <Panel
-      title={runs.length ? `Open · ${runs.length}${yours ? ` · ${yours} waiting for you` : ""}` : "Open"}
+      title={`${project ? `${project} · ` : ""}${runs.length ? `Open · ${runs.length}${yours ? ` · ${yours} waiting for you` : ""}` : "Open"}`}
       icon={<Activity />}
       id="agents-active"
     >
@@ -105,8 +129,7 @@ function ActivePanel() {
   );
 }
 
-function RunsPanel() {
-  const [project, setProject] = useState("");
+function RunsPanel({ project, onProject }: { project: string | null; onProject: (key: string | null) => void }) {
   const [status, setStatus] = useState<RunStatus | "" | "archived">("");
   const archived = status === "archived";
   const projects = useProjects();
@@ -127,7 +150,7 @@ function RunsPanel() {
       id="agents-runs"
       actions={
         <div className="flex items-center gap-1.5">
-          <Select aria-label="Filter by project" compact className="w-auto" value={project} onChange={(e) => setProject(e.target.value)}>
+          <Select aria-label="Filter by project" compact className="w-auto" value={project ?? ""} onChange={(e) => onProject(e.target.value || null)}>
             <option value="">All projects</option>
             {projects.data?.map((p) => (
               <option key={p.key} value={p.key}>
