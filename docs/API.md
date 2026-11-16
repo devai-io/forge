@@ -569,6 +569,10 @@ the server drives it over the control channel:
   transcript since the last report as events, `Notification` (a permission
   prompt) → `awaiting: "answer"` (answered in the terminal), `SessionEnd` →
   the run waits (`origin: "forge"`) or is over (`origin: "tmux"`).
+  The agent checks that these hooks are in `~/.claude/settings.json` when it
+  starts and on every repo scan, and re-adds missing ones (logged as
+  `claude hooks were missing; re-added them`): without them a tmux run never
+  reports a turn and looks busy forever.
 - **Claude exited** (`SessionEnd`, or the session is gone from the machine's
   tmux list for two minutes): the run is `waiting`; a message starts Claude
   again with `--resume` and the message — in the same tmux session, or, when

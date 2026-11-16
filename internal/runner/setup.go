@@ -143,6 +143,9 @@ func executable() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Linux names a binary replaced under a running process (forge update)
+	// "<path> (deleted)"; the new one is at the path itself.
+	exe = strings.TrimSuffix(exe, " (deleted)")
 	if r, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = r
 	}
@@ -343,23 +346,9 @@ func SetupClaude(configPath, claudePath string, out io.Writer) error {
 		fmt.Fprintln(out, "Added the forge MCP server to Claude Code (user scope).")
 	}
 
-	home, _ := os.UserHomeDir()
-	path := filepath.Join(home, ".claude", "settings.json")
-	hook := shellJoin(append([]string{exe}, agentArgs(configPath, "context", "--hook")...))
-	if err := addHook(path, "SessionStart", hook, "context --hook"); err != nil {
+	path := claudeSettingsPath()
+	if err := installClaudeHooks(path, exe, configPath); err != nil {
 		return err
-	}
-	match := shellJoin(append([]string{exe}, agentArgs(configPath, "match", "--hook")...))
-	if err := addHook(path, "UserPromptSubmit", match, "match --hook"); err != nil {
-		return err
-	}
-	// The session reports: a Claude Code session in tmux and its Forge run
-	// are one thing (RunHook).
-	report := shellJoin(append([]string{exe}, agentArgs(configPath, "hook", "--report")...))
-	for _, event := range reportEvents {
-		if err := addHook(path, event, report, "hook --report"); err != nil {
-			return err
-		}
 	}
 	fmt.Fprintf(out, "Added the SessionStart (context), UserPromptSubmit (task matching) and session-report hooks to %s.\n", path)
 	return nil
@@ -367,6 +356,90 @@ func SetupClaude(configPath, claudePath string, out io.Writer) error {
 
 // reportEvents are the Claude Code events `forge agent hook --report` handles.
 var reportEvents = []string{"SessionStart", "UserPromptSubmit", "Stop", "Notification", "SessionEnd"}
+
+// claudeHook is one Forge hook Claude Code needs: the event, and the marker
+// (the agent subcommand) that tells a Forge entry from everything else.
+type claudeHook struct{ event, marker string }
+
+// claudeHooks are every Forge hook setup-claude installs: the project context
+// at SessionStart, task matching at UserPromptSubmit, and the session report
+// (RunHook) on every event it handles.
+func claudeHooks() []claudeHook {
+	hooks := []claudeHook{{"SessionStart", "context --hook"}, {"UserPromptSubmit", "match --hook"}}
+	for _, event := range reportEvents {
+		hooks = append(hooks, claudeHook{event, "hook --report"})
+	}
+	return hooks
+}
+
+func claudeSettingsPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude", "settings.json")
+}
+
+// installClaudeHooks puts every Forge hook into the Claude Code settings file
+// at path, replacing earlier Forge entries and leaving everything else.
+func installClaudeHooks(path, exe, configPath string) error {
+	for _, h := range claudeHooks() {
+		sub := strings.Fields(h.marker) // "context --hook" → context --hook
+		cmd := shellJoin(append([]string{exe}, agentArgs(configPath, sub...)...))
+		if err := addHook(path, h.event, cmd, h.marker); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// missingClaudeHooks lists the Forge hooks the settings file at path lacks
+// ("Stop: hook --report"). A file that cannot be read or parsed lacks them
+// all; one that does not exist too.
+func missingClaudeHooks(path string) []string {
+	settings := map[string]any{}
+	if raw, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(raw, &settings)
+	}
+	hooks, _ := settings["hooks"].(map[string]any)
+	var missing []string
+	for _, want := range claudeHooks() {
+		found := false
+		groups, _ := hooks[want.event].([]any)
+		for _, group := range groups {
+			g, _ := group.(map[string]any)
+			inner, _ := g["hooks"].([]any)
+			for _, h := range inner {
+				hm, _ := h.(map[string]any)
+				if cmd, _ := hm["command"].(string); isForgeHook(cmd, want.marker) {
+					found = true
+				}
+			}
+		}
+		if !found {
+			missing = append(missing, want.event+": "+want.marker)
+		}
+	}
+	return missing
+}
+
+// EnsureClaudeHooks puts the Forge hooks back into ~/.claude/settings.json
+// when something removed them — a config manager that rewrites the file (a
+// Home Manager rebuild did, and every tmux agent stopped reporting its turns
+// while Forge showed it working). It returns what it re-added (nil when
+// nothing was missing).
+func EnsureClaudeHooks(configPath string) ([]string, error) {
+	path := claudeSettingsPath()
+	missing := missingClaudeHooks(path)
+	if len(missing) == 0 {
+		return nil, nil
+	}
+	exe, err := executable()
+	if err != nil {
+		return nil, err
+	}
+	if err := installClaudeHooks(path, exe, configPath); err != nil {
+		return nil, err
+	}
+	return missing, nil
+}
 
 // addHook puts one Forge hook for event into a Claude Code settings file,
 // dropping earlier Forge ones (commands containing marker) and leaving

@@ -352,14 +352,36 @@ func (r *Runner) handle(parent context.Context, run claimedRun) {
 func (r *Runner) scanLoop(ctx context.Context) {
 	t := time.NewTicker(r.cfg.scanEvery)
 	defer t.Stop()
+	r.checkClaudeHooks()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			r.checkClaudeHooks()
 		case <-r.rescan:
 		}
 		r.scan(ctx)
+	}
+}
+
+// checkClaudeHooks re-adds the Forge hooks to Claude Code's settings when
+// they went missing. Tmux agents only exist through those hooks: without
+// them a session never reports its turns, and its run looks busy forever.
+// Machines without tmux agents are left alone.
+func (r *Runner) checkClaudeHooks() {
+	if !r.terminalEnabled() || r.cfg.configPath == "" {
+		return
+	}
+	if _, err := exec.LookPath(r.cfg.ClaudePath); err != nil {
+		return
+	}
+	added, err := EnsureClaudeHooks(r.cfg.configPath)
+	switch {
+	case err != nil:
+		slog.Warn("claude hooks check failed", "err", err)
+	case len(added) > 0:
+		slog.Warn("claude hooks were missing; re-added them", "path", claudeSettingsPath(), "missing", added)
 	}
 }
 

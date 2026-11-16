@@ -94,6 +94,51 @@ func TestSetupHooksReplaceOnlyForgeOnes(t *testing.T) {
 	}
 }
 
+func TestMissingClaudeHooksAndReinstall(t *testing.T) {
+	path := t.TempDir() + "/settings.json"
+	// What a config manager left: someone else's hook, no Forge ones.
+	orig := `{"model":"opus","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"other-tool"}]}],"SessionStart":[]}}`
+	if err := os.WriteFile(path, []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := missingClaudeHooks(path); len(got) != len(claudeHooks()) {
+		t.Fatalf("missing = %v, want all %d", got, len(claudeHooks()))
+	}
+	if err := installClaudeHooks(path, "/bin/forge", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := missingClaudeHooks(path); len(got) != 0 {
+		t.Fatalf("still missing after install: %v", got)
+	}
+	raw, _ := os.ReadFile(path)
+	s := string(raw)
+	if !strings.Contains(s, "other-tool") || !strings.Contains(s, `"model": "opus"`) ||
+		strings.Count(s, "hook --report") != len(reportEvents) || !strings.Contains(s, "/bin/forge agent context --hook") {
+		t.Fatalf("settings = %s", s)
+	}
+
+	// Guarded entries a config manager writes count as Forge hooks.
+	guard := `[ -x \"$HOME/.local/bin/forge\" ] && exec \"$HOME/.local/bin/forge\" agent `
+	// The shape a Home Manager-managed settings.json carries.
+	managed := `{"hooks":{
+		"SessionStart":[{"hooks":[{"type":"command","command":"` + guard + `context --hook || true"}]},{"hooks":[{"type":"command","command":"` + guard + `hook --report || true"}]}],
+		"UserPromptSubmit":[{"hooks":[{"type":"command","command":"` + guard + `match --hook || true"}]},{"hooks":[{"type":"command","command":"` + guard + `hook --report || true"}]}],
+		"Stop":[{"hooks":[{"type":"command","command":"` + guard + `hook --report || true"}]}],
+		"Notification":[{"hooks":[{"type":"command","command":"` + guard + `hook --report || true"}]}],
+		"SessionEnd":[{"hooks":[{"type":"command","command":"` + guard + `hook --report || true"}]}]}}`
+	if err := os.WriteFile(path, []byte(managed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := missingClaudeHooks(path); len(got) != 0 {
+		t.Fatalf("guarded hooks reported missing: %v", got)
+	}
+
+	// No file at all: everything is missing.
+	if got := missingClaudeHooks(t.TempDir() + "/none.json"); len(got) != len(claudeHooks()) {
+		t.Fatalf("missing file: %v", got)
+	}
+}
+
 func TestAssistantSessionRun(t *testing.T) {
 	root := t.TempDir()
 	root, _ = filepath.EvalSymlinks(root)
