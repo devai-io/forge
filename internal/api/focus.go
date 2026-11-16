@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,6 +90,25 @@ func (s *Server) computeFocus(ctx context.Context, projectID int64, today, trigg
 	if err != nil {
 		return nil, err
 	}
+	savings, err := s.store.SavingsSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	automatic := strings.HasPrefix(trigger, "after ")
+	if automatic && !savings.BackgroundFocusAI {
+		useAI = false
+	}
+	set, _ := s.store.EngineSettings(ctx)
+	payload, _ := json.Marshal(in)
+	hash := fmt.Sprintf("%x", sha256.Sum256(append(payload, []byte(set.Model+"|"+s.providerURL(ctx))...)))
+	if automatic && useAI {
+		if reused, err := s.store.ReuseFocus(ctx, projectID, hash, started); err != nil {
+			return nil, err
+		} else if reused {
+			return s.store.FocusByProject(ctx, projectID)
+		}
+	}
+	ctx = usage.WithScope(ctx, usage.Scope{Feature: "focus", Project: in.Key})
 	focus, source, model, errText := store.FocusRules(in), "rules", "", ""
 	var calls []usage.Entry // what the model was paid, even for an unusable answer
 	if useAI {
@@ -112,6 +132,11 @@ func (s *Server) computeFocus(ctx context.Context, projectID int64, today, trigg
 	}
 	if err := s.store.SaveFocus(ctx, projectID, focus, source, model, trigger, errText, started); err != nil {
 		return nil, err
+	}
+	if source == "ai" {
+		if err := s.store.SetFocusHash(ctx, projectID, hash); err != nil {
+			return nil, err
+		}
 	}
 	s.store.SetFocusUsage(ctx, projectID, calls)
 	return s.store.FocusByProject(ctx, projectID)

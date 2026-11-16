@@ -450,7 +450,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                     run #{projectAgent.run_id}
                   </Link>
                   <span className="font-mono"> · tmux {projectAgent.name}</span>.{" "}
-                  {fresh ? "An extra agent starts in a session of its own." : "This request goes to it as a message — one project, one agent."}
+                  {fresh ? "An extra agent starts in a session of its own." : "Continue here for related work. For an unrelated task, use a fresh agent and include a short handoff."}
                 </p>
                 <Switch checked={fresh} onChange={setFresh} label="Start an extra agent instead" />
               </div>

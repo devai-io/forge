@@ -69,6 +69,8 @@ type Client struct {
 	// AppName and AppURL go out as X-Title and HTTP-Referer, so OpenRouter
 	// splits the key's spend per app.
 	AppName, AppURL string
+	Observe         func(context.Context, string, string, Usage, error)
+	MaxOutputTokens int
 }
 
 // App sets the attribution headers and returns c.
@@ -143,8 +145,16 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 var Efforts = []string{"off", "low", "high", "max"}
 
 // Chat sends the conversation and returns the model's next message.
-func (c *Client) Chat(ctx context.Context, model, effort string, messages []Message, tools []Tool) (Message, Usage, error) {
+func (c *Client) Chat(ctx context.Context, model, effort string, messages []Message, tools []Tool) (message Message, result Usage, callErr error) {
+	defer func() {
+		if c.Observe != nil {
+			c.Observe(ctx, c.BaseURL, model, result, callErr)
+		}
+	}()
 	body := map[string]any{"model": model, "messages": messages}
+	if c.MaxOutputTokens > 0 {
+		body["max_tokens"] = c.MaxOutputTokens
+	}
 	switch effort {
 	case "", "off":
 		body["reasoning"] = map[string]any{"enabled": false}
@@ -163,7 +173,8 @@ func (c *Client) Chat(ctx context.Context, model, effort string, messages []Mess
 	}
 	var out struct {
 		Choices []struct {
-			Message Message `json:"message"`
+			Message      Message `json:"message"`
+			FinishReason string  `json:"finish_reason"`
 		} `json:"choices"`
 		Usage struct {
 			PromptTokens     int `json:"prompt_tokens"`
@@ -178,11 +189,14 @@ func (c *Client) Chat(ctx context.Context, model, effort string, messages []Mess
 	if err := c.do(ctx, http.MethodPost, "/chat/completions", body, &out); err != nil {
 		return Message{}, Usage{}, err
 	}
-	if len(out.Choices) == 0 {
-		return Message{}, Usage{}, errors.New("llm: empty answer")
-	}
 	u := Usage{InputTokens: out.Usage.PromptTokens, OutputTokens: out.Usage.CompletionTokens,
-		CachedTokens: max(out.Usage.CacheHit, out.Usage.Details.Cached), CostUSD: out.Usage.Cost}
+		CachedTokens: min(out.Usage.PromptTokens, max(out.Usage.CacheHit, out.Usage.Details.Cached)), CostUSD: out.Usage.Cost}
+	if len(out.Choices) == 0 {
+		return Message{}, u, errors.New("llm: empty answer")
+	}
+	if out.Choices[0].FinishReason == "length" {
+		return Message{}, u, errors.New("llm: answer exceeded output limit")
+	}
 	msg := out.Choices[0].Message
 	if msg.ReasoningContent == "" {
 		msg.ReasoningContent = msg.Reasoning

@@ -100,7 +100,7 @@ export function MemberRunDialog({ prefill, view, onClose }: { prefill: NewRunPre
           <div className="space-y-2 rounded-md border border-line bg-surface-2/60 px-3 py-2 text-[12.5px]" role="note">
             <p className="text-fg-2">
               Your agent has a conversation open{open.task_ref ? ` on ${open.task_ref}` : ""}.{" "}
-              {fresh ? "It is finished first; this request starts a new one." : "This request goes to it as one more message."}
+              {fresh ? "It is finished first; this request starts a new one." : "Continue related work here. For an unrelated task, start a new conversation with a short handoff."}
             </p>
             <Switch checked={fresh} onChange={setFresh} label="Start a new conversation" />
           </div>

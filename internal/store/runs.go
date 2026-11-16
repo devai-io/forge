@@ -858,6 +858,11 @@ func (s *Store) FinishRun(ctx context.Context, runID, runnerID int64, in FinishI
 		s.MarkFocusDirty(ctx, *dirtyProject, fmt.Sprintf("run #%d %s", runID, status))
 		s.runBotEvent(ctx, *dirtyProject, runID, repoName, in)
 	}
+	if err == nil {
+		if run, e := s.RunByID(ctx, runID); e == nil {
+			s.RecordAgentRun(ctx, run)
+		}
+	}
 	return requeued, err
 }
 

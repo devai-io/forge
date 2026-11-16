@@ -149,6 +149,10 @@ func (s *Server) RunBots(ctx context.Context) {
 }
 
 func (s *Server) botPass(ctx context.Context) {
+	savings, err := s.store.SavingsSettings(ctx)
+	if err != nil || !savings.ProactiveAI {
+		return
+	}
 	user, err := s.store.FirstUser(ctx)
 	if err != nil {
 		return

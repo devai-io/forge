@@ -18,12 +18,12 @@ const USES: { key: "routing" | "context" | "match"; label: string; hint: string 
   {
     key: "routing",
     label: "Pick the model for agent runs",
-    hint: "A run queued without a model: on DeepSeek, a task Jev is confident is heavy goes to the heavy model (the rest stay on the fast one); on Claude, light or ordinary tasks go to Haiku or Sonnet and anything else keeps the machine's default.",
+    hint: "A run queued without a model: on DeepSeek, a task Jev is confident is heavy goes to the heavy model (the rest stay on the fast one); on Claude, light or ordinary tasks go to Haiku or Sonnet and anything else keeps the machine's default. On Codex, light and ordinary tasks use low and medium effort when effort is unspecified; explicit models and efforts stay unchanged.",
   },
   {
     key: "context",
     label: "Trim the context Claude sessions start with",
-    hint: "With more than 8 open tasks, a session lists only the ones relevant to its repo (focus, in-progress, blocked, urgent and the repo's own tasks always stay).",
+    hint: "When compact context is off and there are more than 8 open tasks, a session lists only the ones relevant to its repo (focus, in-progress, blocked, urgent and the repo's own tasks always stay).",
   },
   {
     key: "match",

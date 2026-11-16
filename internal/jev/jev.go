@@ -80,6 +80,7 @@ type Client struct {
 	// AppName and AppURL attribute the spend (X-Title, HTTP-Referer).
 	AppName, AppURL string
 	HTTP            *http.Client
+	Observe         func(context.Context, usage.Entry, error)
 
 	mu    sync.Mutex
 	stats Stats
@@ -162,7 +163,7 @@ func request(model string, state any, questions map[string]Question) (map[string
 	}, nil
 }
 
-func (c *Client) ask(ctx context.Context, state any, questions map[string]Question) (map[string]Answer, error) {
+func (c *Client) ask(ctx context.Context, state any, questions map[string]Question) (answersOut map[string]Answer, callErr error) {
 	key, err := c.Key(ctx)
 	if err != nil || key == "" {
 		return nil, ErrNoKey
@@ -171,6 +172,12 @@ func (c *Client) ask(ctx context.Context, state any, questions map[string]Questi
 	if cfg.Model == "" {
 		cfg.Model = DefaultModel
 	}
+	e := usage.Entry{API: "openrouter", Model: cfg.Model, Calls: 1}
+	defer func() {
+		if c.Observe != nil {
+			c.Observe(ctx, e, callErr)
+		}
+	}()
 	reqBody, err := request(cfg.Model, state, questions)
 	if err != nil {
 		return nil, err
@@ -246,7 +253,7 @@ func (c *Client) ask(ctx context.Context, state any, questions map[string]Questi
 	c.stats.InputTokens += int(out.Usage.PromptTokens)
 	c.stats.LastModel = out.Model
 	c.mu.Unlock()
-	e := usage.Entry{API: "openrouter", Model: cfg.Model, Calls: 1, InputTokens: out.Usage.PromptTokens,
+	e = usage.Entry{API: "openrouter", Model: cfg.Model, Calls: 1, InputTokens: out.Usage.PromptTokens,
 		OutputTokens: out.Usage.CompletionTokens, CostUSD: out.Usage.Cost}
 	if out.Model != "" && out.Model != cfg.Model {
 		e.Note = "Jev → " + out.Model

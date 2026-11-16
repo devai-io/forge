@@ -244,10 +244,17 @@ func (a *Assistant) fold(ctx context.Context, client *llm.Client, model, api str
 	for _, m := range ms {
 		total += msgChars(m)
 	}
-	if total < foldAt {
+	threshold, keep := foldAt, foldKeep
+	savings, _ := a.store.SavingsSettings(ctx)
+	measured := 0
+	if savings.EarlySummaries {
+		threshold, keep = 96_000, 24_000
+		measured = a.store.LastChatInputTokens(ctx, chat.ID)
+	}
+	if total < threshold && measured < 24_000 {
 		return
 	}
-	cut := foldPoint(ms, foldKeep)
+	cut := foldPoint(ms, keep)
 	if cut <= 0 {
 		return
 	}
@@ -262,16 +269,32 @@ func (a *Assistant) fold(ctx context.Context, client *llm.Client, model, api str
 Keep: what the user wants and decided, and why; open threads and promises; what was done (task refs, run ids, commits, files, outcomes); facts about the project learned along the way; the user's preferences. Drop small talk, retries and tool chatter. Newer facts win over older ones. Plain Markdown bullets under a few short headings, at most about 1,500 words. Write it in the language the user writes in.`},
 		{Role: "user", Content: "Summary so far:\n" + prev + "\n\n---\n\nThe newer part of the conversation, oldest first:\n\n" + old},
 	}
-	msg, u, err := client.Chat(ctx, model, "off", msgs, nil)
+	summaryClient := *client
+	if savings.EarlySummaries {
+		engine, err := a.store.EngineSettings(ctx)
+		if err != nil {
+			return
+		}
+		model = engine.Model
+		summaryClient.MaxOutputTokens = 2000
+		msgs[0].Content = strings.ReplaceAll(msgs[0].Content, "1,500 words", "700 words")
+	}
+	scope := usage.ScopeOf(ctx)
+	scope.Feature = "summary"
+	msg, u, err := summaryClient.Chat(usage.WithScope(ctx, scope), model, "off", msgs, nil)
+	miss := int64(max(0, u.InputTokens-u.CachedTokens))
+	cost := u.CostUSD
+	if cost == nil && (u.InputTokens > 0 || u.OutputTokens > 0) {
+		cost = usage.DeepSeekCost(model, miss, int64(u.CachedTokens), int64(u.OutputTokens), time.Now())
+	}
+	meter.Add(usage.Entry{API: api, Model: model, Calls: 1, InputTokens: miss, CachedTokens: int64(u.CachedTokens),
+		OutputTokens: int64(u.OutputTokens), CostUSD: cost,
+		Note: "summarising older messages"})
+	_ = a.store.AddChatUsage(ctx, chat.ID, store.ChatUsage{InputTokens: u.InputTokens, OutputTokens: u.OutputTokens, CachedTokens: u.CachedTokens})
 	if err != nil {
 		slog.Warn("assistant: fold", "chat", chat.ID, "err", err)
 		return
 	}
-	miss := int64(u.InputTokens - u.CachedTokens)
-	meter.Add(usage.Entry{API: api, Model: model, Calls: 1, InputTokens: miss, CachedTokens: int64(u.CachedTokens),
-		OutputTokens: int64(u.OutputTokens), CostUSD: usage.DeepSeekCost(model, miss, int64(u.CachedTokens), int64(u.OutputTokens), time.Now()),
-		Note: "summarising older messages"})
-	_ = a.store.AddChatUsage(ctx, chat.ID, store.ChatUsage{InputTokens: u.InputTokens, OutputTokens: u.OutputTokens, CachedTokens: u.CachedTokens})
 	summary := strings.TrimSpace(msg.Content)
 	if summary == "" {
 		return

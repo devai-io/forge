@@ -40,7 +40,9 @@ func (s *Server) providerURL(ctx context.Context) string {
 
 // llmClient talks to the provider with the vault key, attributed to Forge.
 func (s *Server) llmClient(ctx context.Context) *llm.Client {
-	return llm.New(s.providerURL(ctx), s.providerKey).App("Forge", s.cfg.PublicURL)
+	c := llm.New(s.providerURL(ctx), s.providerKey).App("Forge", s.cfg.PublicURL)
+	c.Observe = s.store.ObserveLLM
+	return c
 }
 
 func (s *Server) jevConfig(ctx context.Context) jev.Config {

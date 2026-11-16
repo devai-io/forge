@@ -617,7 +617,11 @@ func (s *Server) runnerHook(w http.ResponseWriter, r *http.Request, rn *store.Ru
 		_, _ = s.store.DB.Exec(ctx, `UPDATE runs SET session_id = $2 WHERE id = $1 AND session_id = ''`, run.ID, in.SessionID)
 	}
 	if len(in.Events) > 0 {
-		_ = s.store.AppendEvents(ctx, run.ID, rn.ID, in.Events)
+		if err := s.store.AppendEvents(ctx, run.ID, rn.ID, in.Events); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		s.store.RecordAgentTranscript(ctx, run, in.Events)
 	}
 	switch in.Event {
 	case "SessionStart":

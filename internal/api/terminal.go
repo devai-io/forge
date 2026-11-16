@@ -626,7 +626,7 @@ func shellSessionName(server string) string {
 
 func (s *Server) runnerContext(w http.ResponseWriter, r *http.Request, rn *store.Runner) {
 	cwd := r.URL.Query().Get("cwd")
-	ctxInfo, err := s.store.ContextForPath(r.Context(), cwd, s.jevTaskTrimmer(r.Context()))
+	ctxInfo, err := s.store.ContextForPathMode(r.Context(), cwd, s.jevTaskTrimmer(r.Context()), r.URL.Query().Get("full") == "true")
 	if err != nil {
 		writeErr(w, r, err)
 		return

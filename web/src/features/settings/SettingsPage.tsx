@@ -32,6 +32,7 @@ import { AssistantPanel } from "./AssistantPanel";
 import { EndpointsPanel } from "./EndpointsPanel";
 import { EnginePanel } from "./EnginePanel";
 import { ProviderPanel } from "./ProviderPanel";
+import { SavingsControls } from "./SavingsControls";
 import { TokenSavingPanel } from "./TokenSaving";
 import { TelegramPanel } from "./TelegramPanel";
 import { MemoryPanel } from "@/features/memory/MemoryPanel";
@@ -68,7 +69,8 @@ const GROUPS: { id: string; title: string; panels: { id: string; title: string }
     panels: [
       { id: "settings-provider", title: "AI provider" },
       { id: "settings-engine", title: "Agent engine" },
-      { id: "settings-jev", title: "Token saving" },
+      { id: "settings-savings", title: "Token savings & usage" },
+      { id: "settings-jev", title: "Model routing (Jev)" },
       { id: "settings-assistant", title: "Assistant" },
       { id: "settings-memory", title: "Memory" },
     ],
@@ -194,6 +196,7 @@ export function SettingsPage() {
           <GroupHeading id="settings-group-ai">AI</GroupHeading>
           <ProviderPanel />
           <EnginePanel />
+          <SavingsControls />
           <TokenSavingPanel />
           <AssistantPanel />
           {/* MemoryPanel has no id of its own; this is the nav's anchor for it. */}

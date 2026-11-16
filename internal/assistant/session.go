@@ -2,7 +2,6 @@ package assistant
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -207,48 +206,7 @@ func (a *Assistant) Reconcile(ctx context.Context, chatID int64) {
 // sessionUsage turns Claude Code's per-model token counts into bill lines.
 // Claude Code prices them at Anthropic's API rates; on a subscription that
 // is what the work would have cost, not what was charged.
-func sessionUsage(run *store.Run) []usage.Entry {
-	if run.Engine == "codex" {
-		var u struct {
-			Model             string `json:"model"`
-			InputTokens       int64  `json:"inputTokens"`
-			CachedInputTokens int64  `json:"cachedInputTokens"`
-			OutputTokens      int64  `json:"outputTokens"`
-		}
-		if json.Unmarshal(run.Usage, &u) != nil {
-			return nil
-		}
-		model := u.Model
-		if model == "" {
-			model = run.Model
-		}
-		input := u.InputTokens - u.CachedInputTokens
-		if input < 0 {
-			input = 0
-		}
-		return []usage.Entry{{API: "codex", Model: model, Calls: 1, InputTokens: input, CachedTokens: u.CachedInputTokens, OutputTokens: u.OutputTokens, Note: "Codex on the machine’s login; billing follows its Codex authentication"}}
-	}
-	var models map[string]struct {
-		InputTokens              int64    `json:"inputTokens"`
-		OutputTokens             int64    `json:"outputTokens"`
-		CacheReadInputTokens     int64    `json:"cacheReadInputTokens"`
-		CacheCreationInputTokens int64    `json:"cacheCreationInputTokens"`
-		CostUSD                  *float64 `json:"costUSD"`
-	}
-	const note = "Claude Code on the machine's login; cost at API prices"
-	out := []usage.Entry{}
-	if json.Unmarshal(run.Usage, &models) == nil {
-		for model, u := range models {
-			out = append(out, usage.Entry{API: "claude-code", Model: model, Calls: 1,
-				InputTokens: u.InputTokens + u.CacheCreationInputTokens, CachedTokens: u.CacheReadInputTokens,
-				OutputTokens: u.OutputTokens, CostUSD: u.CostUSD, Note: note})
-		}
-	}
-	if len(out) == 0 && run.CostUSD != nil {
-		out = append(out, usage.Entry{API: "claude-code", Model: run.Model, Calls: 1, CostUSD: run.CostUSD, Note: note})
-	}
-	return out
-}
+func sessionUsage(run *store.Run) []usage.Entry { return store.AgentUsage(run) }
 
 func sessionPrompt(user *store.User, machine, mode, publicURL string, folders []string, proactive bool) string {
 	name := user.DisplayName

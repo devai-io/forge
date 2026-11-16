@@ -13,6 +13,7 @@ import (
 
 	"github.com/devai-io/forge/internal/jev"
 	"github.com/devai-io/forge/internal/store"
+	"github.com/devai-io/forge/internal/usage"
 )
 
 // Jev (TypeSafe's decision model, asked through the provider) where Forge
@@ -100,13 +101,22 @@ func (s *Server) testJev(w http.ResponseWriter, r *http.Request, u *store.User) 
 // answer keeps the machine's default. On DeepSeek the default is already the
 // cheap model, so only a confident "heavy" moves the run up to HeavyModel.
 func (s *Server) jevRoute(ctx context.Context, in *store.RunInput, eng store.EngineSettings) {
-	if in.Engine == "codex" || in.Kind != "agent" || in.Model != "" || in.ResumeRunID != nil || strings.TrimSpace(in.Prompt) == "" {
+	if in.Kind != "agent" || (in.Model != "" && (in.Engine != "codex" || in.Effort != "")) || in.ResumeRunID != nil || strings.TrimSpace(in.Prompt) == "" {
 		return
 	}
 	set, on := s.jevOn(ctx)
 	if !on || !set.Routing {
 		return
 	}
+	if in.Engine == "codex" && in.Effort != "" {
+		return
+	}
+	scope := usage.ScopeOf(ctx)
+	scope.Feature = "routing"
+	if repo, err := s.store.RepoByID(ctx, in.RepoID); err == nil {
+		scope.Project, _ = s.store.ProjectKeyByID(ctx, repo.ProjectID)
+	}
+	ctx = usage.WithScope(ctx, scope)
 	prompt := in.Prompt
 	if len(prompt) > 4000 {
 		prompt = prompt[:4000] + " …"
@@ -126,6 +136,15 @@ func (s *Server) jevRoute(ctx context.Context, in *store.RunInput, eng store.Eng
 		return
 	}
 	a := ans["effort"]
+	if in.Engine == "codex" {
+		if a.Confidence >= 0.7 {
+			if effort := map[string]string{"light": "low", "medium": "medium"}[a.Choice]; effort != "" {
+				in.Effort = effort
+				in.ModelNote = fmt.Sprintf("Jev: %s task → %s effort", a.Choice, effort)
+			}
+		}
+		return
+	}
 	model := map[string]string{"light": "haiku", "medium": "sonnet"}[a.Choice]
 	if in.Engine == "deepseek" {
 		model = map[string]string{"heavy": eng.HeavyModel}[a.Choice]
@@ -188,6 +207,7 @@ type relevanceEntry struct {
 }
 
 func (s *Server) jevRelevance(ctx context.Context, repo *store.Repo, tasks []store.Task) (map[int64]float64, error) {
+	ctx = usage.WithScope(ctx, usage.Scope{Feature: "context-selection"})
 	h := sha256.New()
 	fmt.Fprintf(h, "%d|%s|%s", repo.ID, repo.Name, repo.Notes)
 	for _, t := range tasks {

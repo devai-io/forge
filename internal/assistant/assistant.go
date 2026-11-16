@@ -77,7 +77,9 @@ func (a *Assistant) client(ctx context.Context) (*llm.Client, store.AssistantSet
 	if k, err := a.hooks.Key(ctx); err != nil || k == "" {
 		return nil, set, ErrNoKey
 	}
-	return llm.New(set.BaseURL, a.hooks.Key).App("Forge", a.store.PublicURL), set, nil
+	c := llm.New(set.BaseURL, a.hooks.Key).App("Forge", a.store.PublicURL)
+	c.Observe = a.store.ObserveLLM
+	return c, set, nil
 }
 
 // Ready says whether a turn on this engine could start now.
@@ -264,6 +266,7 @@ type turnKey struct{}
 // for, repeat until it answers. Every API call it makes (the model's, and
 // Jev's when a delegated run is routed) is metered into the turn's usage.
 func (a *Assistant) turn(ctx context.Context, chat *store.Chat, turn *store.ChatTurn, user *store.User) error {
+	ctx = usage.WithScope(ctx, usage.Scope{Feature: "assistant", Project: chat.ProjectKey, ChatID: &chat.ID})
 	client, set, err := a.client(ctx)
 	if err != nil {
 		return err

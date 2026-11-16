@@ -77,9 +77,9 @@ type FocusTaskLink struct {
 // keeps its time (the debounce counts from it); the reason is the latest.
 // Best effort: a focus that is late to update must never fail a write.
 func (s *Store) MarkFocusDirty(ctx context.Context, projectID int64, reason string) {
-	_, _ = s.DB.Exec(ctx, `INSERT INTO project_focus (project_id, dirty_since, dirty_reason) VALUES ($1, now(), $2)
+	_, _ = s.DB.Exec(ctx, `INSERT INTO project_focus (project_id, dirty_since, dirty_reason, dirty_changed_at) VALUES ($1, now(), $2, now())
 		ON CONFLICT (project_id) DO UPDATE SET dirty_since = coalesce(project_focus.dirty_since, excluded.dirty_since),
-		dirty_reason = excluded.dirty_reason`, projectID, truncate(reason, 200))
+		dirty_reason = excluded.dirty_reason, dirty_changed_at = excluded.dirty_changed_at`, projectID, truncate(reason, 200))
 }
 
 func (s *Store) markFocusDirtyKey(ctx context.Context, key, reason string) {
@@ -152,9 +152,9 @@ func (s *Store) SaveFocus(ctx context.Context, projectID int64, f Focus, source,
 	_, err := s.DB.Exec(ctx, `INSERT INTO project_focus (project_id, focus, source, model, trigger, generated_at, error)
 		VALUES ($1, $2, $3, $4, $5, now(), $6)
 		ON CONFLICT (project_id) DO UPDATE SET focus = excluded.focus, source = excluded.source, model = excluded.model,
-		trigger = excluded.trigger, generated_at = excluded.generated_at, error = excluded.error,
-		dirty_since = CASE WHEN project_focus.dirty_since > $7 THEN project_focus.dirty_since END,
-		dirty_reason = CASE WHEN project_focus.dirty_since > $7 THEN project_focus.dirty_reason ELSE '' END`,
+		input_hash = '', trigger = excluded.trigger, generated_at = excluded.generated_at, error = excluded.error,
+		dirty_since = CASE WHEN (project_focus.dirty_since > $7 OR project_focus.dirty_changed_at > $7) THEN project_focus.dirty_since END,
+		dirty_reason = CASE WHEN (project_focus.dirty_since > $7 OR project_focus.dirty_changed_at > $7) THEN project_focus.dirty_reason ELSE '' END`,
 		projectID, f.normalized(), source, model, truncate(trigger, 200), truncate(errText, 1000), started)
 	return err
 }
@@ -742,4 +742,21 @@ func (s *Store) FocusUsage(ctx context.Context) ([]usage.Entry, error) {
 		}
 	}
 	return m.Entries(), rows.Err()
+}
+
+// ReuseFocus acknowledges unchanged inputs without a model call. Concurrent
+// changes remain dirty and are revisited by the loop.
+func (s *Store) ReuseFocus(ctx context.Context, id int64, hash string, started time.Time) (bool, error) {
+	tag, err := s.DB.Exec(ctx, `UPDATE project_focus SET
+ dirty_since=CASE WHEN (dirty_since > $3 OR dirty_changed_at > $3) THEN dirty_since END,
+ dirty_reason=CASE WHEN (dirty_since > $3 OR dirty_changed_at > $3) THEN dirty_reason ELSE '' END
+ WHERE project_id=$1 AND input_hash=$2 AND source='ai'`, id, hash, started)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+func (s *Store) SetFocusHash(ctx context.Context, id int64, hash string) error {
+	_, err := s.DB.Exec(ctx, `UPDATE project_focus SET input_hash=$2 WHERE project_id=$1`, id, hash)
+	return err
 }

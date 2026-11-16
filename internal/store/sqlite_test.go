@@ -402,3 +402,54 @@ func TestFocusClipAtWordBoundary(t *testing.T) {
 		t.Fatalf("word cut: %q", f.Headline)
 	}
 }
+
+func TestAIUsageLedgerIdempotencyAndAttribution(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+	run := &store.Run{ID: 123, RunnerID: 10, SessionID: "test-session", Engine: "claude", ProjectKey: "SHOP"}
+	event := store.EventInput{Kind: "claude", Data: []byte(`{"type":"assistant","message":{"id":"msg-1","model":"test-model","usage":{"input_tokens":20,"cache_creation_input_tokens":10,"cache_read_input_tokens":100,"output_tokens":5}}}`)}
+	st.RecordAgentTranscript(ctx, run, []store.EventInput{event, event})
+	groups, err := st.AIUsage(ctx, 30)
+	ok(t, err)
+	if len(groups) != 1 || groups[0].Calls != 1 || groups[0].InputTokens != 30 || groups[0].CachedTokens != 100 || groups[0].CostUSD != nil {
+		t.Fatalf("duplicates or invented cost: %+v", groups)
+	}
+	// A replay with incomplete counters must not lower already measured usage.
+	event.Data = []byte(`{"type":"assistant","message":{"id":"msg-1","model":"test-model","usage":{"input_tokens":0,"output_tokens":2}}}`)
+	st.RecordAgentTranscript(ctx, run, []store.EventInput{event})
+	groups, err = st.AIUsage(ctx, 30)
+	ok(t, err)
+	if groups[0].OutputTokens != 5 || groups[0].InputTokens != 30 {
+		t.Fatal(groups)
+	}
+	_, err = st.DB.Exec(ctx, `UPDATE ai_usage SET recorded_at=ts_add(now(),-40*86400)`)
+	ok(t, err)
+	groups, err = st.AIUsage(ctx, 30)
+	ok(t, err)
+	if len(groups) != 0 {
+		t.Fatal("date filter ignored")
+	}
+}
+
+func TestFocusReusePreservesConcurrentChanges(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+	p, err := st.ProjectByKey(ctx, "2026-01-01", "SHOP")
+	ok(t, err)
+	ok(t, st.SaveFocus(ctx, p.ID, store.Focus{Headline: "Ready"}, "ai", "test", "test", "", time.Now()))
+	ok(t, st.SetFocusHash(ctx, p.ID, "same"))
+	started := time.Now().Add(-time.Second)
+	st.MarkFocusDirty(ctx, p.ID, "new change")
+	reused, err := st.ReuseFocus(ctx, p.ID, "same", started)
+	ok(t, err)
+	f, err := st.FocusByProject(ctx, p.ID)
+	ok(t, err)
+	if !reused || !f.Dirty {
+		t.Fatal("concurrent change lost")
+	}
+	reused, err = st.ReuseFocus(ctx, p.ID, "different", time.Now())
+	ok(t, err)
+	if reused {
+		t.Fatal("different input reused")
+	}
+}

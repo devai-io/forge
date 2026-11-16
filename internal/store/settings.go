@@ -238,3 +238,21 @@ func (s *Store) ProjectSessionsSettings(ctx context.Context) (ProjectSessionsSet
 func (s *Store) SetProjectSessionsSettings(ctx context.Context, v ProjectSessionsSettings) error {
 	return s.putSetting(ctx, "project_sessions", v)
 }
+
+// SavingsSettings are independent of Jev and never override explicit run choices.
+type SavingsSettings struct {
+	CompactContext    bool `json:"compact_context"`
+	EarlySummaries    bool `json:"early_summaries"`
+	BackgroundFocusAI bool `json:"background_focus_ai"`
+	ProactiveAI       bool `json:"proactive_ai"`
+}
+
+func (s *Store) SavingsSettings(ctx context.Context) (SavingsSettings, error) {
+	v := SavingsSettings{CompactContext: true, EarlySummaries: true, BackgroundFocusAI: true, ProactiveAI: true}
+	_, err := s.getSetting(ctx, "savings", &v)
+	return v, err
+}
+
+func (s *Store) SetSavingsSettings(ctx context.Context, v SavingsSettings) error {
+	return s.putSetting(ctx, "savings", v)
+}

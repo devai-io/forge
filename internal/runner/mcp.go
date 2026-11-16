@@ -78,7 +78,7 @@ var taskPriority = map[string]any{"type": "string", "enum": []string{"urgent", "
 
 var mcpTools = []tool{
 	{"forge_context", "The Forge context for a directory: project, repo state, infra & change-control notes, open tasks, open check-up actions. Defaults to the session's working directory.",
-		obj(map[string]any{"cwd": str("absolute directory; defaults to the current one")})},
+		obj(map[string]any{"cwd": str("absolute directory; defaults to the current one"), "full": map[string]any{"type": "boolean", "description": "include focus and extended tasks/memories; default compact"}})},
 	{"forge_projects", "List every Forge project with key, status, priority and open task count.", obj(map[string]any{})},
 	{"forge_create_project", "Create a Forge project, optionally with its first repo (a local checkout path and/or a remote URL). Returns the project key.",
 		obj(map[string]any{"key": str("2-10 uppercase letters or digits, starting with a letter"), "name": str("project name"),
@@ -282,7 +282,7 @@ func callTool(ctx context.Context, c *client, name string, a map[string]any) (st
 		var res struct {
 			Markdown string `json:"markdown"`
 		}
-		if err := c.get(ctx, "/api/runner/context?cwd="+url.QueryEscape(cwd), &res); err != nil {
+		if err := c.get(ctx, "/api/runner/context?cwd="+url.QueryEscape(cwd)+fmt.Sprintf("&full=%t", a["full"] == true), &res); err != nil {
 			var ae *apiError
 			if asAPIError(err, &ae) && ae.status == 404 {
 				return cwd + " is not inside any Forge project's repos. forge_projects lists them.", nil

@@ -117,7 +117,7 @@ describe("agents in tmux", () => {
     renderWithProviders(<NewRunDialog prefill={{ project_key: "SHOP" }} onClose={() => {}} />, { qc: setup() });
     expect(await screen.findByText(/SHOP's agent has a conversation open/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "run #7" })).toHaveAttribute("href", "/agents/runs/7");
-    expect(screen.getByText(/one project, one agent/)).toBeInTheDocument();
+    expect(screen.getByText(/Continue here for related work/)).toBeInTheDocument();
     await user.click(screen.getByRole("switch", { name: "Start an extra agent instead" }));
     expect(screen.getByText(/An extra agent starts in a session of its own/)).toBeInTheDocument();
     await user.type(screen.getByLabelText("Prompt"), "Review the checkout");

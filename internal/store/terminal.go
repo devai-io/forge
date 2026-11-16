@@ -313,6 +313,17 @@ type TaskTrimmer func(ctx context.Context, repo *Repo, tasks []Task) ([]Task, st
 // ContextForPath renders what a Claude session opened in `cwd` should know
 // about its Forge project, compactly: it is injected at every session start.
 func (s *Store) ContextForPath(ctx context.Context, cwd string, trim TaskTrimmer) (*PathContext, error) {
+	return s.ContextForPathMode(ctx, cwd, trim, false)
+}
+
+// Full context is available on demand; startup uses the savings preference.
+func (s *Store) ContextForPathMode(ctx context.Context, cwd string, trim TaskTrimmer, full bool) (*PathContext, error) {
+	savings, err := s.SavingsSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	compact := savings.CompactContext && !full
+
 	idx, err := s.loadPathIndex(ctx)
 	if err != nil {
 		return nil, err
@@ -405,9 +416,9 @@ func (s *Store) ContextForPath(ctx context.Context, cwd string, trim TaskTrimmer
 	if repo != nil {
 		repoID = &repo.ID
 	}
-	memIDs := s.writeMemories(ctx, &b, key, repoID)
+	memIDs := s.writeContextMemories(ctx, &b, key, repoID, compact)
 
-	if f, err := s.FocusByProject(ctx, p.ID); err == nil && (f.Focus.Headline != "" || len(f.Focus.Now) > 0) {
+	if f, err := s.FocusByProject(ctx, p.ID); err == nil && !compact && (f.Focus.Headline != "" || len(f.Focus.Now) > 0) {
 		w("\n## Focus now (Forge's take, %s)\n", f.Source)
 		if f.Focus.Headline != "" {
 			w("%s\n", f.Focus.Headline)
@@ -438,8 +449,18 @@ func (s *Store) ContextForPath(ctx context.Context, cwd string, trim TaskTrimmer
 			return prio[tasks[i].Priority] < prio[tasks[j].Priority]
 		})
 		total, note := len(tasks), ""
-		if trim != nil && repo != nil {
+		if !compact && !full && trim != nil && repo != nil {
 			tasks, note = trim(ctx, &repo.Repo, tasks)
+		}
+
+		if compact {
+			selected := make([]Task, 0, len(tasks))
+			for _, t := range tasks {
+				if len(selected) < 6 || t.Focus || t.Status == "in_progress" || t.Status == "blocked" || t.Priority == "urgent" {
+					selected = append(selected, t)
+				}
+			}
+			tasks, note = selected, "compact context"
 		}
 		if len(tasks) < total {
 			w("\n## Open tasks (%d of %d — %s; forge_tasks lists all)\n", len(tasks), total, note)
@@ -447,7 +468,7 @@ func (s *Store) ContextForPath(ctx context.Context, cwd string, trim TaskTrimmer
 			w("\n## Open tasks (%d)\n", total)
 		}
 		for i, t := range tasks {
-			if i == 20 {
+			if i == 20 && !compact {
 				w("- …and %d more (forge_tasks)\n", len(tasks)-20)
 				break
 			}
@@ -500,6 +521,9 @@ func (s *Store) ContextForPath(ctx context.Context, cwd string, trim TaskTrimmer
 	w("Memory: forge_recall searches what earlier sessions learned; when you learn something a future session would need " +
 		"(a decision and its reason, a convention, a gotcha, how to do X here), save it with forge_remember — one fact per memory, " +
 		"no secrets — and fix or drop a wrong one (forge_update_memory, forge_forget).\n")
+	if compact {
+		w("\nCompact brief: forge_context with full=true includes focus and more tasks/memories; forge_task and forge_recall fetch details. Continue related work here; for unrelated work, save a short handoff (goal, decisions, files, checks, remaining work) and use a new conversation.\n")
+	}
 	out.Markdown = b.String()
 	out.MemoryIDs = memIDs
 	return out, nil
@@ -517,12 +541,21 @@ const (
 // writeMemories adds the project's (and the user's) memories to a session
 // context and returns the ids it listed.
 func (s *Store) writeMemories(ctx context.Context, b *strings.Builder, key string, repoID *int64) []int64 {
+	return s.writeContextMemories(ctx, b, key, repoID, false)
+}
+
+func (s *Store) writeContextMemories(ctx context.Context, b *strings.Builder, key string, repoID *int64, compact bool) []int64 {
+
 	ids := []int64{}
 	project, global, err := s.contextMemories(ctx, key, repoID)
 	if err != nil || len(project)+len(global) == 0 {
 		return ids
 	}
 	used := 0
+	budget, projectMax := contextMemoryChars, contextMemoryMax
+	if compact {
+		budget, projectMax = 1600, 4
+	}
 	section := func(title string, list []Memory, max int) {
 		if len(list) == 0 {
 			return
@@ -530,7 +563,7 @@ func (s *Store) writeMemories(ctx context.Context, b *strings.Builder, key strin
 		fmt.Fprintf(b, "\n## %s\n", title)
 		for i, m := range list {
 			line := m.Line(contextMemoryLine)
-			if i == max || used+len(line) > contextMemoryChars {
+			if (!m.Pinned && (i >= max || used+len(line) > budget)) || used+len(line) > contextMemoryChars {
 				fmt.Fprintf(b, "- …%d more (forge_recall)\n", len(list)-i)
 				return
 			}
@@ -539,7 +572,7 @@ func (s *Store) writeMemories(ctx context.Context, b *strings.Builder, key strin
 			b.WriteString("- " + line + "\n")
 		}
 	}
-	section("Memory: what earlier sessions learned here", project, contextMemoryMax)
+	section("Memory: what earlier sessions learned here", project, projectMax)
 	section("Memory: about the user (every project)", global, contextGlobalMax)
 	return ids
 }

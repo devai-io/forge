@@ -13,6 +13,7 @@ import (
 
 	"github.com/devai-io/forge/internal/jev"
 	"github.com/devai-io/forge/internal/store"
+	"github.com/devai-io/forge/internal/usage"
 )
 
 // Matching a request typed into Claude Code against the open tasks, so the
@@ -120,7 +121,7 @@ func (s *Server) matchTasks(ctx context.Context, cwd, prompt string) ([]taskMatc
 	found := keywordMatch(prompt, cands)
 	if len(found) == 0 && len(strings.Fields(prompt)) >= matchJevMinWords {
 		if set, on := s.jevOn(ctx); on && set.Match {
-			if found, err = s.jevMatch(ctx, prompt, cands); err != nil {
+			if found, err = s.jevMatch(usage.WithScope(ctx, usage.Scope{Feature: "task-matching", Project: key}), prompt, cands); err != nil {
 				slog.Warn("jev task matching failed", "err", err)
 				found = nil
 			}

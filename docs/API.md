@@ -1404,6 +1404,67 @@ type RunInput = { /* … */ engine?: Engine;   // omitted = settings.default
   DeepSeek prices (DeepSeek's own list prices, doubled in its peak hours, for bare
   `deepseek-*` names).
 
+## Token savings and usage
+
+Owner-only (normal session and CSRF requirements):
+
+- `GET /api/savings` → `SavingsSettings`.
+- `PATCH /api/savings` with any subset of the fields → updated `SavingsSettings`.
+- `GET /api/usage?days=30` → `{days, groups: AIUsageGroup[], coverage: string}`.
+  `days` is an integer from 1 to 365 (default 30); invalid values return 422.
+
+```ts
+type SavingsSettings = {
+  compact_context: boolean;      // default true
+  early_summaries: boolean;      // default true
+  background_focus_ai: boolean; // default true; off = scheduled focus uses rules
+  proactive_ai: boolean;        // default true; off pauses scheduled/event bot turns
+};
+type AIUsageGroup = {
+  feature: string; project: string; api: string; model: string;
+  cost_kind: "provider" | "estimate" | "subscription_estimate" | "unknown";
+  calls: number; failed: number;
+  input_tokens: number; cached_tokens: number; output_tokens: number;
+  cost_usd: number | null;
+};
+```
+
+Compact startup context preserves project, repo and change-control notes. It omits
+focus prose that duplicates the task list, selects six tasks plus every focus,
+in-progress, blocked and urgent task among the first 200 open tasks, and limits
+ordinary project memories to four within a 1,600-byte budget (pinned memories may
+exceed this, up to the existing 3,500-byte total). `GET /api/runner/context?cwd=…&full=true`
+returns the extended context without Jev selection; `forge_context` accepts the
+same optional boolean `full`. Ordinary compact startup needs no Jev selection call.
+Extended context retains existing limits (20 displayed tasks, 3,500 bytes of memories).
+
+With early summaries, direct API Assistant conversations fold completed turns at
+96,000 history bytes or after a call reports at least 24,000 input tokens (including
+cache hits). Byte counts are a fallback estimate, not tokenization. The newest
+24,000 bytes are kept at whole-turn boundaries, so an oversized latest turn stays
+intact. Summaries use the configured fast agent model (`EngineSettings.model`), reasoning off, a 2,000-output-token
+limit and a 700-word instruction. Empty, failed or truncated answers never replace
+history; original messages are retained. Turning this off restores the previous
+240,000/60,000-byte thresholds and the conversation's model for summaries. Claude
+and Codex session history is still managed by those clients.
+
+Automatic focus reuses a successful AI result when its inputs, model and provider
+URL are unchanged. Changing `background_focus_ai` to false uses rules on scheduled
+passes; an explicit Recalculate still asks AI. `proactive_ai=false` pauses bot
+reviews and event turns without deleting pending events or affecting direct chat.
+
+Usage starts with this upgrade, with no historical backfill. Provider and Jev
+attempts are recorded per call; failed responses with usage retain their cost.
+Headless agent reports are idempotent snapshots per run/model, not model-call
+counts. Claude tmux transcript usage is deduplicated per session/message; Codex
+tmux hooks currently provide no token counts. Snapshots are attributed to their
+first report date. Agent costs may be unknown; subscription API equivalents and
+estimates are separate from provider-reported charges. Failed counts describe
+observed failed attempts/reports, not a classified retry count. No prompts, tool
+results or secrets are stored in this ledger. Input excludes cached tokens and
+includes cache creation for Claude. The UI displays these categories separately;
+unknown never means zero cost.
+
 ## Jev (token saving)
 
 TypeSafe's Jev answers typed questions (yes/no probabilities, pick-one with a
@@ -1431,7 +1492,8 @@ type Run = { /* … */ model_note: string };   // "Jev: light task (91% sure) �
   asks Jev light / medium / heavy. On `claude`: ≥ 70 % confident light → `haiku`,
   medium → `sonnet`; otherwise the model stays `""` (the machine's default). On
   `deepseek`: ≥ 70 % confident heavy → `heavy_model`; otherwise `model`.
-- **Context**: `GET /api/runner/context` lists, when a project has more than 8 open
+- **Codex routing**: new runs with unspecified effort use `low` for confident light work and `medium` for confident ordinary work (≥ 70%). Explicit models and efforts, resumed runs, heavy and uncertain classifications are preserved.
+- **Context**: with compact context off, `GET /api/runner/context` lists, when a project has more than 8 open
   tasks, the always-kept ones (focus, in progress, blocked, urgent, the repo's own)
   plus up to 12 in total that Jev scores ≥ 0.4 relevant to the repo; the heading
   says so. Scores are cached 30 minutes per task set.
@@ -1649,14 +1711,11 @@ type ChatMessage = {
   still work); on DeepSeek, `delegate_to_claude` only takes `plan` and
   `run_command` is refused. The answer goes to Telegram (when it is set up)
   unless it is just "Nothing to do.".
-- **Folding**: when the conversation the model would see passes about 240,000
-  characters (~60k tokens), the oldest whole turns are summarised (one provider
-  call on the turn's model, counted in the chat's usage; DeepSeek turns only)
-  into `summary`, keeping roughly the newest
-  60,000 characters word for word; the model then gets the summary plus the
-  messages after `summary_seq` (a Claude Code turn that starts a new session
-  gets the summary in its prompt). Messages are never deleted. Applies to
-  every chat; in practice only bots grow that long.
+- **Folding**: direct API chats summarize completed turns at the thresholds in
+  *Token savings and usage* (24,000 reported input tokens or 96 KB of history by
+  default, keeping 24 KB of recent whole turns). The fast-model summary call is
+  counted in usage. Original messages are retained. Claude and Codex manage
+  their own history; switching to a new session includes any existing summary.
 - The web app polls `GET /api/chats/{id}?after=<last seq it holds>` every 1.5 s
   while `chat.busy` and stops when it is false — so every message of a turn
   must be stored before `busy` flips to false. Messages are not expected to

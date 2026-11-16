@@ -1288,3 +1288,17 @@ export type TelegramStatus = {
 };
 
 export type TelegramTest = { ok: boolean; bot?: string; sent?: boolean; note?: string; error?: string };
+
+export type SavingsSettings = {
+  compact_context: boolean;
+  early_summaries: boolean;
+  background_focus_ai: boolean;
+  proactive_ai: boolean;
+};
+export type AIUsageGroup = {
+  feature: string; project: string; api: string; model: string;
+  cost_kind: "provider" | "estimate" | "subscription_estimate" | "unknown";
+  calls: number; failed: number; input_tokens: number; cached_tokens: number;
+  output_tokens: number; cost_usd: number | null;
+};
+export type AIUsage = { days: number; groups: AIUsageGroup[]; coverage: string };

@@ -140,6 +140,7 @@ func New(cfg config.Config, st *store.Store, m *mail.Mailer, mon *monitor.Monito
 	s.tg = telegram.New(s.telegramToken)
 	s.jev = jev.New(s.providerKey, s.jevConfig)
 	s.jev.AppURL = cfg.PublicURL
+	s.jev.Observe = st.ObserveJev
 	s.assistant = assistant.New(st, assistant.Hooks{Key: s.providerKey, Route: s.prepareRun, Queued: s.wakeups.notify})
 	return s
 }
@@ -179,6 +180,9 @@ func (s *Server) Handler() http.Handler {
 	h("PUT /api/provider/key", s.authed(s.elevated(s.setProviderKey)))
 	h("POST /api/provider/test", s.authed(s.testProvider))
 
+	h("GET /api/savings", s.authed(s.getSavings))
+	h("PATCH /api/savings", s.authed(s.updateSavings))
+	h("GET /api/usage", s.authed(s.getAIUsage))
 	h("GET /api/jev", s.authed(s.getJev))
 	h("PATCH /api/jev", s.authed(s.updateJev))
 	h("POST /api/jev/test", s.authed(s.testJev))

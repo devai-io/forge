@@ -135,6 +135,9 @@ func TestJevRoutesRunsToCheaperModels(t *testing.T) {
 
 func TestJevTrimsSessionContext(t *testing.T) {
 	h := setup(t)
+	if err := h.store.SetSavingsSettings(context.Background(), store.SavingsSettings{}); err != nil {
+		t.Fatal(err)
+	}
 	h.login()
 	ctx := context.Background()
 	for i := 0; i < 12; i++ {
