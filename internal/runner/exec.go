@@ -275,6 +275,14 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 			return finishReport{Status: "failed", Error: msg}
 		}
 		ship.send(textEvent("system", "engine: DeepSeek via "+run.Setup.BaseURL))
+	} else if run.Engine == engineClaudeAPI {
+		var err error
+		if env, err = claudeAPIEnv(claudeEnvFile()); err != nil {
+			msg := "refused: " + err.Error()
+			ship.send(textEvent("system", msg))
+			return finishReport{Status: "failed", Error: msg}
+		}
+		ship.send(textEvent("system", "engine: Claude API key (pay as you go)"))
 	}
 
 	cmd := exec.Command(r.cfg.ClaudePath, args...)

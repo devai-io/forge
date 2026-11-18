@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -57,6 +59,43 @@ func (e *engineSetup) env(runModel string) ([]string, error) {
 		"CLAUDE_CODE_AUTO_COMPACT_WINDOW=786432",
 		"ENABLE_TOOL_SEARCH=false",
 	}, nil
+}
+
+// engineClaudeAPI is Claude Code billed to an Anthropic API key (pay as you
+// go) instead of the machine's Claude login. The key lives only on the
+// machine, in <Home>/claude.env as CLAUDE_API_KEY=...; it never goes to the
+// server.
+const engineClaudeAPI = "claude_api"
+
+// claudeEnvFile is where a machine keeps its Claude API key.
+func claudeEnvFile() string { return filepath.Join(Home(), "claude.env") }
+
+// readClaudeAPIKey returns CLAUDE_API_KEY from a KEY=VALUE file ("export "
+// prefix, quotes and # comments tolerated), or "" when there is none.
+func readClaudeAPIKey(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "export "))
+		k, v, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(k) != "CLAUDE_API_KEY" {
+			continue
+		}
+		return strings.Trim(strings.TrimSpace(v), `"'`)
+	}
+	return ""
+}
+
+// claudeAPIEnv is the environment for a claude_api run: the key as
+// ANTHROPIC_API_KEY, on top of an environment withoutClaudeAuth cleared.
+func claudeAPIEnv(path string) ([]string, error) {
+	k := readClaudeAPIKey(path)
+	if k == "" {
+		return nil, errors.New("no Claude API key on this machine: put CLAUDE_API_KEY=... in " + path)
+	}
+	return []string{"ANTHROPIC_API_KEY=" + k}, nil // gitleaks:allow (the variable name, not a key)
 }
 
 // deepseekArgs keep tool search off for a DeepSeek run even when the

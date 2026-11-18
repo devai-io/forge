@@ -297,6 +297,12 @@ a `~/.claude/settings.json` that turns tool search on cannot win) for that
 older than this release don't turn tool search off, and OpenRouter refuses
 their DeepSeek runs: upgrade the machines before using DeepSeek.
 
+**Claude API key (pay as you go).** To bill a run to your Anthropic API key
+instead of the subscription, put `CLAUDE_API_KEY=sk-ant-...` in
+`~/.config/forge/claude.env` (mode 0600) on the machine. The key never leaves
+it. The machine then reports the engine and the New run dialog offers
+**Claude (API key)** for that machine.
+
 ### 2f. Optional: token saving with Jev
 
 With the provider key, Forge asks Jev (TypeSafe's decision model,

@@ -534,7 +534,7 @@ var (
 	RunStatuses     = []string{"queued", "running", "waiting", "succeeded", "failed", "cancelled"}
 	PermissionModes = []string{"plan", "acceptEdits", "auto", "dontAsk", "bypassPermissions"}
 	RunnerRoles     = []string{"master", "ios", "worker"}
-	Engines         = []string{EngineOpenRouter, "claude", "codex"}
+	Engines         = []string{EngineOpenRouter, "claude", "codex", EngineClaudeAPI}
 	CodexEfforts    = []string{"low", "medium", "high", "xhigh", "max", "ultra"}
 	// CodexModels are offered for a Codex run when no machine has reported
 	// its own list yet (Codex's model cache); any id Codex accepts can still
@@ -564,6 +564,9 @@ var (
 const (
 	EngineClaude     = "claude"
 	EngineOpenRouter = "openrouter"
+	// EngineClaudeAPI is Claude Code billed to an Anthropic API key kept on
+	// the machine (claude.env), not its Claude login.
+	EngineClaudeAPI = "claude_api"
 )
 
 // NormEngine is an engine name as given (an API call, the CLI, an Assistant

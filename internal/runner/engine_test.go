@@ -189,3 +189,21 @@ func TestMCPReadToolsAreMarkedReadOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudeAPIKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "claude.env")
+	if readClaudeAPIKey(p) != "" {
+		t.Fatal("key from a missing file")
+	}
+	if _, err := claudeAPIEnv(p); err == nil {
+		t.Fatal("run accepted without a key")
+	}
+	if err := os.WriteFile(p, []byte("# note\nOTHER=1\nexport CLAUDE_API_KEY=\"sk-test\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env, err := claudeAPIEnv(p)
+	if err != nil || len(env) != 1 || env[0] != "ANTHROPIC_API_KEY=sk-test" {
+		t.Fatalf("env = %v, %v", env, err)
+	}
+}

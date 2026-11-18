@@ -596,6 +596,9 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 			if in.Engine != "codex" && !caps.Claude {
 				return nil, invalid("runner_id", "runner %s has no claude binary", runner.Name)
 			}
+			if in.Engine == EngineClaudeAPI && !OneOf(EngineClaudeAPI, caps.Engines) {
+				return nil, invalid("engine", "runner %s has no Claude API key (CLAUDE_API_KEY in claude.env on that machine; update its agent first if it is older)", runner.Name)
+			}
 		}
 		if in.Engine == "codex" && !OneOf(in.PermissionMode, []string{"plan", "acceptEdits", "bypassPermissions"}) {
 			return nil, invalid("permission_mode", "Codex supports plan, acceptEdits or bypassPermissions")

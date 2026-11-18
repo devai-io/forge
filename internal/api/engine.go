@@ -102,7 +102,7 @@ func (s *Server) engineStatus(ctx context.Context) (map[string]any, error) {
 		}
 	}
 	return map[string]any{"settings": set, "provider_key": k != "",
-		"models":        map[string]any{"openrouter": deepseek, "claude": store.ClaudeModels, "codex": codexModelIDs(codex)},
+		"models":        map[string]any{"openrouter": deepseek, "claude": store.ClaudeModels, "claude_api": store.ClaudeModels, "codex": codexModelIDs(codex)},
 		"codex_models":  codex,
 		"codex_efforts": store.CodexEfforts,
 		"efforts":       store.ClaudeEfforts}, nil

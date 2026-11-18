@@ -330,7 +330,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                     ? "A continued run keeps its engine."
                     : (engine || defaultEngine) === "claude"
                       ? "Uses the machine’s Claude login."
-                      : runEngine === "codex" ? "Uses the machine’s Codex login (ChatGPT plan or API key)." : "DeepSeek through OpenRouter."
+                      : runEngine === "codex" ? "Uses the machine’s Codex login (ChatGPT plan or API key)." : runEngine === "claude_api" ? "Claude Code billed to the Anthropic API key in claude.env on that machine (pay as you go), not your subscription." : "DeepSeek through OpenRouter."
                 }
               >
                 {(id, desc) => (
@@ -354,6 +354,9 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
                         <option value="claude">Claude</option>
                         <option value="codex">Codex</option>
                         <option value="openrouter">DeepSeek (OpenRouter)</option>
+                        {runner?.capabilities.engines?.includes("claude_api") || engine === "claude_api" ? (
+                          <option value="claude_api">{ENGINE_LABEL.claude_api}</option>
+                        ) : null}
                       </>
                     )}
                   </Select>

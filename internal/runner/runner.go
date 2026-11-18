@@ -146,11 +146,21 @@ func (r *Runner) capabilities() map[string]any {
 		"tmux_codex":   r.terminalEnabled() && codexErr == nil,
 		"codex_models": codexModels(),
 		"approvals":    r.cfg.Approvals,
-		"engines":      runEngines,
+		"engines":      r.engines(),
 	}
 }
 
 var runEngines = []string{"claude", "codex", "openrouter"}
+
+// engines are the run engines this machine offers; claude_api only with a
+// key in claude.env, so the app offers it where it can work.
+func (r *Runner) engines() []string {
+	out := append([]string{}, runEngines...)
+	if readClaudeAPIKey(claudeEnvFile()) != "" {
+		out = append(out, engineClaudeAPI)
+	}
+	return out
+}
 
 func (r *Runner) codeGateway() string {
 	if !r.codeEnabled() {

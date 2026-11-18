@@ -383,7 +383,7 @@ export type Pairing = { code: string; expires_at: string };
 export type RunStatus = "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
 export type RunKind = "agent" | "command";
 /** Where an agent run's Claude Code sends its requests. */
-export type Engine = "openrouter" | "claude" | "codex";
+export type Engine = "openrouter" | "claude" | "codex" | "claude_api";
 export type Run = {
   id: number;
   runner_id: number;

@@ -1458,6 +1458,14 @@ type RunInput = { /* … */ engine?: Engine;   // omitted = settings.default
   DeepSeek prices (DeepSeek's own list prices, doubled in its peak hours, for bare
   `deepseek-*` names).
 
+- Engine `claude_api` (since v0.1.60): Claude Code billed to an Anthropic API key that
+  stays on the machine (`CLAUDE_API_KEY=` in `<agent home>/claude.env`, default
+  `~/.config/forge/claude.env`). An agent lists `"claude_api"` in `capabilities.engines`
+  only while the file holds a key; `POST /api/runs` with that engine on a machine
+  without it → 422. `claim` sends no engine setup; the agent drops Anthropic
+  credentials from that process and sets `ANTHROPIC_API_KEY`. Models: `models.claude_api`
+  (= the Claude list). Runs are headless (no tmux agent), cost is Claude Code's own `cost_usd`.
+
 ## Token savings and usage
 
 Owner-only (normal session and CSRF requirements):
