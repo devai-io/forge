@@ -527,7 +527,7 @@ func (s *Server) startKept(ctx context.Context, v *projectSessionsView, e Projec
 	}
 	msg := map[string]any{"type": "create", "session": e.Name, "cwd": e.Dir, "start": engine,
 		"skip_permissions": keep.SkipPermissions && v.Host.SkipPermissions,
-		"model": keep.Model, "effort": keep.Effort, "reuse": exists, "env": map[string]string{"FORGE_PROJECT": e.ProjectKey}}
+		"model":            keep.Model, "effort": keep.Effort, "reuse": exists, "env": map[string]string{"FORGE_PROJECT": e.ProjectKey}}
 	if last, err := s.store.LastTmuxConversation(ctx, runnerID, e.Name); err == nil && tmuxEngine(last.Engine) == engine {
 		msg["resume"] = last.SessionID
 	}
