@@ -228,10 +228,10 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 	if interactive {
 		args = append(args, interactiveArgs...)
 	}
-	if run.Model != "" && run.Engine != "deepseek" { // DeepSeek's model goes in the env, with its 1M window
+	if run.Model != "" && !isOpenRouter(run.Engine) { // DeepSeek's model goes in the env, with its 1M window
 		args = append(args, "--model", run.Model)
 	}
-	if run.Engine == "deepseek" {
+	if isOpenRouter(run.Engine) {
 		args = append(args, deepseekArgs...)
 	}
 	if run.ResumeSession != "" {
@@ -267,7 +267,7 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 	args = append(args, r.cfg.ExtraArgs...)
 
 	var env []string
-	if run.Engine == "deepseek" {
+	if isOpenRouter(run.Engine) {
 		var err error
 		if env, err = run.Setup.env(run.Model); err != nil {
 			msg := "refused: " + err.Error()
@@ -324,7 +324,7 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 	if sess != nil {
 		rep.InboxAfter = sess.inboxRead()
 	}
-	if run.Engine == "deepseek" {
+	if isOpenRouter(run.Engine) {
 		// Claude Code prices tokens at Anthropic's rates; the provider's are not.
 		rep.CostUSD = res.deepseekCost(time.Now())
 	}

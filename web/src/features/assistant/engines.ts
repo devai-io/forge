@@ -5,7 +5,7 @@ import type { AssistantStatus, ChatEngine, ChatSettings } from "@/api/types";
 
 /** The engine can answer now: available, and (Claude, Codex) its machine is not known to be offline. */
 export function engineUp(engines: AssistantStatus["engines"] | undefined, engine: ChatEngine): boolean {
-  if (engine === "deepseek") return !!engines?.deepseek.available;
+  if (engine === "openrouter") return !!engines?.openrouter.available;
   const e = engines?.[engine];
   return !!e?.available && e.online !== false;
 }
@@ -18,7 +18,7 @@ export function engineUp(engines: AssistantStatus["engines"] | undefined, engine
  */
 export function newChatSettings(status: AssistantStatus | undefined, bot = false): ChatSettings {
   const configured: ChatEngine = bot ? "claude" : (status?.settings.engine ?? "claude");
-  const order = [configured, "claude", "codex", "deepseek"] as const;
+  const order = [configured, "claude", "codex", "openrouter"] as const;
   const engines = status?.engines;
   const engine = order.find((e) => engineUp(engines, e)) ?? order.find((e) => engines?.[e]?.available) ?? configured;
   return { engine, model: "", effort: "", edits: false, skip_permissions: false };

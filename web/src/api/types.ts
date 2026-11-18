@@ -343,6 +343,7 @@ export type RunnerCapabilities = {
   tmux_agents?: boolean; // can host agent runs in tmux sessions (agents from v0.1.44)
   tmux_codex?: boolean; // can host Codex agent runs in tmux as well (newer agents)
   codex_models?: CodexModel[]; // what the machine's Codex lists for its login
+  engines?: string[]; // engines the agent can run ("claude", "codex", "openrouter"); missing before v0.1.59
 };
 /** A model the machine's Codex offers (`codex --model <id>`). */
 export type CodexModel = { id: string; name: string; description?: string; efforts?: string[]; default_effort?: string };
@@ -355,11 +356,24 @@ export type Runner = {
   online: boolean;
   last_seen_at: string | null;
   capabilities: RunnerCapabilities;
+  /** The coding-agent CLIs on the machine, as of its last check (every 5 min); [] until an agent ≥ v0.1.59 reports. */
+  sessions?: CLISession[];
   running: number;
   created_at: string;
   role: RunnerRole;
   pair_expires_at: string | null; // non-null = a pairing code is outstanding and unused
   members_allowed: boolean; // member accounts may run agents on this machine (`forge member-machine`)
+};
+
+export type SessionCLI = "claude" | "codex" | "cursor";
+export type SessionState = "logged_in" | "logged_out" | "unknown" | "missing";
+/** One coding-agent CLI on a machine: installed, logged in, version. Never a credential. */
+export type CLISession = {
+  cli: SessionCLI;
+  state: SessionState;
+  version: string;
+  detail: string; // e.g. "claude.ai, max", or why the check could not tell
+  checked_at: string | null;
 };
 
 /** A one-time code a machine swaps for its token (`forge agent pair <origin> <code>`). */
@@ -369,7 +383,7 @@ export type Pairing = { code: string; expires_at: string };
 export type RunStatus = "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
 export type RunKind = "agent" | "command";
 /** Where an agent run's Claude Code sends its requests. */
-export type Engine = "deepseek" | "claude" | "codex";
+export type Engine = "openrouter" | "claude" | "codex";
 export type Run = {
   id: number;
   runner_id: number;
@@ -1127,7 +1141,7 @@ export type AssistantStatus = {
   key_configured: boolean; // the provider key (DeepSeek engine); never returned
   models: string[]; // what the provider lists for this key ([] if unknown/unreachable)
   engines: {
-    deepseek: { available: boolean; models: string[]; efforts: string[] };
+    openrouter: { available: boolean; models: string[]; efforts: string[] };
     codex?: { available: boolean; machine: string; online: boolean | null; reason: string; models: string[]; efforts: string[]; skip_permissions?: boolean };
     // Claude Code sessions on the master machine (its own login, no API key).
     // skip_permissions: the machine allows bypassPermissions (--dangerously-skip-permissions).
@@ -1144,18 +1158,18 @@ export type AssistantStatus = {
 };
 
 /** What answers a chat: the DeepSeek API loop on the server, or a Claude Code session on the master machine. */
-export type ChatEngine = "deepseek" | "claude" | "codex";
+export type ChatEngine = "openrouter" | "claude" | "codex";
 export type ChatSettings = {
   engine: ChatEngine;
   model: string; // "" = the default (the Assistant's model / Claude Code's)
-  effort: string; // "" = the default; deepseek: off|low|high|max, claude: low|medium|high|xhigh|max
+  effort: string; // "" = the default; openrouter: off|low|high|max, claude: low|medium|high|xhigh|max
   edits: boolean; // Claude Code may edit files (acceptEdits instead of plan)
   skip_permissions?: boolean; // Claude Code runs with no permission prompts (bypassPermissions)
 };
 
 /** One line of a turn's bill. */
 export type UsageEntry = {
-  api: string; // "openrouter" | "deepseek" | "claude-code" | a provider host (older turns: "jev")
+  api: string; // "openrouter" | "openrouter" | "claude-code" | a provider host (older turns: "jev")
   model: string;
   calls: number;
   input_tokens: number; // not from cache

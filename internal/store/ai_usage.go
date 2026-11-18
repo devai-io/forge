@@ -126,7 +126,7 @@ func (s *Store) RecordAgentRun(ctx context.Context, run *Run) {
 		kind := "unknown"
 		if e.CostUSD != nil {
 			kind = "subscription_estimate"
-			if run.Engine == "deepseek" {
+			if run.Engine == "openrouter" {
 				kind = "estimate"
 			}
 		}
@@ -178,7 +178,7 @@ func AgentUsage(run *Run) []usage.Entry {
 	if len(out) == 0 && run.CostUSD != nil {
 		out = append(out, usage.Entry{API: "claude-code", Model: run.Model, Calls: 1, CostUSD: run.CostUSD, Note: note})
 	}
-	if run.Engine == "deepseek" {
+	if run.Engine == "openrouter" {
 		at := run.CreatedAt
 		if run.FinishedAt != nil {
 			at = *run.FinishedAt

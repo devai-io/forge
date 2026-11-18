@@ -45,7 +45,7 @@ func TestAgentRunEngines(t *testing.T) {
 	// With the key, runs on DeepSeek get its fast model (OpenRouter ids).
 	h.providerKey()
 	ds := queue(map[string]any{})
-	if ds.Engine != "deepseek" || ds.Model != "deepseek/deepseek-v4-flash" || ds.ModelNote != "" {
+	if ds.Engine != "openrouter" || ds.Model != "deepseek/deepseek-v4-flash" || ds.ModelNote != "" {
 		t.Fatalf("deepseek: %+v", ds)
 	}
 	if run := queue(map[string]any{"engine": "claude"}); run.Engine != "claude" || run.Model != "" {
@@ -72,7 +72,7 @@ func TestAgentRunEngines(t *testing.T) {
 	}
 	expect(t, "engine status", h.do("GET", "/api/engine", nil, &offered), 200)
 	if !store.OneOf("claude-opus-5-5", offered.Models["claude"]) ||
-		strings.Join(offered.Models["deepseek"], ",") != "deepseek/deepseek-v4-flash,deepseek/deepseek-v4-pro" ||
+		strings.Join(offered.Models["openrouter"], ",") != "deepseek/deepseek-v4-flash,deepseek/deepseek-v4-pro" ||
 		!store.OneOf("max", offered.Efforts) {
 		t.Fatalf("offered = %+v", offered)
 	}
@@ -86,14 +86,14 @@ func TestAgentRunEngines(t *testing.T) {
 	defer listing.Close()
 	h.setProvider(listing.URL + "/api/v1")
 	expect(t, "engine status (listed)", h.do("GET", "/api/engine", nil, &offered), 200)
-	if strings.Join(offered.Models["deepseek"], ",") != "deepseek/deepseek-v4-flash,deepseek/deepseek-v4-pro,deepseek/deepseek-v5" {
-		t.Fatalf("listed = %+v", offered.Models["deepseek"])
+	if strings.Join(offered.Models["openrouter"], ",") != "deepseek/deepseek-v4-flash,deepseek/deepseek-v4-pro,deepseek/deepseek-v5" {
+		t.Fatalf("listed = %+v", offered.Models["openrouter"])
 	}
 
 	// A heavy task (Jev, confident) moves up to the heavy DeepSeek model.
 	srv, _ := fakeJev(t, "heavy", 0.9, 0.5, nil)
 	h.enableJev(srv.URL)
-	if run := queue(map[string]any{}); run.Engine != "deepseek" || run.Model != "deepseek/deepseek-v4-pro" || !strings.Contains(run.ModelNote, "Jev") {
+	if run := queue(map[string]any{}); run.Engine != "openrouter" || run.Model != "deepseek/deepseek-v4-pro" || !strings.Contains(run.ModelNote, "Jev") {
 		t.Fatalf("heavy: %+v", run)
 	}
 	light, _ := fakeJev(t, "light", 0.95, 0.5, nil)
@@ -129,7 +129,7 @@ func TestAgentRunEngines(t *testing.T) {
 		}
 		expect(t, "claim", code, 200)
 		switch claimed.Run.Engine {
-		case "deepseek":
+		case "deepseek": // this agent never sent a heartbeat: the name an older agent knows
 			if claimed.Engine["api_key"] != "not-a-real-key-for-tests" || claimed.Engine["base_url"] != light.URL+"/api" ||
 				claimed.Engine["model"] != "deepseek/deepseek-v4-flash" || !strings.HasPrefix(claimed.Run.Model, "deepseek/") {
 				t.Fatalf("deepseek setup = %+v", claimed.Engine)
@@ -146,7 +146,7 @@ func TestAgentRunEngines(t *testing.T) {
 			}
 		}
 	}
-	if run := queue(map[string]any{"prompt": "and the other one", "kind": "agent", "resume_run_id": ds.ID}); run.Engine != "deepseek" {
+	if run := queue(map[string]any{"prompt": "and the other one", "kind": "agent", "resume_run_id": ds.ID}); run.Engine != "openrouter" {
 		t.Fatalf("resume: %+v", run)
 	}
 }

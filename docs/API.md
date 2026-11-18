@@ -1149,6 +1149,34 @@ type TerminalHost = { /* … as above, plus */ role: RunnerRole };
 | POST | /api/runner/heartbeat | – | response gains `role` and `scan: boolean` (false for non-masters) |
 | POST | /api/runner/heartbeat | – | response gains `max_concurrent` (EngineSettings): the agent resizes its run slots to it, never above its own agent.json `max_concurrent` |
 
+## CLI sessions
+
+Every agent checks which coding-agent CLIs its machine has and whether each is
+logged in — Claude Code (`claude auth status`), the OpenAI Codex CLI (`codex
+login status`) and Cursor's `cursor-agent` (`cursor-agent status`) — at start
+and every 5 minutes, without a terminal (stdin closed, `CI=1`), each check
+killed after 8 s (`--version` after 3 s). Binaries come from agent.json
+`claude_path`, `codex_path`, `cursor_path` (PATH by default). Only the state
+is sent: never a token, an e-mail address or an account id. `forge agent
+sessions [--json]` prints the same on the machine. This is information only
+for now: what a run uses is still its engine.
+
+```ts
+type CLISession = {
+  cli: "claude" | "codex" | "cursor";
+  state: "logged_in" | "logged_out" | "unknown" | "missing"; // unknown: installed, the check could not tell (e.g. timed out)
+  version: string;              // "" when --version said nothing usable
+  detail: string;               // short and non-identifying: "claude.ai, max", "status check timed out"
+  checked_at: string | null;
+};
+type Runner = { /* … */ sessions: CLISession[] };          // [] until an agent ≥ v0.1.59 reports
+type RunnerCapabilities = { /* … */ engines: string[] };   // ["claude", "codex", "openrouter"]; [] before v0.1.59
+```
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| POST | /api/runner/heartbeat | gains `sessions?: CLISession[]` — omitted (an older agent, or before the first check) keeps the stored list; unknown CLIs are dropped, unknown states become `unknown`, one entry per CLI in the order above | – |
+
 ## VS Code (web) on the master
 
 The master serves VS Code's own web build (`code serve-web`) on localhost; its
@@ -1367,17 +1395,18 @@ the OpenRouter ids.
 
 An agent run's Claude Code uses the machine's own Claude login (`claude`, the
 default) or the provider's Anthropic-compatible endpoint with the provider key
-and DeepSeek's models (`deepseek`).
+and DeepSeek's models (`openrouter`; called `deepseek` before v0.1.59 — that
+name is still accepted wherever an engine is sent, and stored as `openrouter`).
 
 ```ts
-type Engine = "deepseek" | "claude" | "codex";
+type Engine = "openrouter" | "claude" | "codex";
 type EngineSettings = {
   default: Engine; model: string; heavy_model: string;
   max_concurrent: number;        // runs per machine at once, 1–16 (default 4); PATCH validates the range
 };
 // defaults: "claude", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"
 type EngineStatus = { settings: EngineSettings; provider_key: boolean;
-  models: Record<Engine, string[]>;  // the run form's choices; deepseek: settings, then the provider's deepseek/* models, then the known ones
+  models: Record<Engine, string[]>;  // the run form's choices; openrouter: settings, then the provider's deepseek/* models, then the known ones
   codex_models: CodexModel[];        // models.codex with names and supported efforts: the master's Codex list, else another machine's, else Forge's own
   codex_efforts: string[];           // low|medium|high|xhigh|max|ultra
   efforts: string[] };               // claude --effort: low|medium|high|xhigh|max
@@ -1390,12 +1419,14 @@ type RunInput = { /* … */ engine?: Engine;   // omitted = settings.default
 ```
 
 - `GET /api/engine` → `EngineStatus`. `PATCH /api/engine` `Partial<EngineSettings>` → `EngineStatus`.
-- `POST /api/runs` (agent): no `engine` → `settings.default`; `deepseek` without a
+- `POST /api/runs` (agent): no `engine` → `settings.default`; `openrouter` without a
   provider key → `claude` with `model_note` saying so. Then Jev routing (below), then
   a DeepSeek run without a model gets `settings.model` (DeepSeek's own names become
   OpenRouter ids). `resume_run_id` keeps the original run's engine. Unknown engines → 422.
 - `POST /api/runner/claim` → `{run, engine}`: `engine` is `null` for Claude runs,
-  `{name: "deepseek", base_url, api_key, model, heavy_model}` for DeepSeek runs
+  `{name: "openrouter", base_url, api_key, model, heavy_model}` for DeepSeek runs
+  (an agent whose capabilities list no `engines` — before v0.1.59 — gets
+  `"deepseek"` as `name` and as the run's `engine`)
   (`base_url` = `ProviderStatus.anthropic_url`). The agent drops
   `ANTHROPIC_*`/`CLAUDE_CODE_OAUTH_TOKEN` from that process's environment, sets
   `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY=` (empty),
@@ -1494,7 +1525,7 @@ type Run = { /* … */ model_note: string };   // "Jev: light task (91% sure) �
 - **Routing**: `POST /api/runs` for `kind: "agent"` with no `model` (and not a resume)
   asks Jev light / medium / heavy. On `claude`: ≥ 70 % confident light → `haiku`,
   medium → `sonnet`; otherwise the model stays `""` (the machine's default). On
-  `deepseek`: ≥ 70 % confident heavy → `heavy_model`; otherwise `model`.
+  `openrouter`: ≥ 70 % confident heavy → `heavy_model`; otherwise `model`.
 - **Codex routing**: new runs with unspecified effort use `low` for confident light work and `medium` for confident ordinary work (≥ 70%). Explicit models and efforts, resumed runs, heavy and uncertain classifications are preserved.
 - **Context**: with compact context off, `GET /api/runner/context` lists, when a project has more than 8 open
   tasks, the always-kept ones (focus, in progress, blocked, urgent, the repo's own)
@@ -1552,13 +1583,13 @@ and deletes need `X-Forge-Client: web` like every other write.
 A chat "main agent" that can read and update Forge and delegate work to
 Claude Code by queuing runs: a Claude Code session on the master machine
 (`claude`, its own login — the default), or a loop on the server through the
-provider with the provider key (`deepseek`). The web app posts messages and
+provider with the provider key (`openrouter`). The web app posts messages and
 polls. Off until enabled.
 
 ```ts
 type AssistantSettings = {
   enabled: boolean;
-  engine: "claude" | "deepseek" | "codex"; // what a new chat starts on, default "claude"
+  engine: "claude" | "openrouter" | "codex"; // what a new chat starts on, default "claude"
   base_url: string;   // the provider's (read-only here; PATCH /api/provider changes it)
   model: string;      // the DeepSeek engine's model, default "deepseek/deepseek-v4-flash"
 };
@@ -1567,7 +1598,7 @@ type AssistantStatus = {
   key_configured: boolean;       // the provider key; never returned
   models: string[];              // models the provider lists for this key ([] if unknown/unreachable)
   engines: {
-    deepseek: { available: boolean; models: string[]; efforts: string[] };  // efforts: off|low|high|max
+    openrouter: { available: boolean; models: string[]; efforts: string[] };  // efforts: off|low|high|max
     codex: { available: boolean; machine: string; online: boolean | null; reason: string;
              models: string[]; efforts: string[]; skip_permissions: boolean };
     claude: { available: boolean; machine: string; online: boolean | null; reason: string;
@@ -1577,9 +1608,9 @@ type AssistantStatus = {
 };
 // What answers a chat, per chat (changeable any time; applies from the next turn).
 type ChatSettings = {
-  engine: "deepseek" | "claude" | "codex"; // the DeepSeek loop on the server (through the provider) | a Claude Code session on the master
+  engine: "openrouter" | "claude" | "codex"; // the DeepSeek loop on the server (through the provider) | a Claude Code session on the master
   model: string;                 // "" = default (AssistantSettings.model | Claude Code's own)
-  effort: string;                // "" = default; deepseek: off|low|high|max (reasoning off — also the default — or
+  effort: string;                // "" = default; openrouter: off|low|high|max (reasoning off — also the default — or
                                  // OpenRouter's reasoning.effort low|high|xhigh)
   edits: boolean;                // claude: acceptEdits (files, Forge's task tools) instead of plan (reads only)
   skip_permissions: boolean;     // claude: bypassPermissions (no prompts at all; wins over edits). A turn is
@@ -1669,7 +1700,7 @@ type ChatMessage = {
 | POST | /api/bots/{key}/review | – | `201/200 {chat, messages, turns}` — the daily review now (origin `schedule`, read-only), proactive or not; not counted against the cap; `409 busy`; `422` when the bot is off |
 
 - `503 assistant_off` when the assistant is not enabled; `503 no_provider_key`
-  (deepseek) without the provider key;
+  (openrouter) without the provider key;
   `503 no_machine` (claude) without a master machine that has Claude Code. A
   bad engine/model/effort → `422`.
 - **Claude Code turns** (`engine: "claude"`): each turn is an agent run on the

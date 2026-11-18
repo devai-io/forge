@@ -44,8 +44,8 @@ func (s *Server) assistantStatus(ctx context.Context) (map[string]any, error) {
 	}
 	return map[string]any{"settings": set, "key_configured": k != "", "models": models,
 		"engines": map[string]any{
-			"codex":    s.codexStatus(ctx),
-			"deepseek": map[string]any{"available": k != "", "models": models, "efforts": llm.Efforts},
+			"codex":      s.codexStatus(ctx),
+			"openrouter": map[string]any{"available": k != "", "models": models, "efforts": llm.Efforts},
 			"claude": map[string]any{"available": claude["available"], "machine": claude["machine"], "online": claude["online"],
 				"reason": claude["reason"], "models": claudeModels, "efforts": store.ClaudeEfforts,
 				"skip_permissions": claude["skip_permissions"] == true},
@@ -60,11 +60,13 @@ var modelNameRe = regexp.MustCompile(`^[A-Za-z0-9._:/\[\]-]{1,100}$`)
 // chatSettings validates what a request asks for, on top of cur.
 func chatSettings(cur store.ChatSettings, engine, model, effort *string, edits, skip *bool) (store.ChatSettings, error) {
 	set := cur
-	if engine != nil && *engine != set.Engine {
-		if !store.OneOf(*engine, store.Engines) {
-			return set, &store.ValidationError{Field: "engine", Message: "must be claude, codex or deepseek"}
+	set.Engine = store.NormEngine(set.Engine)
+	if engine != nil && store.NormEngine(*engine) != set.Engine {
+		e := store.NormEngine(*engine)
+		if !store.OneOf(e, store.Engines) {
+			return set, &store.ValidationError{Field: "engine", Message: "must be claude, codex or openrouter"}
 		}
-		set.Engine, set.Model, set.Effort = *engine, "", "" // another engine's model and effort mean nothing here
+		set.Engine, set.Model, set.Effort = e, "", "" // another engine's model and effort mean nothing here
 	}
 	if model != nil {
 		set.Model = strings.TrimSpace(*model)
@@ -127,8 +129,9 @@ func (s *Server) updateAssistant(w http.ResponseWriter, r *http.Request, u *stor
 		return
 	}
 	if in.Engine != nil {
+		*in.Engine = store.NormEngine(*in.Engine)
 		if !store.OneOf(*in.Engine, store.Engines) {
-			writeErr(w, r, &store.ValidationError{Field: "engine", Message: "must be claude, codex or deepseek"})
+			writeErr(w, r, &store.ValidationError{Field: "engine", Message: "must be claude, codex or openrouter"})
 			return
 		}
 		set.Engine = *in.Engine

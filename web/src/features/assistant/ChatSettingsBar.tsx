@@ -27,7 +27,7 @@ export function ChatSettingsBar({
 }) {
   const status = useAssistant();
   const engines = status.data?.engines;
-  const deepseek = engines?.deepseek;
+  const deepseek = engines?.openrouter;
   const claude = engines?.claude;
   const codex = engines?.codex;
   const current = engines?.[value.engine];
@@ -35,11 +35,11 @@ export function ChatSettingsBar({
 
   const models = [...(current?.models ?? [])];
   if (value.model && !models.includes(value.model)) models.unshift(value.model);
-  const defaultModel = value.engine === "deepseek" && status.data?.settings.model ? ` (${status.data.settings.model})` : "";
+  const defaultModel = value.engine === "openrouter" && status.data?.settings.model ? ` (${status.data.settings.model})` : "";
   const efforts = current?.efforts ?? [];
   // The engine's machine is down: say so above the composer, and whether another engine can answer instead.
-  const offlineMachine = value.engine !== "deepseek" && local?.online === false ? local.machine || "The master" : null;
-  const alternative = (["claude", "codex", "deepseek"] as const).some((e) => e !== value.engine && engineUp(engines, e));
+  const offlineMachine = value.engine !== "openrouter" && local?.online === false ? local.machine || "The master" : null;
+  const alternative = (["claude", "codex", "openrouter"] as const).some((e) => e !== value.engine && engineUp(engines, e));
   const skipping = !!value.skip_permissions;
 
   return (
@@ -73,8 +73,8 @@ export function ChatSettingsBar({
           <option value="codex" disabled={!codex?.available}>
             Codex{codex?.machine ? ` · ${codex.machine}` : ""}{codex && !codex.available ? ` (${codex.reason})` : ""}
           </option>
-          <option value="deepseek" disabled={deepseek ? !deepseek.available : false}>
-            {ENGINE_NAME.deepseek}
+          <option value="openrouter" disabled={deepseek ? !deepseek.available : false}>
+            {ENGINE_NAME.openrouter}
             {deepseek && !deepseek.available ? " (no key)" : ""}
           </option>
         </Select>
@@ -94,7 +94,7 @@ export function ChatSettingsBar({
             </option>
           ))}
         </Select>
-        {value.engine !== "deepseek" ? (
+        {value.engine !== "openrouter" ? (
           <Switch
             checked={value.edits}
             // Skipping prompts would still let it change things: it goes off with changes.
@@ -104,7 +104,7 @@ export function ChatSettingsBar({
           />
         ) : null}
         {/* Offered only with changes on; still shown while on (an older chat may have it without changes) so it can be turned off. */}
-        {value.engine !== "deepseek" && ((value.edits && local?.skip_permissions) || skipping) ? (
+        {value.engine !== "openrouter" && ((value.edits && local?.skip_permissions) || skipping) ? (
           <span className={clsx("rounded-md", skipping && "border border-warning/50 bg-warning/12 px-1.5 py-0.5")}>
             <Switch
               checked={skipping}

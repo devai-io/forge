@@ -77,7 +77,7 @@ func TestAssistantDeepSeekTurnIsMetered(t *testing.T) {
 	var started chatView
 	expect(t, "start", h.do("POST", "/api/chats", map[string]any{"content": "Summarise the shop API README",
 		"model": "deepseek-flash", "effort": "high"}, &started), 201)
-	if started.Chat.Engine != "deepseek" || started.Chat.Effort != "high" {
+	if started.Chat.Engine != "openrouter" || started.Chat.Effort != "high" {
 		t.Fatalf("settings = %+v", started.Chat.ChatSettings)
 	}
 	chat, _ := h.waitChat(started.Chat.ID)
@@ -101,7 +101,7 @@ func TestAssistantDeepSeekTurnIsMetered(t *testing.T) {
 		t.Fatalf("turns = %+v", v.Turns)
 	}
 	turn := v.Turns[0]
-	if turn.Status != "done" || turn.Engine != "deepseek" || len(turn.Runs) != 1 || turn.Runs[0].RepoName != "shop_api" {
+	if turn.Status != "done" || turn.Engine != "openrouter" || len(turn.Runs) != 1 || turn.Runs[0].RepoName != "shop_api" {
 		t.Fatalf("turn = %+v", turn)
 	}
 	var llmLine, jevLine bool
@@ -260,7 +260,7 @@ func TestAssistantClaudeCodeTurns(t *testing.T) {
 	// Switching engine drops the other engine's model and effort.
 	var patched struct{ Chat store.Chat }
 	expect(t, "switch", h.do("PATCH", fmt.Sprintf("/api/chats/%d", started.Chat.ID), map[string]any{"engine": "deepseek"}, &patched), 200)
-	if patched.Chat.Engine != "deepseek" || patched.Chat.Model != "" || patched.Chat.Effort != "" || !patched.Chat.Edits {
+	if patched.Chat.Engine != "openrouter" || patched.Chat.Model != "" || patched.Chat.Effort != "" || !patched.Chat.Edits {
 		t.Fatalf("switched = %+v", patched.Chat.ChatSettings)
 	}
 }

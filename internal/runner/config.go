@@ -32,6 +32,7 @@ type Config struct {
 	// ClaudePath is the claude binary; "claude" resolves through PATH.
 	ClaudePath string `json:"claude_path"`
 	CodexPath  string `json:"codex_path"`
+	CursorPath string `json:"cursor_path"`
 	configPath string
 	// PermissionModes this runner accepts. bypassPermissions is never implied:
 	// it has to be listed here by hand on the machine itself.
@@ -177,6 +178,9 @@ func (c *Config) normalize() error {
 	}
 	if c.CodexPath == "" {
 		c.CodexPath = "codex"
+	}
+	if c.CursorPath == "" {
+		c.CursorPath = "cursor-agent"
 	}
 	if c.TmuxPath == "" {
 		c.TmuxPath = "tmux"

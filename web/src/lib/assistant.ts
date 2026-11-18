@@ -243,7 +243,7 @@ export function usageLabel(usage: ChatUsage | null | undefined): string {
 
 // ── Engines and spend ──────────────────────────────────────────────────────
 
-export const ENGINE_NAME: Record<ChatEngine, string> = { deepseek: "DeepSeek (OpenRouter)", claude: "Claude Code", codex: "Codex" };
+export const ENGINE_NAME: Record<ChatEngine, string> = { openrouter: "DeepSeek (OpenRouter)", claude: "Claude Code", codex: "Codex" };
 
 export { EFFORT_LABEL } from "@/lib/agents";
 
@@ -301,14 +301,14 @@ export function turnSpend(turn: ChatTurn): TurnSpend {
   for (const r of turn.runs) {
     if (r.id === turn.run_id) continue; // the session itself: its tokens are the usage lines
     const running = r.status === "queued" || r.status === "running";
-    const engine = r.kind === "command" ? "command" : r.engine === "deepseek" ? "DeepSeek" : r.engine === "codex" ? "Codex" : "Claude";
+    const engine = r.kind === "command" ? "command" : r.engine === "openrouter" ? "DeepSeek" : r.engine === "codex" ? "Codex" : "Claude";
     lines.push({
       key: `r${r.id}`,
       label: `Run #${r.id} · ${engine}${r.model ? ` ${r.model}` : ""}`,
       detail: `${r.repo_name} · ${r.status}`,
       cost: r.kind === "command" ? 0 : r.cost_usd,
       kind: r.engine === "claude" ? "subscription" : "billed",
-      approx: r.engine === "deepseek",
+      approx: r.engine === "openrouter",
       runId: r.id,
       pending: running,
     });

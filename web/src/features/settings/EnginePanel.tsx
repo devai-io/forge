@@ -53,7 +53,7 @@ export function EnginePanel() {
               items={[
                 { value: "claude", label: "Claude" },
                 { value: "codex", label: "Codex" },
-                { value: "deepseek", label: "DeepSeek (OpenRouter)" },
+                { value: "openrouter", label: "DeepSeek (OpenRouter)" },
               ]}
             />
             {engine.data.provider_key ? (
@@ -96,7 +96,7 @@ export function EnginePanel() {
             </Field>
             {/* Suggestions: the DeepSeek models the provider lists, and the known ones. */}
             <datalist id="deepseek-models">
-              {(engine.data.models?.deepseek ?? []).map((m) => (
+              {(engine.data.models?.openrouter ?? []).map((m) => (
                 <option key={m} value={m} />
               ))}
             </datalist>

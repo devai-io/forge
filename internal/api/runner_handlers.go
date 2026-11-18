@@ -55,7 +55,7 @@ func (s *Server) runnerClaim(w http.ResponseWriter, r *http.Request, rn *store.R
 	for {
 		run, err := s.store.ClaimRun(r.Context(), rn.ID)
 		if err == nil {
-			out := map[string]any{"run": run, "engine": s.runnerEngine(r.Context(), run)}
+			out := map[string]any{"run": run, "engine": s.runnerEngine(r.Context(), run, rn)}
 			if run.RepoID == 0 && run.ChatTurnID != nil {
 				folders := []string{}
 				for _, f := range strings.Split(run.Cwd, "\n") {

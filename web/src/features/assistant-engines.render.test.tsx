@@ -12,11 +12,11 @@ afterEach(() => vi.unstubAllGlobals());
 const AT = "2026-09-29T10:00:00Z";
 
 const status: AssistantStatus = {
-  settings: { enabled: true, engine: "deepseek", base_url: "https://llm.example.com", model: "demo-flash" },
+  settings: { enabled: true, engine: "openrouter", base_url: "https://llm.example.com", model: "demo-flash" },
   key_configured: true,
   models: ["demo-flash", "demo-pro"],
   engines: {
-    deepseek: { available: true, models: ["demo-flash", "demo-pro"], efforts: ["off", "low", "high", "max"] },
+    openrouter: { available: true, models: ["demo-flash", "demo-pro"], efforts: ["off", "low", "high", "max"] },
     claude: { available: true, machine: "desk", online: true, reason: "", models: ["opus", "sonnet"], efforts: ["low", "medium", "high", "xhigh", "max"] },
   },
 };
@@ -29,7 +29,7 @@ const chat = (over: Partial<Chat> = {}): Chat => ({
   usage: { input_tokens: 0, output_tokens: 0, cached_tokens: 0 },
   created_at: AT,
   updated_at: AT,
-  engine: "deepseek",
+  engine: "openrouter",
   model: "",
   effort: "",
   edits: false,
@@ -58,7 +58,7 @@ const run = (over: Partial<Run>): Run =>
   ({
     id: 12,
     kind: "agent",
-    engine: "deepseek",
+    engine: "openrouter",
     model: "deepseek-flash",
     repo_name: "shop_api",
     status: "succeeded",
@@ -71,7 +71,7 @@ const turn = (over: Partial<ChatTurn> = {}): ChatTurn => ({
   id: 3,
   chat_id: 7,
   seq: 1,
-  engine: "deepseek",
+  engine: "openrouter",
   model: "demo-flash",
   effort: "high",
   status: "done",
@@ -232,7 +232,7 @@ describe("Assistant chat list and composer guards", () => {
     renderChat("/assistant");
     await userEvent.setup().type(await screen.findByRole("textbox", { name: "Ask the assistant" }), "Anything failing?{Enter}");
     await waitFor(() =>
-      expect(created).toEqual({ content: "Anything failing?", engine: "deepseek", model: "", effort: "", edits: false, skip_permissions: false }),
+      expect(created).toEqual({ content: "Anything failing?", engine: "openrouter", model: "", effort: "", edits: false, skip_permissions: false }),
     );
   });
 
@@ -299,7 +299,7 @@ describe("Assistant chat list and composer guards", () => {
     );
     renderChat("/assistant/new");
     const engine = await screen.findByRole("combobox", { name: "Engine" });
-    await waitFor(() => expect(engine).toHaveValue("deepseek"));
+    await waitFor(() => expect(engine).toHaveValue("openrouter"));
     expect(screen.queryByText(/is offline/)).not.toBeInTheDocument();
     await userEvent.setup().selectOptions(engine, "claude");
     expect(screen.getByText("box1 is offline — pick another engine")).toBeInTheDocument();

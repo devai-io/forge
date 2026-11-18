@@ -68,15 +68,15 @@ Server (workspace: FORGE_HOME, default ~/.config/forge):
   forge remove-passkeys <username>       delete every passkey of an account
   forge backup                           snapshot the database into backups/ now
   forge openrouter status | test         the AI provider (OpenRouter): key, URL, one tiny call
-  forge openrouter set-key < key.txt     store the one provider key (DeepSeek engine, Jev)
+  forge openrouter set-key < key.txt     store the one provider key (OpenRouter engine, Jev)
   forge openrouter url <base-url>        another OpenAI-compatible gateway (default OpenRouter)
   forge jev status | on | off            token saving with Jev (through the provider)
   forge assistant status | on | off      the Assistant (a chat that runs Forge and delegates)
-  forge assistant engine claude|codex|deepseek what a new chat starts on (default claude)
+  forge assistant engine claude|codex|openrouter what a new chat starts on (default claude)
   forge assistant model <id>             the DeepSeek engine's model
   forge assistant ask [-engine E] [-model M] [-effort E] <message>
                                          one turn from the shell: the answer and what it spent
-  forge engine status | claude | codex | deepseek  default engine for agent runs (default claude)
+  forge engine status | claude | codex | openrouter  default engine for agent runs (default claude)
   forge engine model <id> [heavy-id]     DeepSeek models (default / heavy tasks)
   forge telegram status | on | off | set-token | chat <id> | test
                                          the Telegram bot (token on stdin for set-token)
@@ -95,6 +95,8 @@ Machine (settings: ~/.config/forge/agent.json):
   forge agent secrets scan               list this checkout's git-ignored secret files
   forge agent secrets push [--yes] [FILE…]
                                          store them in the vault (Vault → Set up a machine)
+  forge agent sessions [--json]          the coding-agent CLIs here (Claude Code, Codex,
+                                         cursor-agent): installed, logged in, version
 
 Both:
   forge update [--check] [--version V]   install the latest release here: binary, Claude/Codex
@@ -203,6 +205,8 @@ func runAgent(args []string) error {
 			return werr
 		}
 		return runner.Resume(cfg, cwd, fs.Args()[1:], os.Stdin, os.Stdout)
+	case "sessions":
+		return agentSessions(cfg, err, fs.Args()[1:])
 	case "", "run":
 	default:
 		return fmt.Errorf("unknown agent command %q (see forge help)", fs.Arg(0))
@@ -226,6 +230,42 @@ func runAgent(args []string) error {
 		return syscall.Exec(exe, os.Args, os.Environ())
 	}
 	return err
+}
+
+// agentSessions is `forge agent sessions [--json]`: the coding-agent CLIs
+// on this machine and whether each is logged in, as the agent reports them
+// to Forge. Works before pairing too (default paths).
+func agentSessions(cfg *runner.Config, cfgErr error, args []string) error {
+	fs := flag.NewFlagSet("forge agent sessions", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "print JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if cfgErr != nil {
+		cfg = &runner.Config{ClaudePath: "claude", CodexPath: "codex", CursorPath: "cursor-agent"}
+	}
+	sessions := runner.ProbeSessions(context.Background(), cfg)
+	if *asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(sessions)
+	}
+	names := map[string]string{"claude": "Claude Code", "codex": "Codex CLI", "cursor": "Cursor (cursor-agent)"}
+	for _, s := range sessions {
+		state := map[string]string{runner.SessionMissing: "not installed"}[s.State]
+		if state == "" {
+			state = strings.ReplaceAll(s.State, "_", " ")
+		}
+		line := fmt.Sprintf("%-22s %-13s", names[s.CLI], state)
+		if s.Version != "" {
+			line += " v" + strings.TrimPrefix(s.Version, "v")
+		}
+		if s.Detail != "" {
+			line += " (" + s.Detail + ")"
+		}
+		fmt.Println(strings.TrimRight(line, " "))
+	}
+	return nil
 }
 
 // agentSecrets is `forge agent secrets scan|push`.
@@ -755,7 +795,7 @@ func jevCommand(ctx context.Context, cfg config.Config, st *store.Store, args []
 // assistantCommand is Settings → Assistant, for a server without a browser.
 func assistantCommand(ctx context.Context, cfg config.Config, st *store.Store, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: forge assistant status | on | off | engine claude|codex|deepseek | model <id> | ask [flags] <message>")
+		return errors.New("usage: forge assistant status | on | off | engine claude|codex|openrouter | model <id> | ask [flags] <message>")
 	}
 	if args[0] == "ask" {
 		return assistantAsk(ctx, cfg, st, args[1:])
@@ -772,10 +812,10 @@ func assistantCommand(ctx context.Context, cfg config.Config, st *store.Store, a
 	case "on", "off":
 		set.Enabled = args[0] == "on"
 	case "engine":
-		if len(args) != 2 || !store.OneOf(args[1], store.Engines) {
-			return errors.New("usage: forge assistant engine claude|codex|deepseek")
+		if len(args) != 2 || !store.OneOf(store.NormEngine(args[1]), store.Engines) {
+			return errors.New("usage: forge assistant engine claude|codex|openrouter")
 		}
-		set.Engine = args[1]
+		set.Engine = store.NormEngine(args[1])
 	case "model":
 		if len(args) != 2 {
 			return errors.New("usage: forge assistant model <id>")
@@ -792,7 +832,7 @@ func assistantCommand(ctx context.Context, cfg config.Config, st *store.Store, a
 			return err
 		}
 	}
-	fmt.Printf("assistant: enabled=%t engine=%s deepseek_model=%s provider=%s key=%t\n",
+	fmt.Printf("assistant: enabled=%t engine=%s openrouter_model=%s provider=%s key=%t\n",
 		set.Enabled, set.Engine, set.Model, set.BaseURL, providerKeyed(ctx, st, box))
 	return nil
 }
@@ -800,7 +840,7 @@ func assistantCommand(ctx context.Context, cfg config.Config, st *store.Store, a
 // engineCommand is Settings → Agent engine, for a server without a browser.
 func engineCommand(ctx context.Context, cfg config.Config, st *store.Store, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: forge engine status | claude | codex | deepseek | model <id> [heavy-id]")
+		return errors.New("usage: forge engine status | claude | codex | openrouter | model <id> [heavy-id]")
 	}
 	set, err := st.EngineSettings(ctx)
 	if err != nil {
@@ -811,8 +851,8 @@ func engineCommand(ctx context.Context, cfg config.Config, st *store.Store, args
 		return err
 	}
 	switch args[0] {
-	case "deepseek", "claude", "codex":
-		set.Default = args[0]
+	case "openrouter", "deepseek", "claude", "codex":
+		set.Default = store.NormEngine(args[0])
 	case "model":
 		if len(args) < 2 || len(args) > 3 {
 			return errors.New("usage: forge engine model <id> [heavy-id]")
@@ -832,7 +872,7 @@ func engineCommand(ctx context.Context, cfg config.Config, st *store.Store, args
 			return err
 		}
 	}
-	fmt.Printf("engine: default=%s deepseek_model=%s heavy_model=%s provider_key=%t\n", set.Default, set.Model, set.HeavyModel, providerKeyed(ctx, st, box))
+	fmt.Printf("engine: default=%s openrouter_model=%s heavy_model=%s provider_key=%t\n", set.Default, set.Model, set.HeavyModel, providerKeyed(ctx, st, box))
 	return nil
 }
 
@@ -841,7 +881,7 @@ func engineCommand(ctx context.Context, cfg config.Config, st *store.Store, args
 func assistantAsk(ctx context.Context, cfg config.Config, st *store.Store, args []string) error {
 	fs := flag.NewFlagSet("forge assistant ask", flag.ContinueOnError)
 	user := fs.String("user", "", "account to ask as (default: the first one)")
-	engine := fs.String("engine", "", "claude | codex | deepseek (default: Settings → Assistant)")
+	engine := fs.String("engine", "", "claude | codex | openrouter (default: Settings → Assistant)")
 	model := fs.String("model", "", "model (default: the engine's)")
 	effort := fs.String("effort", "", "deepseek: off|low|high|max; claude: low|medium|high|xhigh|max; codex: low|medium|high|xhigh")
 	edits := fs.Bool("edits", false, "claude/codex: may edit files")
@@ -850,7 +890,7 @@ func assistantAsk(ctx context.Context, cfg config.Config, st *store.Store, args 
 	}
 	content := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if content == "" {
-		return errors.New("usage: forge assistant ask [-engine claude|codex|deepseek] [-model M] [-effort E] [-edits] <message>")
+		return errors.New("usage: forge assistant ask [-engine claude|codex|openrouter] [-model M] [-effort E] [-edits] <message>")
 	}
 	box, err := vault.Load(cfg.Home)
 	if err != nil {

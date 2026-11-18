@@ -76,7 +76,7 @@ function AssistantForm({ status }: { status: AssistantStatus }) {
           items={[
             { value: "claude", label: "Claude" },
                 { value: "codex", label: "Codex" },
-            { value: "deepseek", label: "DeepSeek (OpenRouter)" },
+            { value: "openrouter", label: "DeepSeek (OpenRouter)" },
           ]}
         />
       </div>

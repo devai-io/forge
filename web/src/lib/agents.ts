@@ -1,6 +1,6 @@
 // Agent-run helpers shared by the agents screens.
 
-import type { CommandDetail, Engine, Pairing, Run, Runner, RunnerCapabilities, RunnerRole } from "@/api/types";
+import type { CLISession, CommandDetail, Engine, Pairing, Run, Runner, RunnerCapabilities, RunnerRole } from "@/api/types";
 import { addDays, todayInTz } from "./format";
 import { stripImageMarkers } from "@/lib/images";
 
@@ -29,7 +29,7 @@ export function runnerConfigSnippet(origin: string, token: string): string {
   );
 }
 
-export const ENGINE_LABEL: Record<Engine, string> = { deepseek: "DeepSeek (OpenRouter)", claude: "Claude", codex: "Codex" };
+export const ENGINE_LABEL: Record<Engine, string> = { openrouter: "DeepSeek (OpenRouter)", claude: "Claude", codex: "Codex" };
 
 /** Effort levels (claude --effort; the Assistant's DeepSeek loop adds "off"). */
 export const EFFORT_LABEL: Record<string, string> = {
@@ -294,3 +294,26 @@ export function startsFresh(view: { run: { task_id: number | null } | null }, ta
   return !!taskId && view.run.task_id !== taskId;
 }
 
+// ── CLI sessions (what agent work can run on, per machine) ───────────────
+
+export const SESSION_CLI_LABEL: Record<CLISession["cli"], string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  cursor: "Cursor",
+};
+
+export const SESSION_STATE_LABEL: Record<CLISession["state"], string> = {
+  logged_in: "logged in",
+  logged_out: "logged out",
+  unknown: "unknown",
+  missing: "not installed",
+};
+
+/** The latest check among a machine's sessions (they are probed together). */
+export function sessionsCheckedAt(sessions: CLISession[]): string | null {
+  let latest: string | null = null;
+  for (const s of sessions) {
+    if (s.checked_at && (!latest || s.checked_at > latest)) latest = s.checked_at;
+  }
+  return latest;
+}

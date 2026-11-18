@@ -19,15 +19,15 @@ const onlineWindow = "90" // seconds
 const runnerSelect = `
 SELECT rn.id, rn.name, rn.role, rn.hostname, rn.os, rn.version,
        coalesce(rn.last_seen_at > ts_add(now(), -` + onlineWindow + `), 0),
-       rn.last_seen_at, rn.capabilities, rn.created_at, rn.pair_expires_at,
+       rn.last_seen_at, rn.capabilities, rn.sessions, rn.created_at, rn.pair_expires_at,
        (SELECT count(*) FROM runs r WHERE r.runner_id = rn.id AND r.status = 'running'),
        rn.members_allowed
 FROM runners rn`
 
 func scanRunner(row interface{ Scan(...any) error }) (*Runner, error) {
 	var r Runner
-	var caps []byte
-	if err := row.Scan(&r.ID, &r.Name, &r.Role, &r.Hostname, &r.OS, &r.Version, &r.Online, &r.LastSeenAt, &caps,
+	var caps, sessions []byte
+	if err := row.Scan(&r.ID, &r.Name, &r.Role, &r.Hostname, &r.OS, &r.Version, &r.Online, &r.LastSeenAt, &caps, &sessions,
 		&r.CreatedAt, &r.PairExpiresAt, &r.Running, &r.MembersAllowed); err != nil {
 		return nil, mapErr(err)
 	}
@@ -35,6 +35,9 @@ func scanRunner(row interface{ Scan(...any) error }) (*Runner, error) {
 	r.Capabilities.Commands = nonNil(r.Capabilities.Commands)
 	r.Capabilities.PermissionModes = nonNil(r.Capabilities.PermissionModes)
 	r.Capabilities.CommandDetails = nonNil(r.Capabilities.CommandDetails)
+	r.Capabilities.Engines = nonNil(r.Capabilities.Engines)
+	_ = json.Unmarshal(sessions, &r.Sessions)
+	r.Sessions = nonNil(r.Sessions)
 	for i := range r.Capabilities.CommandDetails {
 		r.Capabilities.CommandDetails[i].Repos = nonNil(r.Capabilities.CommandDetails[i].Repos)
 	}
@@ -181,6 +184,9 @@ type HeartbeatInput struct {
 	Capabilities RunnerCapabilities `json:"capabilities"`
 	Running      []int64            `json:"running"`
 	Tmux         []TmuxSession      `json:"tmux"`
+	// Sessions: nil (an older agent, or no check done yet) keeps what is
+	// stored.
+	Sessions []CLISession `json:"sessions"`
 }
 
 // Heartbeat records the runner as alive and returns the runs it must kill.
@@ -193,11 +199,17 @@ func (s *Store) Heartbeat(ctx context.Context, runnerID int64, in HeartbeatInput
 	in.Capabilities.Commands = nonNil(in.Capabilities.Commands)
 	in.Capabilities.PermissionModes = nonNil(in.Capabilities.PermissionModes)
 	in.Capabilities.CommandDetails = nonNil(in.Capabilities.CommandDetails)
+	in.Capabilities.Engines = nonNil(in.Capabilities.Engines)
 	running := nonNil(in.Running)
 	if _, err := s.DB.Exec(ctx, `UPDATE runners SET hostname = $2, os = $3, version = $4, capabilities = $5,
 		last_seen_at = now() WHERE id = $1`, runnerID, truncate(in.Hostname, 200), truncate(in.OS, 100),
 		truncate(in.Version, 100), in.Capabilities); err != nil {
 		return nil, err
+	}
+	if in.Sessions != nil {
+		if _, err := s.DB.Exec(ctx, `UPDATE runners SET sessions = $2 WHERE id = $1`, runnerID, cleanSessions(in.Sessions)); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.saveTmux(ctx, runnerID, in.Tmux); err != nil {
 		return nil, err
@@ -241,6 +253,30 @@ func (s *Store) Heartbeat(ctx context.Context, runnerID int64, in HeartbeatInput
 // The machine may well be fine (its connection was not): when it reports
 // again — the run still going, or its end — the run is what the machine says.
 const orphanError = "runner went offline"
+
+// cleanSessions keeps one entry per known CLI, in SessionCLIs order, with
+// a known state and short strings: what an agent sends is not trusted to be
+// tidy.
+func cleanSessions(in []CLISession) []CLISession {
+	byCLI := map[string]CLISession{}
+	for _, s := range in {
+		if !OneOf(s.CLI, SessionCLIs) {
+			continue
+		}
+		if !OneOf(s.State, SessionStates) {
+			s.State = "unknown"
+		}
+		s.Version, s.Detail = truncate(s.Version, 60), truncate(s.Detail, 120)
+		byCLI[s.CLI] = s
+	}
+	out := []CLISession{}
+	for _, cli := range SessionCLIs {
+		if s, ok := byCLI[cli]; ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
 
 // FailOrphanedRuns ends runs whose runner has gone silent for ten minutes.
 func (s *Store) FailOrphanedRuns(ctx context.Context) error {
@@ -526,6 +562,7 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 		in.Cwd = "" // a repo run's folder is its repo, or the folder its session was started in
 	}
 
+	in.Engine = NormEngine(in.Engine)
 	in.Prompt = strings.TrimSpace(in.Prompt)
 	in.Model = strings.TrimSpace(in.Model)
 	caps := runner.Capabilities
@@ -564,7 +601,7 @@ func (s *Store) CreateRun(ctx context.Context, in RunInput) (*Run, error) {
 			return nil, invalid("permission_mode", "Codex supports plan, acceptEdits or bypassPermissions")
 		}
 		if in.Engine == "" {
-			in.Engine = "claude"
+			in.Engine = EngineClaude
 		}
 		if !OneOf(in.Engine, Engines) {
 			return nil, invalid("engine", "must be one of %s", strings.Join(Engines, ", "))
