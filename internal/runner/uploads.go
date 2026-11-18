@@ -50,6 +50,22 @@ func uploadsDir() (string, error) {
 	return dir, os.MkdirAll(dir, 0o700)
 }
 
+// uploadReadRule grants attachment reads without adding the cache as a workspace.
+// Claude's absolute permission paths start with //; a single * covers only
+// files directly in the cache, not settings or skills in nested directories.
+func uploadReadRule() string {
+	dir, err := uploadsDir()
+	if err != nil {
+		return ""
+	}
+	// Permission syntax has no safe literal spelling for these path characters.
+	// Fail closed and let Claude request access rather than broaden the rule.
+	if strings.ContainsAny(dir, "*?[]()\\,\n\r") {
+		return ""
+	}
+	return "Read(/" + filepath.ToSlash(dir) + "/*)"
+}
+
 // fetchUpload downloads an image once (later markers for it reuse the file)
 // and returns where it is.
 func (r *Runner) fetchUpload(ctx context.Context, token string) (string, error) {

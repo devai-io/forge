@@ -169,6 +169,9 @@ echo '{"type":"result","subtype":"success","result":"ok","total_cost_usd":0.03,"
 		!strings.Contains(got, "--append-system-prompt be brief") || !strings.Contains(got, "--model sonnet") {
 		t.Fatalf("cwd %s, args %s", lines[0], got)
 	}
+	if strings.Contains(got, "--add-dir") || !strings.Contains(got, "Read(/") {
+		t.Fatalf("attachment read permission: %s", got)
+	}
 	// An ordinary run with no repo path is still refused.
 	if rep := r.execute(context.Background(), claimedRun{ID: 2, Kind: "agent", Prompt: "hi", PermissionMode: "plan"}); rep.Status != "failed" {
 		t.Fatalf("no repo, no assistant: %+v", rep)

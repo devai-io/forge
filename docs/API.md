@@ -1088,8 +1088,11 @@ prompt — the machine's agent fetches each image
 (`GET /api/runner/uploads/{token}`), keeps it in its cache folder
 (`<user cache dir>/forge/uploads/<token>.<ext>`, 30 days) and puts
 `[image: NAME] <local path>` where the marker was; Claude reads the file.
-Claude Code is started with `--add-dir <that folder>` so it may read it (a
-tmux session started before v0.1.52 asks once). Uploads are kept 30 days.
+Claude Code receives a read-only `--allowedTools Read(//absolute/cache/path/*)`
+permission for attachment files, rather than adding the cache as a workspace.
+New and reused tmux sessions explicitly change to the selected project directory
+after shell startup. This avoids an extra workspace trust prompt for uploads.
+Existing sessions keep their launch options until restarted. Uploads are kept 30 days.
 
 ```ts
 type Upload = { token: string; name: string; content_type: string; size: number; created_at: string;

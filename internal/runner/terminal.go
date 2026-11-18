@@ -454,9 +454,8 @@ func (r *Runner) createSession(ctx context.Context, m controlMsg) error {
 	} else if line, err = r.claudeLine(m, dir); err != nil {
 		return err
 	}
-	if exists {
-		line = "cd " + shellQuote(dir) + " && " + line
-	}
+	// Shell startup files can change cwd even in a newly created tmux pane.
+	line = "cd " + shellQuote(dir) + " && " + line
 	time.Sleep(300 * time.Millisecond) // let the shell print its prompt
 	if err := r.sendKeys(ctx, controlMsg{Session: m.Session, Text: line, Enter: true}); err != nil {
 		return err
@@ -593,9 +592,9 @@ func (r *Runner) claudeLine(m controlMsg, dir string) (string, error) {
 		b.WriteString(k + "=" + shellQuote(m.Env[k]) + " ")
 	}
 	b.WriteString(r.cfg.ClaudePath)
-	// Images attached in Forge are kept outside the repo: Claude may read them.
-	if dir, err := uploadsDir(); err == nil {
-		b.WriteString(" --add-dir " + shellQuote(dir))
+	// Attachments are readable data, not an additional trusted workspace.
+	if rule := uploadReadRule(); rule != "" {
+		b.WriteString(" --allowedTools " + shellQuote(rule))
 	}
 	switch {
 	case m.Resume != "":
@@ -643,7 +642,7 @@ func (r *Runner) claudeLine(m controlMsg, dir string) (string, error) {
 			}
 			prompt = "Your request is in " + path + " — read it and do what it says."
 		}
-		b.WriteString(" -- " + shellQuote(prompt)) // "--": --add-dir takes several values
+		b.WriteString(" -- " + shellQuote(prompt)) // "--": --allowedTools takes several values
 	}
 	return b.String(), nil
 }

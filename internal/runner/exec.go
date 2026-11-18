@@ -224,11 +224,6 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 		return finishReport{Status: "failed", Error: msg}
 	}
 	args := append([]string{"-p", "--output-format", "stream-json", "--verbose"}, permissionArgs(run.PermissionMode)...)
-	// Images attached in Forge are kept outside the repo (resolveUploads):
-	// Claude may read them. Options follow, so the list of folders ends here.
-	if up, err := uploadsDir(); err == nil {
-		args = append(args, "--add-dir", up)
-	}
 	interactive := run.Interactive && run.Assistant == nil
 	if interactive {
 		args = append(args, interactiveArgs...)
@@ -251,10 +246,20 @@ func (r *Runner) runClaude(ctx context.Context, run claimedRun, dir string, ship
 	if run.Sandbox {
 		args = append(args, "--settings", sandboxSettings)
 	}
+	allowed := []string{}
+	if run.Assistant != nil {
+		allowed = append(allowed, "mcp__forge")
+	}
+	if rule := uploadReadRule(); rule != "" {
+		allowed = append(allowed, rule)
+	}
+	if len(allowed) > 0 {
+		args = append(args, "--allowedTools")
+		args = append(args, allowed...)
+	}
 	if run.Assistant != nil {
 		// Forge's own tools only: everything else stays under this machine's
 		// permission modes, whatever the server asks.
-		args = append(args, "--allowedTools", "mcp__forge")
 		if run.Assistant.AppendSystem != "" {
 			args = append(args, "--append-system-prompt", run.Assistant.AppendSystem)
 		}

@@ -10,7 +10,7 @@ import (
 func TestClaudeLineForAgentRuns(t *testing.T) {
 	cache := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cache)
-	up := " --add-dir '" + filepath.Join(cache, "forge", "uploads") + "'"
+	up := " --allowedTools 'Read(/" + filepath.Join(cache, "forge", "uploads") + "/*)'"
 	r := &Runner{cfg: &Config{ClaudePath: "claude", PermissionModes: []string{"plan", "acceptEdits"}}}
 	line, err := r.claudeLine(controlMsg{Session: "SHOP-12", SessionID: "0b6e3f4a-1c2d-4e5f-8a9b-0c1d2e3f4a5b",
 		PermissionMode: "plan", Model: "opus", Effort: "high", Worktree: "forge-run-7", Prompt: "Fix the cart's rounding",
