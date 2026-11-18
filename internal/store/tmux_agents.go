@@ -537,3 +537,18 @@ func (s *Store) ReopenTmux(ctx context.Context, id int64) error {
 		return err
 	})
 }
+
+// LastTmuxConversation is the latest conversation that lived in a tmux
+// session on this machine and can be picked up again: its run, its session
+// (thread) id and engine. ErrNotFound when none.
+func (s *Store) LastTmuxConversation(ctx context.Context, runnerID int64, tmuxSession string) (*Run, error) {
+	runs, err := s.listRunsWhere(ctx, `r.runner_id = $1 AND r.tmux_session = $2 AND r.session_id <> '' AND r.kind = 'agent'
+		ORDER BY r.id DESC LIMIT 1`, runnerID, tmuxSession)
+	if err != nil {
+		return nil, err
+	}
+	if len(runs) == 0 {
+		return nil, ErrNotFound
+	}
+	return &runs[0], nil
+}

@@ -262,3 +262,42 @@ func (s *Store) SavingsSettings(ctx context.Context) (SavingsSettings, error) {
 func (s *Store) SetSavingsSettings(ctx context.Context, v SavingsSettings) error {
 	return s.putSetting(ctx, "savings", v)
 }
+
+// KeptAgent is how a project's kept sessions start: a project on the keep
+// list has its agent (F-<Project>) and its bot session (F-<Project>-Bot)
+// open on the master at all times; Forge starts them again — resuming their
+// last conversation — when they are gone (tmux crashed, the machine
+// rebooted, Claude exited). See internal/api/project_sessions.go.
+type KeptAgent struct {
+	Engine          string `json:"engine"`
+	Model           string `json:"model"`
+	Effort          string `json:"effort"`
+	SkipPermissions bool   `json:"skip_permissions"`
+	Since           string `json:"since"`
+}
+
+// KeptAgents is the keep list, by project id.
+func (s *Store) KeptAgents(ctx context.Context) (map[int64]KeptAgent, error) {
+	v := map[int64]KeptAgent{}
+	_, err := s.getSetting(ctx, "project_keep", &v)
+	if v == nil {
+		v = map[int64]KeptAgent{}
+	}
+	return v, err
+}
+
+// SetKeptAgent puts a project on the keep list (or, with nil, takes it off).
+func (s *Store) SetKeptAgent(ctx context.Context, projectID int64, keep *KeptAgent) error {
+	s.keepMu.Lock()
+	defer s.keepMu.Unlock()
+	v, err := s.KeptAgents(ctx)
+	if err != nil {
+		return err
+	}
+	if keep == nil {
+		delete(v, projectID)
+	} else {
+		v[projectID] = *keep
+	}
+	return s.putSetting(ctx, "project_keep", v)
+}

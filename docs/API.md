@@ -1037,9 +1037,26 @@ all its repos share unless that folder also holds another project's repo
 (then its first repo). Projects with no repo path are left out. An extra
 agent of the same project is `F-<Project>-2`, `-3`, …
 
-**Nothing starts by itself**: a session opens when the user asks for it
-(`POST /api/project-sessions/{key}`, the project's button on the Agents
-page), and stays until it is closed. Once a minute the server reads the
+**Nothing starts by itself** unless the project is **kept**: a session opens
+when the user asks for it (`POST /api/project-sessions/{key}`, the project's
+button on the Agents page), and stays until it is closed.
+
+**Kept projects** (the keep list, setting `project_keep`): opening a
+project's own agent puts the project on it (with that engine, model, effort
+and skip_permissions), as does `PATCH /api/project-sessions/{key}
+{keep: true}`. A kept project has two sessions on the master at all times:
+its agent `F-<Project>` and its bot session `F-<Project>-Bot` (Claude Code
+with `--append-system-prompt` saying it is the project's assistant, plus the
+bot's standing orders; development goes to `F-<Project>`). Each minute the
+server starts whichever is `missing` or `stopped` — a `stopped` one only when
+its pane runs a bare shell and nobody is attached — in the project's folder,
+`--resume`-ing the latest conversation (run with a session id) that lived in
+that tmux session when its engine matches; a run still `running` there is
+ended first. A start that does not take is retried after 5 min, doubling up to
+1 h. Closing the agent or bot session of a kept project (`DELETE`) takes it
+off the list; `{keep: false}` takes it off and closes both. Claude sessions
+with Remote Control also get `--name <session>` so Claude Code keeps that name
+instead of titling the session after its conversation. Once a minute the server reads the
 Remote Control link (`https://claude.ai/code/session_…`) of each open
 session off its scrollback, once per session. The `F-` prefix is Forge's.
 
@@ -1053,7 +1070,9 @@ type ProjectSession = {
   url: string | null;        // the claude.ai/code link, once read
   attached: number;          // browsers/terminals attached to the tmux session
   activity: string | null;
-  extra: number;             // 0: the project's agent; 2, 3, …: an extra one
+  extra: number;             // 0: the project's agent (or bot session); 2, 3, …: an extra one
+  bot: boolean;              // the project's bot session, F-<Project>-Bot (listed when kept, or there anyway)
+  kept: boolean;             // the project is on the keep list
   run_id: number | null;     // the conversation open in it (see Agents in tmux); null: nobody has asked it anything, or it is closed
   run_status: "" | "queued" | "running" | "waiting";
   awaiting: "" | "answer" | "reply";
@@ -1073,7 +1092,8 @@ type ProjectSessions = {
 | GET | /api/project-sessions | – | `ProjectSessions` |
 | PATCH | /api/project-sessions | `{skip_permissions?}` (**elevated**) | `ProjectSessions`. Logged as `project_sessions` |
 | POST | /api/project-sessions/{key} | `{engine?, model?, effort?, prompt?, extra?, skip_permissions?}` | `{session, runner_id, run: Run \| null, started: boolean}`. Opens the project's agent — with `extra: true` a new extra one. `engine`: `claude` (default) or `codex` (`409 agent_outdated` when the master cannot host Codex); when the other engine is open in the project's session (or its conversation is), this one opens as an extra session. A Codex session starts with `--model`, `model_reasoning_effort` and, without skipping permissions, `workspace-write` with on-request approvals; it has no Remote Control. **Not open** (no session, or Claude exited in it): it starts with `model` (an alias or id), `effort` (`low`…`max`) and `skip_permissions` (default: the setting; only where the master allows it); with a `prompt` it starts as a run with that request (`run`), without one as a plain session (`run: null`) that becomes a run with its first request. **Open, a conversation going**: `prompt` is one more message to that run (`run`), model and effort are ignored; no `prompt` just answers where it is. **Open, no conversation yet**: `prompt` is typed into it and is a run from then on. `started` says whether a session was started. A conversation that had stopped with its session (`waiting`) is finished first — Continue picks it up again. `409 runner_offline` (no connected master with terminals), `409 starting` (a request within 15 s of the session's start), `409 agent_outdated` (a request on an agent older than v0.1.44), `422` for a bad model or effort or a project without a repo path, `502 runner_error`. Logged as `terminal_create` |
-| DELETE | /api/project-sessions/{key}/{name} | – | `204`. Closes one of the project's sessions: its conversation is finished (`succeeded`) and the tmux session killed. `404` for a name that is not this project's |
+| PATCH | /api/project-sessions/{key} | `{keep, engine?, model?, effort?, skip_permissions?}` | `ProjectSessions`. `keep: true` puts the project on the keep list (its agent and bot session start in the background); `false` takes it off and closes both. `422` without `keep`, for a bad engine/model/effort or a project without a repo path. Logged as `project_sessions` |
+| DELETE | /api/project-sessions/{key}/{name} | – | `204`. Closes one of the project's sessions (`F-<Project>`, `F-<Project>-Bot` or an extra): its conversation is finished (`succeeded`) and the tmux session killed; closing a kept project's agent or bot session takes the project off the keep list. `404` for a name that is not this project's |
 
 ## Images for agents
 

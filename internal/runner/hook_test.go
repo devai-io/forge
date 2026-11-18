@@ -111,3 +111,21 @@ func TestCursorOn(t *testing.T) {
 		t.Fatal("a numbered option counts too")
 	}
 }
+
+// A kept project session: its name pinned (Claude Code would otherwise
+// title it after its conversation), a bot's role on one line.
+func TestClaudeLineNamedSession(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	up := " --allowedTools 'Read(/" + filepath.Join(cache, "forge", "uploads") + "/*)'"
+	r := &Runner{cfg: &Config{ClaudePath: "claude"}}
+	line, err := r.claudeLine(controlMsg{Session: "F-Shop-Bot", Resume: "0b6e3f4a-1c2d-4e5f-8a9b-0c1d2e3f4a5b",
+		RemoteControl: "F-Shop-Bot", AppendSystem: "You are the bot.\n\nIt's  Shop's."}, "/srv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "claude" + up + " --resume 0b6e3f4a-1c2d-4e5f-8a9b-0c1d2e3f4a5b --remote-control 'F-Shop-Bot' --name 'F-Shop-Bot' --append-system-prompt 'You are the bot. It'\\''s Shop'\\''s.'"
+	if line != want {
+		t.Fatalf("line =\n%s\nwant\n%s", line, want)
+	}
+}

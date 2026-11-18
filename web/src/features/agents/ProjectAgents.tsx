@@ -6,12 +6,17 @@
 // if you like, a request; the session opens if it is not open yet, and the
 // request is typed into it. An extra session for the same project is one
 // switch away.
+//
+// A project can be kept open ("Keep open"; opening its agent does it too):
+// then it has two sessions at all times — its agent F-<Project> for
+// development and its bot session F-<Project>-Bot — and the server starts
+// either again (resuming its conversation) whenever it is gone.
 
 import clsx from "clsx";
-import { ExternalLink, Play, Plug, WifiOff, X } from "lucide-react";
+import { Bot, ExternalLink, Pin, Play, Plug, WifiOff, X } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useCloseProjectSession, useEngine, useOpenProjectSession, useProjectSessions } from "@/api/hooks";
+import { useCloseProjectSession, useEngine, useKeepProjectSession, useOpenProjectSession, useProjectSessions } from "@/api/hooks";
 import type { ProjectSession, ProjectSessions } from "@/api/types";
 import { Badge, ColorDot } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -22,9 +27,11 @@ import { EFFORT_LABEL, ENGINE_LABEL } from "@/lib/agents";
 import { useUser } from "@/lib/auth";
 import { shortHome } from "@/lib/paths";
 import {
+  groupAll,
   groupSessions,
   groupStatus,
   isActiveGroup,
+  isKept,
   isOpen,
   openCount,
   promptTitle,
@@ -127,8 +134,25 @@ function ProjectButtons({ selected, onSelect }: { selected: string | null; onSel
 
 /** The picked project: its agent sessions, a way to open one, and the way back to all projects. */
 function PickedProject({ group, view, onOpen, onClear }: { group: AgentGroup; view: ProjectSessions; onOpen: () => void; onClear: () => void }) {
-  const sessions = [group.primary, ...group.extras].filter((s) => isOpen(s) || s.run_id !== null);
+  const sessions = groupAll(group).filter((s) => isOpen(s) || s.run_id !== null || (s.kept && s.extra === 0));
   const offline = !view.host || !view.host.online;
+  const keep = useKeepProjectSession();
+  const toast = useToast();
+  const kept = isKept(group);
+  const toggleKeep = (on: boolean) => {
+    const engine = readAgentEngine() || "claude";
+    const prefs = readAgentPrefs(engine);
+    keep.mutate(
+      on
+        ? { key: group.key, keep: true, engine, model: prefs.model || undefined, effort: prefs.effort || undefined }
+        : { key: group.key, keep: false },
+      {
+        onSuccess: () =>
+          toast.success(on ? `${group.name} is kept open: its agent and bot session start now` : `${group.name} is no longer kept: its sessions are closed`),
+        onError: (e) => toast.error(e),
+      },
+    );
+  };
   return (
     <div aria-label={`${group.name} agent sessions`} role="region" className="mt-2 rounded-xl border border-line bg-surface">
       <div className="flex items-center gap-2 px-3 py-2">
@@ -139,6 +163,16 @@ function PickedProject({ group, view, onOpen, onClear }: { group: AgentGroup; vi
             {" "}
             · {sessions.length ? `${sessions.length} session${sessions.length === 1 ? "" : "s"}` : "no session open"} · {shortHome(group.primary.dir)}
           </span>
+        </span>
+        <span
+          className="shrink-0"
+          title={
+            kept
+              ? "Kept open: its agent and bot session start again (resuming their conversations) whenever they are gone. Off closes both."
+              : "Keep its agent and a bot session open at all times — started again after a crash or a reboot"
+          }
+        >
+          <Switch checked={kept} onChange={toggleKeep} disabled={keep.isPending || offline} label="Keep open" />
         </span>
         <Button size="sm" variant="subtle" onClick={onOpen} disabled={offline} title="Open its tmux session, with or without a first request">
           <Play className="size-3.5" aria-hidden /> Open session
@@ -168,7 +202,7 @@ function ProjectButton({ group, picked, onClick }: { group: AgentGroup; picked: 
       type="button"
       onClick={onClick}
       aria-pressed={picked}
-      aria-label={`${group.name}: ${st.tone === "closed" ? "not open" : st.label}${open > 1 ? `, ${open} sessions` : ""}`}
+      aria-label={`${group.name}: ${st.tone === "closed" ? "not open" : st.label}${open > 1 ? `, ${open} sessions` : ""}${isKept(group) ? ", kept open" : ""}`}
       title={`${group.name} · ${picked ? "showing only its agents — click for all projects" : "show only its agents"}`}
       className={clsx(
         "group relative flex size-[4.25rem] flex-col justify-between rounded-xl border p-1.5 text-left transition-[background,box-shadow,transform] duration-100",
@@ -179,7 +213,10 @@ function ProjectButton({ group, picked, onClick }: { group: AgentGroup; picked: 
       style={lit ? { background: `color-mix(in srgb, ${group.color || "var(--accent)"} 13%, var(--surface))` } : undefined}
     >
       <span className="flex h-3 items-center justify-between">
-        <ColorDot color={group.color} className="size-2.5" />
+        <span className="flex items-center gap-0.5">
+          <ColorDot color={group.color} className="size-2.5" />
+          {isKept(group) ? <Pin className="size-2.5 text-fg-3" aria-hidden /> : null}
+        </span>
         {open > 1 ? (
           <span className="tabular rounded-full bg-surface px-1 text-[9.5px] leading-3 font-medium text-fg-2 ring-1 ring-line-strong" aria-hidden>
             {open}
@@ -206,7 +243,7 @@ function ProjectAgentDialog({ group, view, onClose }: { group: AgentGroup; view:
   const open = useOpenProjectSession();
   const host = view.host;
   const primaryOpen = isOpen(group.primary);
-  const sessions = [group.primary, ...group.extras].filter((s) => isOpen(s) || s.run_id !== null);
+  const sessions = groupAll(group).filter((s) => isOpen(s) || s.run_id !== null);
 
   // Codex when the machine can host it and it was picked last time, or is the default engine.
   const canCodex = !!host?.codex;
@@ -427,6 +464,7 @@ function SessionRow({ s, runnerId, onNavigate }: { s: ProjectSession; runnerId: 
     <li className="flex min-w-0 items-center gap-2 px-2.5 py-2">
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          {s.bot ? <Bot className="size-3.5 shrink-0 text-fg-3" aria-label="Bot session" /> : null}
           <span className="truncate font-mono text-[13px]">{s.name}</span>
           <Badge tone={BADGE[st.tone]} dot className="h-4.5 px-1.5 text-[10.5px]">
             {st.tone === "closed" ? "Closed" : st.label}
@@ -437,7 +475,10 @@ function SessionRow({ s, runnerId, onNavigate }: { s: ProjectSession; runnerId: 
             #{s.run_id} · {promptTitle(s.run_prompt) || "conversation"}
           </Link>
         ) : (
-          <p className="truncate text-[12px] text-fg-3">No conversation yet</p>
+          <p className="truncate text-[12px] text-fg-3">
+            {s.bot ? "The project's assistant · " : ""}
+            {s.state === "missing" || s.state === "stopped" ? (s.kept ? "Starting again shortly" : "Closed") : "No conversation yet"}
+          </p>
         )}
       </div>
       {confirming ? (
@@ -487,7 +528,7 @@ function SessionRow({ s, runnerId, onNavigate }: { s: ProjectSession; runnerId: 
               <Plug className="size-3.5" aria-hidden /> Attach
             </Button>
           ) : null}
-          <Button size="icon-sm" variant="ghost" aria-label={`Close ${s.name}`} title="Close the session (its conversation is finished)" onClick={() => setConfirming(true)}>
+          <Button size="icon-sm" variant="ghost" aria-label={`Close ${s.name}`} title={s.kept && s.extra === 0 ? "Close the session (its conversation is finished) — the project is no longer kept open" : "Close the session (its conversation is finished)"} onClick={() => setConfirming(true)}>
             <X className="size-3.5" />
           </Button>
         </>

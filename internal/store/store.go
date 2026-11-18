@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/devai-io/forge/internal/db"
 )
@@ -38,6 +39,8 @@ type Store struct {
 	// PublicURL is the app's own address, for links written into text
 	// (Claude context). Set by the server; empty in tests.
 	PublicURL string
+
+	keepMu sync.Mutex // the keep list is read, changed and written back
 }
 
 func New(d *db.DB) *Store { return &Store{DB: d} }

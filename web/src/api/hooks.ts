@@ -51,6 +51,7 @@ import type {
   AdminUserPatch,
   AdminView,
   MemberAgentView,
+  KeepProjectSessionInput,
   OpenProjectSessionInput,
   OpenProjectSessionResult,
   ProjectSessions,
@@ -1290,6 +1291,20 @@ export function useOpenProjectSession() {
       void qc.invalidateQueries({ queryKey: ["runs"] });
       void qc.invalidateQueries({ queryKey: keys.terminalHosts });
       // The session shows up with the machine's next report.
+      setTimeout(() => void qc.invalidateQueries({ queryKey: keys.projectSessions }), 4_000);
+    },
+  });
+}
+
+/** Keeps a project's agent and bot session open (started again whenever they are gone), or stops (closing both). */
+export function useKeepProjectSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ key, ...body }: KeepProjectSessionInput & { key: string }) =>
+      api.patch<ProjectSessions>(`/project-sessions/${encodeURIComponent(key)}`, body),
+    onSuccess: (v) => {
+      qc.setQueryData(keys.projectSessions, v);
+      void qc.invalidateQueries({ queryKey: ["runs"] });
       setTimeout(() => void qc.invalidateQueries({ queryKey: keys.projectSessions }), 4_000);
     },
   });

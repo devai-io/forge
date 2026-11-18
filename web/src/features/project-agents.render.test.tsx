@@ -54,6 +54,17 @@ describe("project agents", () => {
     expect(groups.map(isActiveGroup)).toEqual([true, false]);
   });
 
+  it("a kept project has its bot session beside its agent, and counts as active", () => {
+    const groups = groupSessions([
+      session({ project_key: "LAB", project_name: "Lab", name: "F-Lab", project_status: "radar", kept: true, state: "running" }),
+      session({ project_key: "LAB", project_name: "Lab", name: "F-Lab-Bot", project_status: "radar", kept: true, bot: true, state: "running", run_id: 9, run_status: "running", awaiting: "reply" }),
+      session({ name: "F-Shop-Bot", bot: true }), // no project entry before it: dropped
+    ]);
+    expect(groups.map((g) => [g.key, g.bot?.name, g.extras.length])).toEqual([["LAB", "F-Lab-Bot", 0]]);
+    expect(isActiveGroup(groups[0])).toBe(true);
+    expect(groupStatus(groups[0]).label).toBe("Your turn");
+  });
+
   it("a button per active project; the rest one click away; none for a member", async () => {
     vi.stubGlobal(
       "fetch",

@@ -137,6 +137,7 @@ func New(cfg config.Config, st *store.Store, m *mail.Mailer, mon *monitor.Monito
 	s.tgs.following = map[int64]bool{}
 	s.projectSessions.started = map[string]time.Time{}
 	s.projectSessions.urls = map[string]string{}
+	s.projectSessions.tries = map[string]keepTry{}
 	s.tg = telegram.New(s.telegramToken)
 	s.jev = jev.New(s.providerKey, s.jevConfig)
 	s.jev.AppURL = cfg.PublicURL
@@ -369,6 +370,7 @@ func (s *Server) Handler() http.Handler {
 	h("GET /api/project-sessions", s.authed(s.getProjectSessions))
 	h("PATCH /api/project-sessions", s.authed(s.elevated(s.updateProjectSessions)))
 	h("POST /api/project-sessions/{key}", s.authed(s.openProjectSession))
+	h("PATCH /api/project-sessions/{key}", s.authed(s.keepProjectSession))
 	h("DELETE /api/project-sessions/{key}/{name}", s.authed(s.closeProjectSession))
 	h("GET /api/terminal/{runner}/attach", s.authed(s.elevated(s.terminalAttach)))
 	h("POST /api/terminal/{runner}/sessions", s.authed(s.elevated(s.terminalCreate)))

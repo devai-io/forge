@@ -1,5 +1,6 @@
 // Project agents: one Claude Code session per project (tmux F-<Project> on the
-// master), plus the extra ones a project may have. What the Agents page's
+// master), its bot session (F-<Project>-Bot) when the project is kept open,
+// plus the extra ones a project may have. What the Agents page's
 // project buttons show and do is decided here.
 
 import type { ProjectSession } from "@/api/types";
@@ -10,8 +11,15 @@ export type AgentGroup = {
   name: string;
   color: string;
   primary: ProjectSession;
+  bot: ProjectSession | null;
   extras: ProjectSession[];
 };
+
+/** All of a project's sessions: its agent, its bot session, the extras. */
+export const groupAll = (g: AgentGroup): ProjectSession[] => [g.primary, ...(g.bot ? [g.bot] : []), ...g.extras];
+
+/** The project is kept open (its agent and bot session start again whenever they are gone). */
+export const isKept = (g: AgentGroup) => !!g.primary.kept;
 
 /** Sessions arrive project by project, the project's own agent first. */
 export function groupSessions(sessions: ProjectSession[]): AgentGroup[] {
@@ -19,8 +27,10 @@ export function groupSessions(sessions: ProjectSession[]): AgentGroup[] {
   for (const s of sessions) {
     const g = groups.get(s.project_key);
     if (!g) {
-      if (s.extra) continue; // an extra without its project's own entry: nothing to hang it on
-      groups.set(s.project_key, { key: s.project_key, name: s.project_name, color: s.project_color, primary: s, extras: [] });
+      if (s.extra || s.bot) continue; // nothing to hang it on without its project's own entry
+      groups.set(s.project_key, { key: s.project_key, name: s.project_name, color: s.project_color, primary: s, bot: null, extras: [] });
+    } else if (s.bot) {
+      g.bot = s;
     } else if (s.extra) {
       g.extras.push(s);
     }
@@ -52,19 +62,19 @@ const URGENCY: AgentTone[] = ["needs", "turn", "working", "starting", "open", "c
 
 /** A project's button shows its most pressing session. */
 export function groupStatus(g: AgentGroup): { tone: AgentTone; label: string } {
-  return [g.primary, ...g.extras].map(sessionStatus).sort((a, b) => URGENCY.indexOf(a.tone) - URGENCY.indexOf(b.tone))[0];
+  return groupAll(g).map(sessionStatus).sort((a, b) => URGENCY.indexOf(a.tone) - URGENCY.indexOf(b.tone))[0];
 }
 
 /** How many of a project's sessions have Claude Code open. */
-export const openCount = (g: AgentGroup) => [g.primary, ...g.extras].filter(isOpen).length;
+export const openCount = (g: AgentGroup) => groupAll(g).filter(isOpen).length;
 
 /**
  * The projects that get a button without asking: the ones being worked on
  * (live or building), and any with a session open or a conversation in one.
  */
 export function isActiveGroup(g: AgentGroup): boolean {
-  if (g.primary.project_status === "live" || g.primary.project_status === "building") return true;
-  return [g.primary, ...g.extras].some((s) => isOpen(s) || s.run_id !== null);
+  if (isKept(g) || g.primary.project_status === "live" || g.primary.project_status === "building") return true;
+  return groupAll(g).some((s) => isOpen(s) || s.run_id !== null);
 }
 
 /** The first line of a request, for a row. */

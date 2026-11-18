@@ -262,6 +262,9 @@ type controlMsg struct {
 	// RemoteControl starts Claude with --remote-control <name>: the session
 	// can be driven from claude.ai/code and the Claude app under that name.
 	RemoteControl string `json:"remote_control"`
+	// AppendSystem is added to Claude's system prompt (--append-system-prompt):
+	// a project's bot session says what it is for.
+	AppendSystem string `json:"append_system"`
 	// An agent run in tmux (api/tmux_agents.go): SessionID starts a new
 	// Claude Code session under that id (--session-id); PermissionMode,
 	// Model, Effort and Worktree are claude's flags (Codex: its sandbox and
@@ -632,7 +635,17 @@ func (r *Runner) claudeLine(m controlMsg, dir string) (string, error) {
 		b.WriteString(" --worktree " + m.Worktree)
 	}
 	if m.RemoteControl != "" {
-		b.WriteString(" --remote-control " + shellQuote(m.RemoteControl))
+		// --name pins the session's name: without it Claude Code titles the
+		// session after its conversation, and the Remote Control list (and
+		// /resume) shows that instead of the tmux session's name.
+		b.WriteString(" --remote-control " + shellQuote(m.RemoteControl) + " --name " + shellQuote(m.RemoteControl))
+	}
+	// One line: it is typed into the session's shell.
+	if sys := strings.Join(strings.Fields(m.AppendSystem), " "); sys != "" {
+		if len(sys) > 8000 {
+			return "", errors.New("system prompt too long")
+		}
+		b.WriteString(" --append-system-prompt " + shellQuote(sys))
 	}
 	if prompt := strings.TrimSpace(m.Prompt); prompt != "" {
 		if len(prompt) > maxInlinePrompt {

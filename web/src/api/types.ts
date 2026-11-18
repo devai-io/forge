@@ -901,7 +901,9 @@ export type ProjectSession = {
   url: string | null; // the claude.ai/code link, once Claude has printed it
   attached: number;
   activity: string | null;
-  extra: number; // 0: the project's agent
+  extra: number; // 0: the project's agent (or its bot session)
+  bot?: boolean; // the project's bot session, F-<Project>-Bot
+  kept?: boolean; // the project is kept open: its agent and bot session start again whenever they are gone
   run_id: number | null; // the conversation open in it (null: nobody has asked it anything, or it is closed)
   run_status: "" | "queued" | "running" | "waiting";
   awaiting: "" | "answer" | "reply";
@@ -923,6 +925,8 @@ export type ProjectSessions = {
 };
 /** POST /api/project-sessions/{key}: open the project's agent (or an extra one), with a request or without. */
 export type OpenProjectSessionInput = { engine?: "claude" | "codex"; model?: string; effort?: string; prompt?: string; extra?: boolean; skip_permissions?: boolean };
+/** PATCH /api/project-sessions/{key}: keep the project's agent and bot session open (or stop, closing both). */
+export type KeepProjectSessionInput = { keep: boolean; engine?: "claude" | "codex"; model?: string; effort?: string; skip_permissions?: boolean };
 export type OpenProjectSessionResult = { session: string; runner_id: number; run: Run | null; started: boolean };
 
 // What a new terminal session runs: Claude Code, Codex (both with the Forge context) or a plain shell.

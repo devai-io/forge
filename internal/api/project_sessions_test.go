@@ -119,7 +119,8 @@ func TestProjectSessions(t *testing.T) {
 		defer mu.Unlock()
 		var out []map[string]any
 		for _, m := range got {
-			if m["type"] == typ {
+			// Bot sessions start in the background once a project is kept (TestKeptProjectSessions).
+			if m["type"] == typ && !strings.HasSuffix(fmt.Sprint(m["session"]), "-Bot") {
 				out = append(out, m)
 			}
 		}
@@ -251,5 +252,193 @@ func TestProjectSessions(t *testing.T) {
 	expect(t, "extra run", h.do("GET", fmt.Sprintf("/api/runs/%d", res.Run.ID), nil, &run), 200)
 	if run.Status != "succeeded" {
 		t.Fatalf("closed extra = %+v", run)
+	}
+}
+
+// TestKeptProjectSessions: a kept project has its agent and its bot session
+// open at all times — they start when it is kept, start again (resuming
+// their conversation) when tmux loses them, a shell someone is attached to
+// is left alone, and closing one (or un-keeping) stops all that.
+func TestKeptProjectSessions(t *testing.T) {
+	h := setup(t)
+	h.login()
+	var rn store.Runner
+	var token string
+	expect(t, "runner", h.newRunner("desk", &rn, &token), 201)
+	expect(t, "make master", h.do("PATCH", fmt.Sprintf("/api/runners/%d", rn.ID), map[string]string{"role": "master"}, nil), 200)
+	bearer := []string{"Authorization", "Bearer " + token}
+	machine := &harness{t: t, srv: h.srv, api: h.api, store: h.store, client: &http.Client{}}
+	beat := func(tmux []map[string]any) {
+		t.Helper()
+		expect(t, "heartbeat", machine.do("POST", "/api/runner/heartbeat", map[string]any{
+			"capabilities": map[string]any{"claude": true, "terminal": true, "tmux_agents": true, "interactive": true, "resume_in_place": true,
+				"permission_modes": []string{"plan", "bypassPermissions"}},
+			"tmux": tmux,
+		}, nil, bearer...), 200)
+	}
+	claude := func(name string) map[string]any {
+		return map[string]any{"name": name, "windows": 1, "created": "2026-10-29T08:00:00Z", "command": "claude", "claude": true,
+			"window_list": []map[string]any{{"index": 0, "command": "claude", "claude": true, "active": true}}}
+	}
+	shell := func(name string, attached int) map[string]any {
+		return map[string]any{"name": name, "windows": 1, "attached": attached, "created": "2026-10-29T08:00:00Z", "command": "zsh",
+			"window_list": []map[string]any{{"index": 0, "command": "zsh", "active": true}}}
+	}
+	beat([]map[string]any{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	wsBase := "ws" + strings.TrimPrefix(h.srv.URL, "http")
+	control, _, err := websocket.Dial(ctx, wsBase+"/api/runner/control", &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer " + token}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer control.CloseNow()
+	var mu sync.Mutex
+	var got []map[string]any
+	go func() {
+		for {
+			_, data, err := control.Read(ctx)
+			if err != nil {
+				return
+			}
+			var m map[string]any
+			_ = json.Unmarshal(data, &m)
+			mu.Lock()
+			got = append(got, m)
+			mu.Unlock()
+			res := map[string]any{"type": "result", "id": m["id"], "ok": true}
+			if m["type"] == "list" || m["type"] == "rc_url" {
+				res["ok"], res["error"] = false, "unknown request"
+			}
+			raw, _ := json.Marshal(res)
+			_ = control.Write(ctx, websocket.MessageText, raw)
+		}
+	}()
+	time.Sleep(200 * time.Millisecond)
+	creates := func() map[string]map[string]any {
+		mu.Lock()
+		defer mu.Unlock()
+		out := map[string]map[string]any{}
+		for _, m := range got {
+			if m["type"] == "create" {
+				out[fmt.Sprint(m["session"])] = m
+			}
+		}
+		return out
+	}
+	reset := func() {
+		mu.Lock()
+		got = nil
+		mu.Unlock()
+		ps := &h.api.projectSessions
+		ps.mu.Lock()
+		ps.started = map[string]time.Time{} // their grace is over
+		ps.tries = map[string]keepTry{}
+		ps.mu.Unlock()
+	}
+	waitFor := func(what string, ok func() bool) {
+		t.Helper()
+		for i := 0; i < 100 && !ok(); i++ {
+			time.Sleep(20 * time.Millisecond)
+		}
+		if !ok() {
+			t.Fatalf("%s: %v", what, got)
+		}
+	}
+
+	expect(t, "keep needs keep", h.do("PATCH", "/api/project-sessions/SHOP", map[string]any{}, nil), 422)
+	expect(t, "bad effort", h.do("PATCH", "/api/project-sessions/SHOP", map[string]any{"keep": true, "effort": "extreme"}, nil), 422)
+	var view struct {
+		Sessions []ProjectSession
+	}
+	expect(t, "keep SHOP", h.do("PATCH", "/api/project-sessions/SHOP", map[string]any{"keep": true, "model": "opus", "effort": "high"}, &view), 200)
+	waitFor("both start", func() bool { return len(creates()) == 2 })
+	c := creates()
+	dev, bot := c["F-Shop"], c["F-Shop-Bot"]
+	if dev == nil || bot == nil || dev["model"] != "opus" || dev["effort"] != "high" || dev["remote_control"] != "F-Shop" ||
+		dev["cwd"] != "/home/demo/dev/shop" || dev["resume"] != nil || dev["append_system"] != nil ||
+		bot["remote_control"] != "F-Shop-Bot" || !strings.Contains(fmt.Sprint(bot["append_system"]), "F-Shop") {
+		t.Fatalf("creates = %v", c)
+	}
+	expect(t, "view", h.do("GET", "/api/project-sessions", nil, &view), 200)
+	kept := 0
+	for _, e := range view.Sessions {
+		if e.ProjectKey == "SHOP" && e.Kept && e.State == "starting" {
+			kept++
+		}
+		if e.Name == "F-Shop-Bot" && !e.Bot {
+			t.Fatalf("bot entry = %+v", e)
+		}
+	}
+	if kept != 2 {
+		t.Fatalf("view = %+v", view.Sessions)
+	}
+
+	// The agent gets a conversation, then tmux dies: both start again, the agent resuming its conversation.
+	beat([]map[string]any{claude("F-Shop"), claude("F-Shop-Bot")})
+	const sid = "0b6e3f4a-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
+	expect(t, "its hook", machine.do("POST", "/api/runner/hook", map[string]any{"event": "UserPromptSubmit", "session_id": sid, "prompt": "Fix the cart",
+		"cwd": "/home/demo/dev/shop", "tmux_session": "F-Shop"}, nil, bearer...), 204)
+	reset()
+	h.api.projectSessionsPass(ctx)
+	if n := len(creates()); n != 0 {
+		t.Fatalf("running sessions started again: %v", got)
+	}
+	beat([]map[string]any{})
+	reset()
+	h.api.projectSessionsPass(ctx)
+	c = creates()
+	if len(c) != 2 || c["F-Shop"]["resume"] != sid || c["F-Shop-Bot"]["resume"] != nil || c["F-Shop"]["reuse"] != false {
+		t.Fatalf("after the crash: %v", c)
+	}
+	// Not again while they start; and a shell that is left is reused, unless someone is attached to it.
+	h.api.projectSessionsPass(ctx)
+	if len(creates()) != 2 {
+		t.Fatalf("started twice: %v", got)
+	}
+	beat([]map[string]any{shell("F-Shop", 0), shell("F-Shop-Bot", 1)})
+	reset()
+	h.api.projectSessionsPass(ctx)
+	if c = creates(); len(c) != 1 || c["F-Shop"]["reuse"] != true {
+		t.Fatalf("shells: %v", c)
+	}
+	// One that does not start waits before the next try.
+	h.api.projectSessions.mu.Lock()
+	h.api.projectSessions.started = map[string]time.Time{}
+	h.api.projectSessions.mu.Unlock()
+	h.api.projectSessionsPass(ctx)
+	if len(creates()) != 1 {
+		t.Fatalf("no backoff: %v", got)
+	}
+
+	// Closing the bot session takes the project off the keep list.
+	expect(t, "close the bot", h.do("DELETE", "/api/project-sessions/SHOP/F-Shop-Bot", nil, nil), 204)
+	beat([]map[string]any{})
+	reset()
+	h.api.projectSessionsPass(ctx)
+	if len(creates()) != 0 {
+		t.Fatalf("started after close: %v", got)
+	}
+	keeps, _ := h.store.KeptAgents(ctx)
+	if len(keeps) != 0 {
+		t.Fatalf("keeps = %v", keeps)
+	}
+
+	// Kept again, then not: both are closed.
+	expect(t, "keep", h.do("PATCH", "/api/project-sessions/SHOP", map[string]any{"keep": true}, nil), 200)
+	waitFor("both start", func() bool { return len(creates()) == 2 })
+	expect(t, "unkeep", h.do("PATCH", "/api/project-sessions/SHOP", map[string]any{"keep": false}, nil), 200)
+	mu.Lock()
+	kills := map[string]bool{}
+	for _, m := range got {
+		if m["type"] == "kill" {
+			kills[fmt.Sprint(m["session"])] = true
+		}
+	}
+	mu.Unlock()
+	if !kills["F-Shop"] || !kills["F-Shop-Bot"] {
+		t.Fatalf("kills = %v", kills)
 	}
 }
