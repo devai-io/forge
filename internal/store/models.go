@@ -550,9 +550,10 @@ var (
 		{ID: "gpt-5.6-luna", Name: "GPT-5.6-Luna", Description: "Older fast and efficient model."},
 	}
 	ClaudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
-	// ClaudeModels are the models the web app offers for a Claude run (any
-	// other id Claude Code accepts can still be sent).
-	ClaudeModels = []string{"claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"}
+	// ClaudeModels are the models the web app offers for a Claude run, as
+	// full ids so each family's versions stay apart (any other id Claude Code
+	// accepts, or an alias like "opus", can still be sent).
+	ClaudeModels = []string{"claude-fable-5-2", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"}
 	// DeepSeekModels are the ones offered for a DeepSeek run (OpenRouter
 	// ids), next to the engine settings' own model and heavy model.
 	DeepSeekModels = []string{"deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"}

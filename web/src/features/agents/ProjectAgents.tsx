@@ -12,6 +12,7 @@
 // development and its bot session F-<Project>-Bot — and the server starts
 // either again (resuming its conversation) whenever it is gone.
 
+import { modelLabel } from "@/lib/working";
 import clsx from "clsx";
 import { Bot, ExternalLink, Pin, Play, Plug, WifiOff, X } from "lucide-react";
 import { useState } from "react";
@@ -45,7 +46,8 @@ import {
 } from "@/lib/projectAgents";
 import { attachPath } from "@/lib/terminal";
 
-const AGENT_MODELS = ["fable", "opus", "sonnet", "haiku"];
+// Claude models when the server has not listed its own.
+const AGENT_MODELS = ["claude-fable-5-2", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
 
 const DOT: Record<AgentTone, string> = {
   needs: "bg-warning animate-pulse-soft",
@@ -264,14 +266,14 @@ function ProjectAgentDialog({ group, view, onClose }: { group: AgentGroup; view:
   const canSkip = !!host?.skip_permissions;
   const [skip, setSkip] = useState(view.settings.skip_permissions);
 
-  // Claude Code's own aliases (each is the newest model of its family on that
-  // machine); for Codex, what the machine's Codex lists for its login.
+  // Claude: full ids, so Fable 5.2 and Fable 5.1 (or Opus versions) stay
+  // apart; for Codex, what the machine's Codex lists for its login.
   const codex = agentEngine === "codex";
   const codexModels = engine.data?.codex_models ?? [];
   const models: { id: string; name: string }[] = codex
     ? codexModels.map((m) => ({ id: m.id, name: m.name && m.name !== m.id ? `${m.name} (${m.id})` : m.id }))
-    : AGENT_MODELS.map((m) => ({ id: m, name: m }));
-  if (model && !models.some((m) => m.id === model)) models.unshift({ id: model, name: model });
+    : (engine.data?.models?.claude?.length ? engine.data.models.claude : AGENT_MODELS).map((m) => ({ id: m, name: modelLabel(m) }));
+  if (model && !models.some((m) => m.id === model)) models.unshift({ id: model, name: modelLabel(model) });
   const pickedCodex = codex ? codexModels.find((m) => m.id === model) : undefined;
   const efforts = codex
     ? (pickedCodex?.efforts?.length ? pickedCodex.efforts : (engine.data?.codex_efforts ?? ["low", "medium", "high", "xhigh"]))

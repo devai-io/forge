@@ -99,14 +99,14 @@ describe("admin", () => {
     const dialog = await screen.findByRole("dialog", { name: "gus" });
     await user.click(within(dialog).getByRole("checkbox", { name: /GAME/ }));
     await user.click(within(dialog).getByRole("switch", { name: "Give this member one agent" }));
-    // The master, opus and high are what it starts with; skipping permissions is not on offer.
+    // The master, Opus 5.5 and high are what it starts with; skipping permissions is not on offer.
     expect(within(dialog).getByLabelText("Machine")).toHaveValue("desk");
-    expect(within(dialog).getByLabelText("Model")).toHaveValue("opus");
+    expect(within(dialog).getByLabelText("Model")).toHaveValue("claude-opus-5-5");
     expect(within(dialog).getByLabelText("Effort")).toHaveValue("high");
     expect(within(dialog).queryByRole("option", { name: "bypassPermissions" })).toBeNull();
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
     await waitFor(() =>
-      expect(patched).toEqual([{ projects: ["SHOP", "GAME"], agent: { machine: "desk", engine: "claude", model: "opus", effort: "high", permission_mode: "acceptEdits" } }]),
+      expect(patched).toEqual([{ projects: ["SHOP", "GAME"], agent: { machine: "desk", engine: "claude", model: "claude-opus-5-5", effort: "high", permission_mode: "acceptEdits" } }]),
     );
     expect(await within(gus).findByText(/Agent: Claude Code · opus · High effort · on desk · acceptEdits/)).toBeInTheDocument();
     // The machines panel says whose agent lives where.

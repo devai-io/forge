@@ -52,8 +52,9 @@ func (s *Server) assistantStatus(ctx context.Context) (map[string]any, error) {
 		}}, nil
 }
 
-// claudeModels are Claude Code's model aliases (the chat can also name a full id).
-var claudeModels = []string{"opus", "sonnet", "haiku", "fable"}
+// claudeModels are the full Claude ids offered in the chat (an alias like
+// "opus" can still be typed or kept from older settings).
+var claudeModels = store.ClaudeModels
 
 var modelNameRe = regexp.MustCompile(`^[A-Za-z0-9._:/\[\]-]{1,100}$`)
 

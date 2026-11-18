@@ -7,6 +7,7 @@
 // offered once changes are on (and turning changes off turns it off too).
 // Changes apply from the next message.
 
+import { modelLabel } from "@/lib/working";
 import clsx from "clsx";
 import { WifiOff } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -82,7 +83,7 @@ export function ChatSettingsBar({
           <option value="">Default model{defaultModel}</option>
           {models.map((m) => (
             <option key={m} value={m}>
-              {m}
+              {modelLabel(m)}
             </option>
           ))}
         </Select>}

@@ -41,8 +41,9 @@ export type RefreshStep = {
 /** Where a new run for a task would go. */
 export type StartTarget = { runner_id: number; repo_id: number; permission_mode: string; interactive: boolean };
 
-/** "claude-opus-5-5" → "Opus 5.5". */
+/** "claude-opus-5-5" → "Opus 5.5"; a bare alias ("opus") → "Opus (newest)". */
 export function modelLabel(id: string): string {
+  if (/^(fable|opus|sonnet|haiku)$/.test(id)) return `${id[0]!.toUpperCase()}${id.slice(1)} (newest)`;
   const m = /^claude-([a-z]+)-(\d+)-(\d+)$/.exec(id);
   if (!m) return id || "default";
   return `${m[1]![0]!.toUpperCase()}${m[1]!.slice(1)} ${m[2]}.${m[3]}`;

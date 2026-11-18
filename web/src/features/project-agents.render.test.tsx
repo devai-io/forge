@@ -16,7 +16,7 @@ const view = (sessions: ProjectSession[]): ProjectSessions => ({
   host: { runner_id: 3, runner_name: "desk", online: true, skip_permissions: true, tmux_agents: true },
   sessions,
 });
-const engine = { settings: {}, provider_key: false, models: { claude: ["opus", "sonnet", "haiku"] }, efforts: ["low", "medium", "high"] } as unknown as EngineStatus;
+const engine = { settings: {}, provider_key: false, models: { claude: ["claude-fable-5-2", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"] }, efforts: ["low", "medium", "high"] } as unknown as EngineStatus;
 
 /** The Agents page's use: a button picks the project (the page's filter). */
 function Picker() {
@@ -124,16 +124,19 @@ describe("project agents", () => {
     await user.click(within(screen.getByRole("region", { name: "Shop agent sessions" })).getByRole("button", { name: "Open session" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByRole("button", { name: "Start" })).toBeInTheDocument();
-    await waitFor(() => expect(within(dialog).getByRole("option", { name: "opus" })).toBeInTheDocument());
-    await user.selectOptions(within(dialog).getByLabelText("Model"), "opus");
+    await waitFor(() => expect(within(dialog).getByRole("option", { name: "Opus 5.5" })).toBeInTheDocument());
+    // Versions stay apart: Fable 5.2 and Fable 5.1 are separate options.
+    expect(within(dialog).getByRole("option", { name: "Fable 5.2" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("option", { name: "Fable 5.1" })).toBeInTheDocument();
+    await user.selectOptions(within(dialog).getByLabelText("Model"), "claude-opus-5-5");
     await user.selectOptions(within(dialog).getByLabelText("Effort"), "high");
     await user.type(within(dialog).getByLabelText(/First request/), "Fix the cart");
     await user.click(within(dialog).getByRole("button", { name: "Start with this request" }));
     await waitFor(() => expect(posted).toHaveLength(1));
-    expect(posted[0]).toEqual({ path: "/project-sessions/SHOP", body: { engine: "claude", prompt: "Fix the cart", model: "opus", effort: "high", skip_permissions: true } });
+    expect(posted[0]).toEqual({ path: "/project-sessions/SHOP", body: { engine: "claude", prompt: "Fix the cart", model: "claude-opus-5-5", effort: "high", skip_permissions: true } });
     await waitFor(() => expect(screen.getByLabelText("location")).toHaveTextContent("/agents/runs/12"));
     // What it was started with is where the next one starts.
-    expect(window.localStorage.getItem("forge.agent.model")).toBe("opus");
+    expect(window.localStorage.getItem("forge.agent.model")).toBe("claude-opus-5-5");
   });
 
   it("an open agent: attach, send it a request, or start an extra session", async () => {

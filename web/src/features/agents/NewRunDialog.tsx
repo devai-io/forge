@@ -10,6 +10,7 @@
 // machine on the other end has agreed to run. Continuing a run (resume) copies
 // runner and repo from the original on the server; only a new prompt is asked.
 
+import { modelLabel } from "@/lib/working";
 import { ShieldAlert, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -83,7 +84,7 @@ export function NewRunDialog({ prefill, onClose }: { prefill: NewRunPrefill; onC
   const codexModels = runEngine === "codex" ? (engineStatus.data?.codex_models ?? []) : [];
   const modelName = (id: string) => {
     const m = codexModels.find((x) => x.id === id);
-    return m?.name && m.name !== id ? `${m.name} (${id})` : id;
+    return m?.name && m.name !== id ? `${m.name} (${id})` : modelLabel(id);
   };
   const pickedEfforts = codexModels.find((x) => x.id === model)?.efforts;
   const efforts = (runEngine === "codex" ? (pickedEfforts?.length ? pickedEfforts : engineStatus.data?.codex_efforts) : engineStatus.data?.efforts) ?? [];

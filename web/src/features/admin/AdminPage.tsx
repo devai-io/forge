@@ -5,6 +5,7 @@
 // machines to members — and acts as another account to see what it sees.
 // Every change asks for the owner's password again.
 
+import { modelLabel } from "@/lib/working";
 import { Copy, KeyRound, Pencil, Plus, ShieldCheck, Trash2, UserRound, Users, VenetianMask } from "lucide-react";
 import { useState } from "react";
 import {
@@ -33,7 +34,8 @@ import { useToast } from "@/components/ui/Toast";
 import { agentLine, EFFORT_LABEL } from "@/lib/agents";
 import { useCurrentUser } from "@/lib/auth";
 
-const MODELS = ["fable", "opus", "sonnet", "haiku"];
+// Claude models when the server has not listed its own.
+const MODELS = ["claude-fable-5-2", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const MODES = ["project", "acceptEdits", "plan", "auto", "dontAsk"];
 const CODEX_MODES = ["project", "acceptEdits", "plan"];
@@ -375,22 +377,22 @@ function EditAccountDialog({ user, view, self, onClose }: { user: AdminUser; vie
   const [machine, setMachine] = useState(user.agent?.runner_name ?? view.machines.find((m) => m.role === "master")?.name ?? view.machines[0]?.name ?? "");
   const engineStatus = useEngine();
   const [engine, setEngine] = useState<"claude" | "codex">(user.agent?.engine ?? "claude");
-  const [model, setModel] = useState(user.agent?.model ?? "opus");
+  const [model, setModel] = useState(user.agent?.model ?? "claude-opus-5-5");
   const [effort, setEffort] = useState(user.agent?.effort ?? "high");
   const [mode, setMode] = useState(user.agent?.permission_mode ?? "acceptEdits");
   const codex = engine === "codex";
   const codexModels = engineStatus.data?.codex_models ?? [];
-  const engineModels = codex ? codexModels.map((m) => m.id) : MODELS;
+  const engineModels = codex ? codexModels.map((m) => m.id) : engineStatus.data?.models?.claude?.length ? engineStatus.data.models.claude : MODELS;
   const models = model && !engineModels.includes(model) ? [model, ...engineModels] : engineModels;
   const modelName = (id: string) => {
     const m = codexModels.find((x) => x.id === id);
-    return m?.name && m.name !== id ? `${m.name} (${id})` : id;
+    return m?.name && m.name !== id ? `${m.name} (${id})` : modelLabel(id);
   };
   const efforts = codex ? (codexModels.find((m) => m.id === model)?.efforts ?? engineStatus.data?.codex_efforts ?? EFFORTS) : EFFORTS;
   const modes = codex ? CODEX_MODES : MODES;
   const pickEngine = (e: "claude" | "codex") => {
     setEngine(e);
-    setModel(e === "codex" ? "" : "opus");
+    setModel(e === "codex" ? "" : "claude-opus-5-5");
     setEffort(e === "codex" ? "" : "high");
     if (e === "codex" && !CODEX_MODES.includes(mode)) setMode("project");
   };
