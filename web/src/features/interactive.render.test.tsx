@@ -82,7 +82,7 @@ const replay: RunEvent = {
   data: { type: "user", isReplay: true, message: { role: "user", content: "Pick a color" } },
 };
 
-function renderRun(prompts: RunPrompt[], over: Partial<Run> = {}) {
+function renderRun(prompts: RunPrompt[], over: Partial<Run> = {}, queued: { id: number; text: string; created_at: string }[] = []) {
   const sent: { path: string; body: unknown }[] = [];
   const record = (path: string) => (init: RequestInit) => {
     sent.push({ path, body: init.body ? JSON.parse(String(init.body)) : null });
@@ -92,7 +92,7 @@ function renderRun(prompts: RunPrompt[], over: Partial<Run> = {}) {
     "fetch",
     routeFetch({
       "GET /runs/42": () => jsonResponse(200, run(over)),
-      "GET /runs/42/events": () => jsonResponse(200, { run: run(over), events: [replay], prompts }),
+      "GET /runs/42/events": () => jsonResponse(200, { run: run(over), events: [replay], prompts, queued }),
       "POST /runs/42/prompts/1/answer": record("answer"),
       "POST /runs/42/prompts/2/answer": record("answer"),
       "POST /runs/42/messages": record("message"),
@@ -112,6 +112,14 @@ function renderRun(prompts: RunPrompt[], over: Partial<Run> = {}) {
 }
 
 describe("interactive runs", () => {
+  it("lists messages held back while a tmux agent is mid-turn", async () => {
+    renderRun([], { awaiting: "", tmux_session: "F-Shop" }, [{ id: 9, text: "Also the tests", created_at: AT }]);
+    const box = await screen.findByRole("status", { name: "Queued messages" });
+    expect(box).toHaveTextContent("Claude is mid-turn; sent when this turn ends");
+    expect(box).toHaveTextContent("Also the tests");
+    expect(screen.getByLabelText("Message")).toHaveAttribute("placeholder", "Claude is working — your message is queued until this turn ends…");
+  });
+
   it("answers a question with an option or the user's own words", async () => {
     const sent = renderRun([
       prompt({

@@ -118,7 +118,7 @@ func (s *Store) TmuxToStart(ctx context.Context, runnerID int64) ([]Run, error) 
 // TmuxPending is the messages written to a running tmux run that have not
 // been typed into its session yet.
 func (s *Store) TmuxPending(ctx context.Context, runnerID int64) (map[int64][]InboxItem, error) {
-	rows, err := s.DB.Query(ctx, `SELECT i.run_id, i.id, i.kind, i.data FROM run_inbox i JOIN runs r ON r.id = i.run_id
+	rows, err := s.DB.Query(ctx, `SELECT i.run_id, i.id, i.kind, i.data, i.created_at FROM run_inbox i JOIN runs r ON r.id = i.run_id
 		WHERE r.runner_id = $1 AND r.status = 'running' AND r.tmux_session <> '' AND i.id > r.inbox_after
 		  AND i.kind IN ('message', 'end')
 		ORDER BY i.id`, runnerID)
@@ -131,11 +131,46 @@ func (s *Store) TmuxPending(ctx context.Context, runnerID int64) (map[int64][]In
 		var runID int64
 		var it InboxItem
 		var data string
-		if err := rows.Scan(&runID, &it.ID, &it.Kind, &data); err != nil {
+		if err := rows.Scan(&runID, &it.ID, &it.Kind, &data, &it.CreatedAt); err != nil {
 			return nil, err
 		}
 		it.Data = json.RawMessage(data)
 		out[runID] = append(out[runID], it)
+	}
+	return out, rows.Err()
+}
+
+// QueuedMessage is a message written to a live tmux run that its session has
+// not been given yet (the agent was mid-turn).
+type QueuedMessage struct {
+	ID        int64  `json:"id"`
+	Text      string `json:"text"`
+	CreatedAt string `json:"created_at"`
+}
+
+// TmuxQueued is a live tmux run's undelivered messages, oldest first.
+func (s *Store) TmuxQueued(ctx context.Context, runID int64) ([]QueuedMessage, error) {
+	rows, err := s.DB.Query(ctx, `SELECT i.id, i.data, i.created_at FROM run_inbox i JOIN runs r ON r.id = i.run_id
+		WHERE r.id = $1 AND r.status = 'running' AND r.tmux_session <> '' AND i.id > r.inbox_after AND i.kind = 'message'
+		ORDER BY i.id`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []QueuedMessage{}
+	for rows.Next() {
+		var q QueuedMessage
+		var data string
+		if err := rows.Scan(&q.ID, &data, &q.CreatedAt); err != nil {
+			return nil, err
+		}
+		var m struct {
+			Text string `json:"text"`
+		}
+		if json.Unmarshal([]byte(data), &m) == nil && strings.TrimSpace(m.Text) != "" {
+			q.Text = strings.TrimSpace(m.Text)
+			out = append(out, q)
+		}
 	}
 	return out, rows.Err()
 }

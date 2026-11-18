@@ -5,9 +5,9 @@
 // "approvals" setting); this only collects the user's choice.
 
 import clsx from "clsx";
-import { ArrowUp, CircleCheck, CircleHelp, ClipboardCheck, ShieldQuestion } from "lucide-react";
+import { ArrowUp, CircleCheck, CircleHelp, ClipboardCheck, Clock, ShieldQuestion } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
-import { useAnswerPrompt, useFinishRun, useSendRunMessage } from "@/api/hooks";
+import { useAnswerPrompt, useFinishRun, useRunEvents, useSendRunMessage } from "@/api/hooks";
 import type { PromptAnswer, Run, RunPrompt } from "@/api/types";
 import { Button } from "@/components/ui/Button";
 import { Markdown } from "@/components/ui/Markdown";
@@ -40,7 +40,33 @@ export function RunInteraction({ run, prompts }: { run: Run; prompts: RunPrompt[
       {pending.map((p) => (
         <PromptCard key={p.id} prompt={p} busy={answer.isPending} onAnswer={(a) => submit(p, a)} />
       ))}
+      <QueuedMessages run={run} />
       <RunComposer run={run} />
+    </div>
+  );
+}
+
+/**
+ * Messages Forge holds back while a tmux agent is mid-turn: typing them in
+ * then would land inside the running turn. They go in when the turn ends.
+ */
+function QueuedMessages({ run }: { run: Run }) {
+  const queued = useRunEvents(run.id).data?.queued ?? [];
+  if (!queued.length) return null;
+  const agent = run.engine === "codex" ? "Codex" : "Claude";
+  const why = run.awaiting === "answer" ? `${agent} is waiting for an answer in the terminal` : `${agent} is mid-turn`;
+  return (
+    <div role="status" aria-label="Queued messages" className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-[13px]">
+      <p className="mb-1 flex items-center gap-1.5 text-[12px] text-fg-3">
+        <Clock className="size-3.5" aria-hidden /> Queued — {why}; sent when this turn ends
+      </p>
+      <ul className="space-y-1">
+        {queued.map((q) => (
+          <li key={q.id} className="line-clamp-3 whitespace-pre-wrap text-fg-2">
+            {q.text}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -295,7 +321,7 @@ function RunComposer({ run }: { run: Run }) {
                     : "Send a message to Codex…"
                   : run.awaiting === "reply"
                     ? "Reply to Claude…"
-                    : "Send a message — Claude reads it when it can…"
+                    : "Claude is working — your message is queued until this turn ends…"
             }
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {

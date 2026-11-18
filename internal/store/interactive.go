@@ -67,6 +67,9 @@ type InboxItem struct {
 	ID   int64           `json:"id"`
 	Kind string          `json:"kind"` // answer | message | end
 	Data json.RawMessage `json:"data"`
+	// CreatedAt is set by TmuxPending/TmuxQueued only (when a live tmux
+	// session holds a message back while its agent works).
+	CreatedAt string `json:"created_at,omitempty"`
 }
 
 // PromptKind classifies a tool permission request by the tool asking.
@@ -365,7 +368,9 @@ func (s *Store) sendRunMessage(ctx context.Context, runID int64, text string, on
 				return err
 			}
 		}
-		_, err := tx.Exec(ctx, `UPDATE runs SET awaiting = '' WHERE id = $1`, runID)
+		// A live tmux session keeps its own state: its hooks say when the
+		// message is typed in (it waits while the agent is mid-turn).
+		_, err := tx.Exec(ctx, `UPDATE runs SET awaiting = '' WHERE id = $1 AND NOT (status = 'running' AND tmux_session <> '')`, runID)
 		return err
 	})
 	return requeued, err

@@ -636,7 +636,14 @@ func (s *Server) runEvents(w http.ResponseWriter, r *http.Request, u *store.User
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": events, "run": run.Public(), "prompts": prompts})
+	queued := []store.QueuedMessage{}
+	if run.TmuxSession != "" && run.Status == "running" {
+		if queued, err = s.store.TmuxQueued(r.Context(), id); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events, "run": run.Public(), "prompts": prompts, "queued": queued})
 }
 
 func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request, u *store.User) {

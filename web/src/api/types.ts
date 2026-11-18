@@ -380,6 +380,9 @@ export type CLISession = {
 export type Pairing = { code: string; expires_at: string };
 
 /** waiting: the run answered and is open until you reply or finish it (its session may be parked on the machine). */
+/** A message to a live tmux run not typed into its session yet (the agent is mid-turn). */
+export type QueuedMessage = { id: number; text: string; created_at: string };
+
 export type RunStatus = "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
 export type RunKind = "agent" | "command";
 /** Where an agent run's Claude Code sends its requests. */

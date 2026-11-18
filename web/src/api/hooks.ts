@@ -17,6 +17,7 @@ import { lastSeq, mergeMessages, upsertChat } from "@/lib/chats";
 import { createPasskey, getPasskey, type CeremonyStart } from "@/lib/webauthn";
 import type {
   AgentSettings,
+  QueuedMessage,
   DriverView,
   Activity,
   AssistantSettings,
@@ -859,7 +860,7 @@ export function isOpenRun(run: Pick<Run, "status"> | undefined | null): boolean 
   return isActiveRun(run) || run?.status === "waiting";
 }
 
-type RunEventsData = { events: RunEvent[]; run: Run; prompts: RunPrompt[] };
+type RunEventsData = { events: RunEvent[]; run: Run; prompts: RunPrompt[]; queued?: QueuedMessage[] };
 
 /**
  * Incremental log polling. Each fetch asks only for events after the last seq
@@ -881,6 +882,7 @@ export function useRunEvents(id: number) {
           run: res.run,
           events: prev ? [...prev.events, ...res.events.filter((e) => e.seq > after)] : res.events,
           prompts: res.prompts ?? [], // always the whole list: it is short
+          queued: res.queued ?? [], // likewise
         };
         prev = merged;
         if (res.events.length < 500) break;

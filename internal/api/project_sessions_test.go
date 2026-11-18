@@ -208,10 +208,29 @@ func TestProjectSessions(t *testing.T) {
 	if len(list.Runs) != 1 {
 		t.Fatalf("the hook made another run: %+v", list.Runs)
 	}
-	// The next request is one more message to the same conversation.
+	// The next request is one more message to the same conversation. Claude is
+	// mid-turn (its prompt was just submitted), so it waits, listed as queued…
 	expect(t, "ask SHOP again", h.do("POST", "/api/project-sessions/SHOP", map[string]any{"prompt": "Also the tests"}, &res), 200)
-	if pastes = sent("paste"); res.Run == nil || res.Run.ID != runID || len(pastes) != 2 || pastes[1]["text"] != "Also the tests" {
+	if pastes = sent("paste"); res.Run == nil || res.Run.ID != runID || len(pastes) != 1 {
 		t.Fatalf("second request = %+v, pastes = %v", res.Run, pastes)
+	}
+	var evs struct{ Queued []store.QueuedMessage }
+	expect(t, "events", h.do("GET", fmt.Sprintf("/api/runs/%d/events", runID), nil, &evs), 200)
+	if len(evs.Queued) != 1 || evs.Queued[0].Text != "Also the tests" {
+		t.Fatalf("queued = %+v", evs.Queued)
+	}
+	// …and is typed in once the turn ends.
+	expect(t, "turn over", machine.do("POST", "/api/runner/hook", map[string]any{"event": "Stop", "session_id": sid,
+		"cwd": "/home/demo/dev/shop", "tmux_session": "F-Shop", "last_message": "Cart fixed."}, nil, bearer...), 204)
+	for i := 0; i < 100 && len(sent("paste")) < 2; i++ {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if pastes = sent("paste"); len(pastes) != 2 || pastes[1]["text"] != "Also the tests" {
+		t.Fatalf("after the turn, pastes = %v", pastes)
+	}
+	expect(t, "events", h.do("GET", fmt.Sprintf("/api/runs/%d/events", runID), nil, &evs), 200)
+	if len(evs.Queued) != 0 {
+		t.Fatalf("still queued = %+v", evs.Queued)
 	}
 	// And the button alone just says where it is.
 	expect(t, "open SHOP", h.do("POST", "/api/project-sessions/SHOP", map[string]any{}, &res), 200)

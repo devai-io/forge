@@ -112,7 +112,7 @@ func (s *Server) dispatchTmux(ctx context.Context, runnerID int64) {
 		if err != nil {
 			continue
 		}
-		s.deliverTmux(ctx, cc, run, items)
+		s.deliverTmux(ctx, cc, run, items, false)
 	}
 }
 
@@ -201,7 +201,7 @@ func (s *Server) startTmuxRun(ctx context.Context, cc *controlConn, run *store.R
 			// the session is live, so the messages are typed into it.
 			if _, err := s.store.MarkTmuxStarted(ctx, run.ID, resume, run.InboxAfter); err == nil {
 				if cur, err := s.store.RunByID(ctx, run.ID); err == nil {
-					s.deliverTmux(ctx, cc, cur, items)
+					s.deliverTmux(ctx, cc, cur, items, true) // it was idle: nothing to wait for
 				}
 			}
 			return
@@ -293,9 +293,9 @@ func (s *Server) failTmuxStart(ctx context.Context, run *store.Run, err error) {
 		run.ID, truncateErr(err.Error()))
 }
 
-// deliverTmux types what was written to a live tmux run into its session;
-// Finish ends the session.
-func (s *Server) deliverTmux(ctx context.Context, cc *controlConn, run *store.Run, items []store.InboxItem) {
+// deliverTmux types what was written to a live tmux run into its session
+// once its agent's turn is over (now, with force); Finish ends the session.
+func (s *Server) deliverTmux(ctx context.Context, cc *controlConn, run *store.Run, items []store.InboxItem, force bool) {
 	var msgs []string
 	var last int64
 	for _, it := range items {
@@ -319,12 +319,36 @@ func (s *Server) deliverTmux(ctx context.Context, cc *controlConn, run *store.Ru
 	if s.projectSessions.startedAgo(run.TmuxSession) < projectSessionSettle {
 		return // Claude Code is still drawing its first screen: typed on the next pass
 	}
+	if !force && run.Awaiting != "reply" && !heldTooLong(items, time.Now()) {
+		// The agent is mid-turn ("") or asks something in the terminal
+		// ("answer"): typing now would land inside the running turn (or in a
+		// permission dialog). The messages wait for its Stop hook, which
+		// dispatches again; the run page lists them as queued meanwhile.
+		return
+	}
 	text := strings.Join(msgs, "\n\n")
 	if _, err := cc.call(ctx, map[string]any{"type": "paste", "session": run.TmuxSession, "text": text, "enter": true}, 15*time.Second); err != nil {
 		slog.Warn("tmux message not delivered", "run", run.ID, "err", err)
 		return // stays in the inbox for the next pass
 	}
 	_ = s.store.MarkTmuxDelivered(ctx, run.ID, last)
+}
+
+// tmuxHoldMax is how long a message waits for the agent's turn to end before
+// it is typed in anyway (a session whose hooks stopped reporting would
+// otherwise hold it forever).
+const tmuxHoldMax = 15 * time.Minute
+
+// heldTooLong: the oldest message has waited past tmuxHoldMax.
+func heldTooLong(items []store.InboxItem, now time.Time) bool {
+	for _, it := range items {
+		if it.Kind != "message" || it.CreatedAt == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339Nano, it.CreatedAt)
+		return err == nil && now.Sub(t) > tmuxHoldMax
+	}
+	return false
 }
 
 func inboxText(it store.InboxItem) string {
@@ -626,6 +650,7 @@ func (s *Server) runnerHook(w http.ResponseWriter, r *http.Request, rn *store.Ru
 	switch in.Event {
 	case "SessionStart":
 		_ = s.store.SetTmuxAwaiting(ctx, run.ID, "reply")
+		s.tmuxNudge(run.ID) // what was queued while it started
 	case "UserPromptSubmit":
 		_ = s.store.SetTmuxAwaiting(ctx, run.ID, "")
 		_ = s.store.SetPromptIfEmpty(ctx, run.ID, in.Prompt)
@@ -635,6 +660,7 @@ func (s *Server) runnerHook(w http.ResponseWriter, r *http.Request, rn *store.Ru
 		if err := s.store.TmuxTurnDone(ctx, run.ID, in.LastMessage); err == nil && run.Origin != "tmux" {
 			s.tgNotifyAwaiting(run.ID)
 		}
+		s.tmuxNudge(run.ID) // messages held back during the turn go now
 	case "Notification":
 		switch {
 		case in.NotificationType == "permission_prompt" || in.NotificationType == "elicitation_dialog" ||
@@ -645,6 +671,7 @@ func (s *Server) runnerHook(w http.ResponseWriter, r *http.Request, rn *store.Ru
 			}
 		case in.NotificationType == "idle_prompt":
 			_ = s.store.SetTmuxAwaiting(ctx, run.ID, "reply")
+			s.tmuxNudge(run.ID)
 		}
 	case "SessionEnd":
 		why := "Claude Code exited"
