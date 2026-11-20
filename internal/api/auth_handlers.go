@@ -24,6 +24,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
+	if !s.passwordAllowed(r) {
+		s.passkeyOnly(w, r, "sign-in")
+		return
+	}
 	ip := s.clientIP(r)
 	if !s.logins.Allowed(ip) {
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many attempts — try again in a few minutes")
@@ -231,6 +235,10 @@ func (s *Server) elevate(w http.ResponseWriter, r *http.Request, u *store.User) 
 		Code     string `json:"code"`
 	}
 	if !decode(w, r, &in) {
+		return
+	}
+	if !s.passwordAllowed(r) {
+		s.passkeyOnly(w, r, "confirmation")
 		return
 	}
 	ip := s.clientIP(r)
@@ -465,6 +473,9 @@ func (s *Server) forgot(w http.ResponseWriter, r *http.Request) {
 	}
 	s.resets.Record(ip)
 	w.WriteHeader(http.StatusNoContent)
+	if !s.passwordAllowed(r) {
+		return // same 204: a reset link would only lead to a password that cannot be used from there
+	}
 
 	u, err := s.store.UserByLogin(r.Context(), in.Login)
 	if err != nil {
@@ -509,6 +520,10 @@ func (s *Server) reset(w http.ResponseWriter, r *http.Request) {
 		New   string `json:"new_password"`
 	}
 	if !decode(w, r, &in) {
+		return
+	}
+	if !s.passwordAllowed(r) {
+		s.passkeyOnly(w, r, "password reset")
 		return
 	}
 	if err := auth.ValidatePassword(in.New); err != nil {

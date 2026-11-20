@@ -34,6 +34,10 @@ vulnerability) on this repository. Do not open a public issue.
 - Passkeys (WebAuthn: discoverable, user verification required, no
   attestation) sign in on their own; only their public keys are stored. A
   password sign-in always needs the TOTP code as well.
+- With `PASSWORD_LOGIN_NETS` set, a password (sign-in, reset link,
+  confirming an action) only works from those networks — a VPN, say; from
+  anywhere else an account signs in and confirms with a passkey. Add a
+  passkey to every account before turning it on.
 - Sensitive actions (vault reveal/download/delete, terminals, VS Code,
   two-factor enrolment, adding or removing a passkey) need a passkey or the
   password (and code) again within 10 minutes.

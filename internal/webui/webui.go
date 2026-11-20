@@ -55,6 +55,10 @@ func Handler() http.Handler {
 			return
 		}
 		if st, err := fs.Stat(root, p); err != nil || st.IsDir() {
+			if notARoute(p) {
+				http.NotFound(w, r)
+				return
+			}
 			serveIndex(w, r, root) // a client-side route
 			return
 		}
@@ -65,6 +69,19 @@ func Handler() http.Handler {
 		}
 		files.ServeHTTP(w, r)
 	})
+}
+
+// notARoute reports paths the client router never owns: a missing file with
+// an extension (/wp-login.php, /.env, /backup.sql) or under a dot folder
+// (/.git/config). Answering those with index.html and 200 tells every
+// scanner on the internet that the file exists.
+func notARoute(p string) bool {
+	for _, seg := range strings.Split(p, "/") {
+		if strings.HasPrefix(seg, ".") {
+			return true
+		}
+	}
+	return path.Ext(p) != ""
 }
 
 func serveIndex(w http.ResponseWriter, r *http.Request, root fs.FS) {

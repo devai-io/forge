@@ -48,6 +48,10 @@ type Config struct {
 	// (0 turns backups off).
 	BackupKeep int
 
+	// RunEventsKeep is how long the event-by-event transcript of a finished
+	// run stays (0: for ever). The run and its result are always kept.
+	RunEventsKeep time.Duration
+
 	// Fleet observability (optional). Empty turns a source off.
 	VictoriaMetricsURL string
 	GrafanaURL         string
@@ -55,6 +59,11 @@ type Config struct {
 
 	// TrustedProxies may set X-Forwarded-For (the reverse proxy's addresses).
 	TrustedProxies []net.IP
+
+	// PasswordNets, when set, are the only networks a password may be used
+	// from (sign-in, reset, confirming an action); everywhere else it takes
+	// a passkey. Empty: passwords work from anywhere.
+	PasswordNets []*net.IPNet
 }
 
 type SMTP struct {
@@ -76,7 +85,9 @@ type File struct {
 	DemoData        bool     `json:"demo_data,omitempty"`
 	MonitorInterval string   `json:"monitor_interval,omitempty"`
 	BackupKeep      *int     `json:"backup_keep,omitempty"`
+	RunEventsDays   int      `json:"run_events_keep_days,omitempty"`
 	TrustedProxies  []string `json:"trusted_proxies,omitempty"`
+	PasswordNets    []string `json:"password_login_nets,omitempty"`
 	SMTP            struct {
 		Host         string `json:"host,omitempty"`
 		Port         int    `json:"port,omitempty"`
@@ -233,6 +244,19 @@ func Load() (Config, error) {
 		c.BackupKeep = n
 	}
 
+	days := f.RunEventsDays
+	if v := os.Getenv("FORGE_RUN_EVENTS_KEEP_DAYS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return c, fmt.Errorf("FORGE_RUN_EVENTS_KEEP_DAYS %q: want a number >= 0", v)
+		}
+		days = n
+	}
+	if days < 0 {
+		return c, fmt.Errorf("run_events_keep_days %d: want a number >= 0", days)
+	}
+	c.RunEventsKeep = time.Duration(days) * 24 * time.Hour
+
 	proxies := f.TrustedProxies
 	if v := os.Getenv("TRUSTED_PROXIES"); v != "" {
 		proxies = strings.Split(v, ",")
@@ -246,6 +270,21 @@ func Load() (Config, error) {
 			return c, fmt.Errorf("trusted_proxies: %q is not an IP", raw)
 		}
 		c.TrustedProxies = append(c.TrustedProxies, ip)
+	}
+
+	nets := f.PasswordNets
+	if v := os.Getenv("PASSWORD_LOGIN_NETS"); v != "" {
+		nets = strings.Split(v, ",")
+	}
+	for _, raw := range nets {
+		if raw = strings.TrimSpace(raw); raw == "" {
+			continue
+		}
+		_, n, err := net.ParseCIDR(raw)
+		if err != nil {
+			return c, fmt.Errorf("password_login_nets: %q is not a network (want e.g. 10.0.0.0/8)", raw)
+		}
+		c.PasswordNets = append(c.PasswordNets, n)
 	}
 
 	if c.SMTP.Port == 0 {

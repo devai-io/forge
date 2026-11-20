@@ -453,3 +453,30 @@ func TestFocusReusePreservesConcurrentChanges(t *testing.T) {
 		t.Fatal("different input reused")
 	}
 }
+
+func TestPruneRunEventsKeepsTheRun(t *testing.T) {
+	cur = t
+	st := open(t)
+	ctx := context.Background()
+	rn := must(st.CreateRunner(ctx, "desk", []byte("tok")))
+	repoID := must(st.AllRepos(ctx))[0].ID
+	oldRun := must(st.CreateRun(ctx, store.RunInput{RunnerID: rn.ID, RepoID: repoID, Kind: "agent", Prompt: "old"}))
+	newRun := must(st.CreateRun(ctx, store.RunInput{RunnerID: rn.ID, RepoID: repoID, Kind: "agent", Prompt: "new"}))
+	open := must(st.CreateRun(ctx, store.RunInput{RunnerID: rn.ID, RepoID: repoID, Kind: "agent", Prompt: "still going"}))
+	for _, id := range []int64{oldRun.ID, newRun.ID, open.ID} {
+		must(st.DB.Exec(ctx, `INSERT INTO run_events (run_id, seq, kind, data) VALUES ($1, 1, 'system', '{}')`, id))
+	}
+	must(st.DB.Exec(ctx, `UPDATE runs SET finished_at = ts_add(now(), -$1) WHERE id = $2`, (40 * 24 * time.Hour).Seconds(), oldRun.ID))
+	must(st.DB.Exec(ctx, `UPDATE runs SET finished_at = now() WHERE id = $1`, newRun.ID))
+	if n := must(st.PruneRunEvents(ctx, 30*24*time.Hour)); n != 1 {
+		t.Fatalf("pruned %d events, want 1", n)
+	}
+	if got := must(st.RunByID(ctx, oldRun.ID)); got.Prompt != "old" {
+		t.Fatalf("the old run itself is gone: %+v", got)
+	}
+	for id, want := range map[int64]int{oldRun.ID: 0, newRun.ID: 1, open.ID: 1} {
+		if got := len(must(st.ListEvents(ctx, id, 0, 10))); got != want {
+			t.Errorf("run %d has %d events, want %d", id, got, want)
+		}
+	}
+}

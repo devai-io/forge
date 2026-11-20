@@ -521,6 +521,7 @@ func serve(ctx context.Context, cfg config.Config, database *db.DB, st *store.St
 		slog.Warn("SMTP not configured: e-mails are off (use `forge reset-password` if locked out)")
 	}
 	mon := monitor.New(st, cfg.MonitorInterval, cfg.Version)
+	mon.RunEventsKeep = cfg.RunEventsKeep
 	go mon.Run(ctx)
 	go backup.Loop(ctx, database, cfg.BackupDir(), cfg.BackupKeep)
 

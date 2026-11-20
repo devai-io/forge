@@ -369,6 +369,19 @@ func (s *Store) EndpointChecks(ctx context.Context, id int64, hours int) ([]Endp
 	return out, rows.Err()
 }
 
+// PruneRunEvents drops the transcript (run_events) of runs that finished
+// more than keep ago. The run itself — prompt, result, cost, timings — stays;
+// only the event-by-event log goes, which is nearly all of the database.
+func (s *Store) PruneRunEvents(ctx context.Context, keep time.Duration) (int, error) {
+	tag, err := s.DB.Exec(ctx, `DELETE FROM run_events WHERE run_id IN (
+		SELECT id FROM runs WHERE finished_at IS NOT NULL AND finished_at < ts_add(now(), -$1))`,
+		keep.Seconds())
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 func (s *Store) PruneChecks(ctx context.Context, keep time.Duration) error {
 	_, err := s.DB.Exec(ctx, `DELETE FROM endpoint_checks WHERE at < ts_add(now(), -$1)`,
 		keep.Seconds())

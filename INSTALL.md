@@ -362,6 +362,8 @@ start); an environment variable with the same meaning wins.
 | `demo_data` | `FORGE_DEMO_DATA` | `false` | sample projects in an empty database |
 | `backup_keep` | `FORGE_BACKUP_KEEP` | `14` | nightly snapshots kept (`0` = off) |
 | `trusted_proxies` | `TRUSTED_PROXIES` (comma-separated) | — | proxies allowed to set X-Forwarded-For |
+| `password_login_nets` | `PASSWORD_LOGIN_NETS` (comma-separated CIDRs) | — | the only networks a password works from (sign-in, reset, confirming); elsewhere it takes a passkey |
+| `run_events_keep_days` | `FORGE_RUN_EVENTS_KEEP_DAYS` | `0` | days a finished run's transcript is kept (`0` = for ever; the run and its result always stay) |
 | `smtp.host`, `.port`, `.user`, `.password` / `.password_file`, `.from` | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` / `SMTP_PASSWORD_FILE`, `SMTP_FROM` | off | password resets, daily check-up, new-device alerts |
 | `monitoring.victoriametrics_url`, `.grafana_url`, `.grafana_public_url` | `VICTORIAMETRICS_URL`, `GRAFANA_URL`, `GRAFANA_PUBLIC_URL` | off | optional fleet monitoring |
 | — | `FORGE_HOME` | `~/.config/forge` (`/data` in Docker) | the workspace |

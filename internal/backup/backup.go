@@ -67,9 +67,19 @@ func list(dir string) []string {
 	entries, _ := os.ReadDir(dir)
 	var out []string
 	for _, e := range entries {
-		if n := e.Name(); strings.HasPrefix(n, prefix) && strings.HasSuffix(n, suffix) {
-			out = append(out, n)
+		// Only this package's own files, forge-YYYY-MM-DD.db. A copy someone
+		// left here by hand (forge-20260101T120000-before-x.db) sorts after
+		// every dated name: counted, it would be "the newest snapshot" for
+		// ever — a new snapshot every hour and a stale-backup finding — and
+		// it would take one of the `keep` places.
+		n := e.Name()
+		if !strings.HasPrefix(n, prefix) || !strings.HasSuffix(n, suffix) {
+			continue
 		}
+		if _, err := time.Parse("2006-01-02", n[len(prefix):len(n)-len(suffix)]); err != nil {
+			continue
+		}
+		out = append(out, n)
 	}
 	sort.Strings(out) // the date in the name sorts
 	return out

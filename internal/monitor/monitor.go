@@ -23,6 +23,10 @@ type Monitor struct {
 	client   *http.Client
 	version  string
 
+	// RunEventsKeep, when positive, is how long a finished run's transcript
+	// stays before housekeeping drops it.
+	RunEventsKeep time.Duration
+
 	// Rechecks of "warning" endpoints, one pending timer per endpoint. They
 	// run on base, the context Run was given; before Run (and in tests that
 	// never start it) nothing is scheduled.
@@ -85,6 +89,13 @@ func (m *Monitor) Run(ctx context.Context) {
 			}
 			if _, err := m.store.PruneUploads(ctx, 30*24*time.Hour); err != nil {
 				slog.Error("prune uploads", "err", err)
+			}
+			if m.RunEventsKeep > 0 {
+				if n, err := m.store.PruneRunEvents(ctx, m.RunEventsKeep); err != nil {
+					slog.Error("prune run events", "err", err)
+				} else if n > 0 {
+					slog.Info("run transcripts pruned", "events", n)
+				}
 			}
 		}
 	}

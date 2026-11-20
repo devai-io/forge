@@ -607,6 +607,35 @@ func (s *Server) clientIP(r *http.Request) string {
 	return first
 }
 
+// passwordAllowed reports whether this request may use a password at all.
+// With PASSWORD_LOGIN_NETS set, a password only works from those networks
+// (a VPN, the office); from anywhere else the account takes a passkey.
+func (s *Server) passwordAllowed(r *http.Request) bool {
+	if len(s.cfg.PasswordNets) == 0 {
+		return true
+	}
+	ip := net.ParseIP(s.clientIP(r))
+	if ip == nil {
+		return false
+	}
+	for _, n := range s.cfg.PasswordNets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// passkeyOnly answers a password attempt from outside PASSWORD_LOGIN_NETS.
+// It says so before looking at the account or the password, so it is neither
+// an account oracle nor a way to test passwords.
+func (s *Server) passkeyOnly(w http.ResponseWriter, r *http.Request, what string) {
+	// Logged, not written to the security log: on a public address this is
+	// every credential-stuffing bot, and the log is for things worth reading.
+	slog.Warn("password refused: outside password_login_nets", "what", what, "ip", s.clientIP(r))
+	writeError(w, http.StatusForbidden, "passkey_required", "Passwords are off on this network — use a passkey.")
+}
+
 func (s *Server) trustedProxy(ip net.IP) bool {
 	for _, t := range s.cfg.TrustedProxies {
 		if t.Equal(ip) {

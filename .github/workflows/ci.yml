@@ -29,6 +29,19 @@ jobs:
             CGO_ENABLED=0 GOOS=${p%/*} GOARCH=${p#*/} go build -o /dev/null ./cmd/forge
           done
 
+  # Known vulnerabilities in code the binary can reach. On the newest patch
+  # release of go.mod's Go line — what the release image is built with — so a
+  # standard-library fix that is already out does not fail every push.
+  vuln:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          check-latest: true
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+
   web:
     runs-on: ubuntu-latest
     defaults:
@@ -42,6 +55,8 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci --no-audit --no-fund
+      - name: Known vulnerabilities (what ships: production dependencies)
+        run: npm audit --omit=dev --audit-level=high
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
@@ -54,4 +69,4 @@ jobs:
         with:
           fetch-depth: 0
       - name: gitleaks
-        run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest git /repo --redact -v
+        run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.28.0 git /repo --redact -v
